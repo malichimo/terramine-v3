@@ -1,0 +1,54 @@
+{
+  "expo": {
+    "name": "TerraMine",
+    "slug": "TerraMine",
+    "scheme": "terramine",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.terramine.app",
+      "config": {
+        "googleMobileAdsAppId": "${EXPO_PUBLIC_ADMOB_IOS_APP_ID}"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.terramine.app",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
+      "config": {
+        "googleMobileAdsAppId": "${EXPO_PUBLIC_ADMOB_ANDROID_APP_ID}",
+        "googleMaps": {
+          "apiKey": "${EXPO_PUBLIC_GOOGLE_MAPS_API_KEY}"
+        }
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to let you share them with the property owner.",
+          "cameraPermission": "The app accesses your camera to let you take check-in photos."
+        }
+      ]
+    ]
+  }
+}
