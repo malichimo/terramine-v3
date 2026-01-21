@@ -32,7 +32,7 @@
       ],
       "config": {
         "googleMaps": {
-          "apiKey": "${AIzaSyCWOew8UMeRv3Xw4yVTrl55pAufJD3I1lQ}"
+          "apiKey": "AIzaSyCWOew8UMeRv3Xw4yVTrl55pAufJD3I1lQ"
         }
       }
     },
