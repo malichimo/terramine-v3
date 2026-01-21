@@ -33,7 +33,7 @@
       "config": {
         "googleMobileAdsAppId": "${EXPO_PUBLIC_ADMOB_ANDROID_APP_ID}",
         "googleMaps": {
-          "apiKey": "${EXPO_PUBLIC_GOOGLE_MAPS_API_KEY}"
+          "apiKey": "${AIzaSyCWOew8UMeRv3Xw4yVTrl55pAufJD3I1lQ}"
         }
       }
     },
