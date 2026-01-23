@@ -3,11 +3,11 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { NavigationContainer } from '@react-navigation/native';
 import MapScreen from './screens/MapScreen';
 import ProfileScreen from './screens/ProfileScreen';
-import LoadingScreen from './components/LoadingScreen';
 import { GridSquare } from './utils/GridUtils';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from './contexts/AuthContext';
 import { DatabaseService } from './services/DatabaseService';
+import { View, ActivityIndicator } from 'react-native';
 
 const Tab = createBottomTabNavigator();
 const dbService = new DatabaseService();
@@ -15,11 +15,17 @@ const dbService = new DatabaseService();
 export default function MainNavigator() {
   const { user } = useAuth();
   const [userTB, setUserTB] = useState(1000);
+  const [usdEarnings, setUsdEarnings] = useState(0);
   const [ownedProperties, setOwnedProperties] = useState<GridSquare[]>([]);
   const [allProperties, setAllProperties] = useState<GridSquare[]>([]);
   const [totalCheckIns, setTotalCheckIns] = useState(0);
   const [totalTBEarned, setTotalTBEarned] = useState(0);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [boostState, setBoostState] = useState<{
+    freeBoostsRemaining: number;
+    boostExpiresAt: string | null;
+    nextFreeBoostResetAt: string | null;
+  } | undefined>(undefined);
   const username = user?.displayName || user?.email?.split('@')[0] || 'User';
   const mapRef = useRef<any>(null);
 
@@ -47,29 +53,30 @@ export default function MainNavigator() {
       // Load all properties (so you can see other users' properties)
       const allProps = await dbService.getAllProperties();
 
-      console.log('=== All Properties from DB ===');
-      console.log('Count:', allProps.length);
-      allProps.forEach(prop => {
-        console.log('Property:', {
-          id: prop.id,
-          isOwned: prop.isOwned,
-          ownerId: prop.ownerId,
-          mineType: prop.mineType
-        });
-      });
-
       setUserTB(userData?.tbBalance || 1000);
+      setUsdEarnings(userData?.usdEarnings || 0);
       setOwnedProperties(properties);
       setAllProperties(allProps);
       setTotalCheckIns(userData?.totalCheckIns || 0);
       setTotalTBEarned(userData?.totalTBEarned || 0);
       
+      // Store boost state for passing to MapScreen
+      const boostState = {
+        freeBoostsRemaining: userData?.freeBoostsRemaining ?? 4,
+        boostExpiresAt: userData?.boostExpiresAt || null,
+        nextFreeBoostResetAt: userData?.nextFreeBoostResetAt || null,
+      };
+      
       console.log('Loaded from Firestore:', {
         tb: userData?.tbBalance,
+        usd: userData?.usdEarnings,
         ownedCount: properties.length,
-        allPropertiesCount: allProps.length
+        allPropertiesCount: allProps.length,
+        boostState,
       });
 
+      // Store in state to pass to MapScreen
+      setBoostState(boostState);
       setDataLoaded(true);
     } catch (error) {
       console.error('Error loading data:', error);
@@ -95,17 +102,11 @@ export default function MainNavigator() {
     }
   };
 
-  const handleCheckIn = async (
-    propertyId: string, 
-    tbEarned: number, 
-    propertyOwnerId: string, 
-    message?: string, 
-    photoUri?: string
-  ) => {
+  const handleCheckIn = async (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean) => {
     if (!user) return;
 
     try {
-      await dbService.createCheckIn(user.uid, propertyId, propertyOwnerId, message, photoUri);
+      await dbService.createCheckIn(user.uid, propertyId, propertyOwnerId, message, hasPhoto);
       await dbService.updateUserBalance(user.uid, tbEarned);
       
       setUserTB(prev => prev + tbEarned);
@@ -119,31 +120,33 @@ export default function MainNavigator() {
     }
   };
 
+  const handleEarningsUpdate = async (usdAmount: number) => {
+    if (!user) return;
+
+    try {
+      await dbService.updateUSDEarnings(user.uid, usdAmount);
+      
+      setUsdEarnings(prev => prev + usdAmount);
+
+      console.log(`Earnings saved! User earned $${usdAmount.toFixed(8)} USD from property rent`);
+    } catch (error) {
+      console.error('Error saving earnings:', error);
+      throw error;
+    }
+  };
+
   const handlePropertyPress = (property: GridSquare) => {
     if (mapRef.current) {
       mapRef.current.navigateToProperty(property);
     }
   };
 
-  const handlePropertyUpdate = async () => {
-    // Reload properties from database to get updated nicknames
-    if (!user) return;
-    
-    try {
-      const properties = await dbService.getPropertiesByOwner(user.uid);
-      const allProps = await dbService.getAllProperties();
-      
-      setOwnedProperties(properties);
-      setAllProperties(allProps);
-      
-      console.log('Properties reloaded after nickname update');
-    } catch (error) {
-      console.error('Error reloading properties:', error);
-    }
-  };
-
   if (!dataLoaded) {
-    return <LoadingScreen />;
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#2196F3" />
+      </View>
+    );
   }
 
   return (
@@ -174,10 +177,13 @@ export default function MainNavigator() {
               userId={user?.uid || ''}
               username={username}
               userTB={userTB}
+              usdEarnings={usdEarnings}
               ownedProperties={ownedProperties}
               allProperties={allProperties}
+              initialBoostState={boostState}
               onPropertyPurchase={handlePropertyPurchase}
               onCheckIn={handleCheckIn}
+              onEarningsUpdate={handleEarningsUpdate}
             />
           )}
         </Tab.Screen>
@@ -191,7 +197,6 @@ export default function MainNavigator() {
               totalCheckIns={totalCheckIns}
               totalTBEarned={totalTBEarned}
               onPropertyPress={handlePropertyPress}
-              onPropertyUpdate={handlePropertyUpdate}
             />
           )}
         </Tab.Screen>
