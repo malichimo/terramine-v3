@@ -20,7 +20,7 @@ export interface GridSquare {
   mineType: 'rock' | 'coal' | 'gold' | 'diamond';
   isOwned: boolean;
   ownerId?: string;
-  nickname?: string;
+  ownerNickname?: string;
 }
 
 /**

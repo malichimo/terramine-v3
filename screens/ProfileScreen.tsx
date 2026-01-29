@@ -1,12 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Image, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { StyleSheet, View, Text, ScrollView, TouchableOpacity, SafeAreaView, ActivityIndicator, Image } from 'react-native';
 import { GridSquare } from '../utils/GridUtils';
 import { useAuth } from '../contexts/AuthContext';
 import { DatabaseService } from '../services/DatabaseService';
-import EditProfileModal from '../components/EditProfileModal';
-import PhotoModal from '../components/PhotoModal';
-import PropertyNicknameModal from '../components/PropertyNicknameModal';
 
 interface ProfileScreenProps {
   username: string;
@@ -15,18 +11,17 @@ interface ProfileScreenProps {
   totalCheckIns: number;
   totalTBEarned: number;
   onPropertyPress: (property: GridSquare) => void;
-  onPropertyUpdate?: () => void;
 }
 
 interface CheckInData {
   id: string;
   userId: string;
-  visitorName?: string;
+  visitorNickname?: string;
   propertyId: string;
   propertyOwnerId: string;
   message?: string;
   hasPhoto: boolean;
-  photoURL?: string;
+  photoUri?: string;
   timestamp: string;
 }
 
@@ -36,18 +31,12 @@ export default function ProfileScreen({
   ownedProperties, 
   totalCheckIns,
   totalTBEarned,
-  onPropertyPress,
-  onPropertyUpdate
+  onPropertyPress 
 }: ProfileScreenProps) {
   const [activeTab, setActiveTab] = useState<'portfolio' | 'properties' | 'visitors' | 'activity'>('portfolio');
   const [propertyCheckIns, setPropertyCheckIns] = useState<{[key: string]: CheckInData[]}>({});
   const [loadingCheckIns, setLoadingCheckIns] = useState(false);
-  const [showEditProfile, setShowEditProfile] = useState(false);
-  const [displayUsername, setDisplayUsername] = useState(username);
-  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
-  const [usernames, setUsernames] = useState<{[userId: string]: string}>({});
-  const [editingProperty, setEditingProperty] = useState<GridSquare | null>(null);
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const dbService = new DatabaseService();
 
   // Load check-ins for owned properties when Visitors tab is selected
@@ -63,65 +52,20 @@ export default function ProfileScreen({
     setLoadingCheckIns(true);
     try {
       const checkInsByProperty: {[key: string]: CheckInData[]} = {};
-      const uniqueUserIds = new Set<string>();
       
       // Load check-ins for each owned property
       for (const property of ownedProperties) {
         const checkIns = await dbService.getCheckInsForProperty(property.id);
         if (checkIns.length > 0) {
           checkInsByProperty[property.id] = checkIns;
-          // Collect unique user IDs
-          checkIns.forEach(checkIn => uniqueUserIds.add(checkIn.userId));
         }
       }
       
       setPropertyCheckIns(checkInsByProperty);
-      
-      // Fetch usernames for all visitors
-      const usernamePromises = Array.from(uniqueUserIds).map(async (userId) => {
-        const username = await getUsernameForId(userId);
-        return { userId, username };
-      });
-      
-      const usernameResults = await Promise.all(usernamePromises);
-      const usernameMap: {[key: string]: string} = {};
-      usernameResults.forEach(({ userId, username }) => {
-        usernameMap[userId] = username;
-      });
-      
-      setUsernames(usernameMap);
     } catch (error) {
       console.error('Error loading check-ins:', error);
     } finally {
       setLoadingCheckIns(false);
-    }
-  };
-
-  const handleSaveProfile = (profileData: any) => {
-    try {
-      // Here you would update the username in Firebase/Firestore
-      // For now, just update locally
-      if (profileData.username) {
-        setDisplayUsername(profileData.username);
-      }
-      setShowEditProfile(false);
-      Alert.alert('Success', 'Profile updated successfully!');
-    } catch (error) {
-      console.error('Error saving profile:', error);
-      Alert.alert('Error', 'Failed to update profile');
-    }
-  };
-
-  const handleSavePropertyNickname = async (propertyId: string, nickname: string) => {
-    try {
-      await dbService.updatePropertyNickname(propertyId, nickname);
-      // Trigger property list refresh
-      if (onPropertyUpdate) {
-        onPropertyUpdate();
-      }
-    } catch (error) {
-      console.error('Error updating property nickname:', error);
-      throw error;
     }
   };
 
@@ -151,11 +95,11 @@ export default function ProfileScreen({
 
   const getMineIcon = (type: string) => {
     switch (type) {
-      case 'rock': return '🪨';
-      case 'coal': return '⚫';
-      case 'gold': return '🟡';
-      case 'diamond': return '💎';
-      default: return '⬜';
+      case 'rock': return String.fromCodePoint(0x1FAA8);
+      case 'coal': return String.fromCodePoint(0x26AB);
+      case 'gold': return String.fromCodePoint(0x1F7E1);
+      case 'diamond': return String.fromCodePoint(0x1F48E);
+      default: return String.fromCodePoint(0x2B1C);
     }
   };
 
@@ -170,70 +114,49 @@ export default function ProfileScreen({
   };
 
   const formatTimestamp = (timestamp: string) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
+    try {
+      const date = new Date(timestamp);
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return 'Invalid Date';
+      }
+      
+      const now = new Date();
+      const diffMs = now.getTime() - date.getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
+      if (diffMins < 1) return 'Just now';
+      if (diffMins < 60) return `${diffMins}m ago`;
+      if (diffHours < 24) return `${diffHours}h ago`;
+      if (diffDays < 7) return `${diffDays}d ago`;
+      return date.toLocaleDateString();
+    } catch (error) {
+      console.error('Error formatting timestamp:', timestamp, error);
+      return 'Invalid Date';
+    }
   };
 
   // Calculate total visitors across all properties
   const totalVisitors = Object.values(propertyCheckIns).reduce((sum, checkIns) => sum + checkIns.length, 0);
 
-  const getUsernameForId = async (userId: string): Promise<string> => {
-    // Check cache first
-    if (usernames[userId]) {
-      return usernames[userId];
-    }
-    
-    // Fetch from database
-    try {
-      const userData = await dbService.getUserData(userId);
-      const username = userData?.email?.split('@')[0] || userId.substring(0, 8);
-      
-      // Cache it
-      setUsernames(prev => ({
-        ...prev,
-        [userId]: username
-      }));
-      
-      return username;
-    } catch (error) {
-      console.error('Error fetching username:', error);
-      return userId.substring(0, 8);
-    }
-  };
-
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.headerLeft}>
+        <View>
           <Text style={styles.headerTitle}>My Profile</Text>
-          <Text style={styles.headerUsername}>@{displayUsername}</Text>
+          <Text style={styles.headerUsername}>@{username}</Text>
         </View>
         <View style={styles.headerRight}>
           <View style={styles.tbBadge}>
-            <Text style={styles.tbBadgeText}>💰 {userTB} TB</Text>
+            <Text style={styles.tbBadgeText}>{String.fromCodePoint(0x1F4B0)} {userTB} TB</Text>
           </View>
-          <View style={styles.headerButtons}>
-            <TouchableOpacity 
-              style={styles.editButton} 
-              onPress={() => setShowEditProfile(true)}
-            >
-              <Text style={styles.editButtonText}>Edit Profile</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.logoutButton} onPress={signOut}>
-              <Text style={styles.logoutText}>Logout</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={styles.logoutButton} onPress={useAuth().signOut}>
+            <Text style={styles.logoutText}>Logout</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -342,7 +265,7 @@ export default function ProfileScreen({
 
               <View style={styles.mineTypeCard}>
                 <View style={styles.mineTypeHeader}>
-                  <Text style={styles.mineTypeIcon}>💎</Text>
+                  <Text style={styles.mineTypeIcon}>ðŸ’Ž</Text>
                   <View style={styles.mineTypeInfo}>
                     <Text style={styles.mineTypeName}>Diamond Mines</Text>
                     <Text style={styles.mineTypeCount}>{propertiesByType.diamond} properties</Text>
@@ -360,7 +283,7 @@ export default function ProfileScreen({
           <View style={styles.propertiesTab}>
             {ownedProperties.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateIcon}>🗺️</Text>
+                <Text style={styles.emptyStateIcon}>ðŸ—ï¸</Text>
                 <Text style={styles.emptyStateTitle}>No Properties Yet</Text>
                 <Text style={styles.emptyStateText}>
                   Start exploring the map and purchase your first property!
@@ -368,21 +291,17 @@ export default function ProfileScreen({
               </View>
             ) : (
               ownedProperties.map((property, index) => (
-                <View key={property.id} style={styles.propertyCard}>
-                  <TouchableOpacity 
-                    style={styles.propertyCardLeft}
-                    onPress={() => onPropertyPress(property)}
-                  >
+                <TouchableOpacity 
+                  key={property.id} 
+                  style={styles.propertyCard}
+                  onPress={() => onPropertyPress(property)}
+                >
+                  <View style={styles.propertyCardLeft}>
                     <Text style={styles.propertyIcon}>{getMineIcon(property.mineType || 'rock')}</Text>
                     <View style={styles.propertyInfo}>
                       <Text style={styles.propertyType}>
-                        {property.nickname || `${property.mineType?.toUpperCase()} MINE`}
+                        {property.mineType?.toUpperCase()} MINE
                       </Text>
-                      {property.nickname && (
-                        <Text style={styles.propertySubtype}>
-                          {property.mineType?.toUpperCase()} MINE
-                        </Text>
-                      )}
                       <Text style={styles.propertyLocation}>
                         {property.centerLat.toFixed(6)}, {property.centerLng.toFixed(6)}
                       </Text>
@@ -390,14 +309,9 @@ export default function ProfileScreen({
                         ${(rentRates[property.mineType as keyof typeof rentRates] * 30).toFixed(6)}/month
                       </Text>
                     </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={styles.editPropertyButton}
-                    onPress={() => setEditingProperty(property)}
-                  >
-                    <Text style={styles.editPropertyIcon}>✏️</Text>
-                  </TouchableOpacity>
-                </View>
+                  </View>
+                  <Text style={styles.propertyArrow}>›</Text>
+                </TouchableOpacity>
               ))
             )}
           </View>
@@ -412,7 +326,7 @@ export default function ProfileScreen({
               </View>
             ) : ownedProperties.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateIcon}>🗺️</Text>
+                <Text style={styles.emptyStateIcon}>ðŸ—ï¸</Text>
                 <Text style={styles.emptyStateTitle}>No Properties Yet</Text>
                 <Text style={styles.emptyStateText}>
                   Purchase properties to see visitor check-ins!
@@ -420,7 +334,7 @@ export default function ProfileScreen({
               </View>
             ) : totalVisitors === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateIcon}>👋</Text>
+                <Text style={styles.emptyStateIcon}>ðŸ‘‹</Text>
                 <Text style={styles.emptyStateTitle}>No Visitors Yet</Text>
                 <Text style={styles.emptyStateText}>
                   Your properties haven't received any check-ins yet. Share your locations with friends!
@@ -464,7 +378,7 @@ export default function ProfileScreen({
                           <View key={checkIn.id} style={styles.visitorCheckInItem}>
                             <View style={styles.visitorCheckInHeader}>
                               <Text style={styles.visitorUserId}>
-                                {checkIn.userId === user?.uid ? 'You' : (checkIn.visitorName || usernames[checkIn.userId] || checkIn.userId.substring(0, 8))}
+                                {checkIn.userId === user?.uid ? 'You' : (checkIn.visitorNickname || checkIn.userId.substring(0, 8))}
                               </Text>
                               <Text style={styles.visitorTimestamp}>
                                 {formatTimestamp(checkIn.timestamp)}
@@ -473,23 +387,17 @@ export default function ProfileScreen({
                             {checkIn.message && (
                               <Text style={styles.visitorMessage}>"{checkIn.message}"</Text>
                             )}
-                            {checkIn.hasPhoto && (
+                            {checkIn.photoUri && (
+                              <Image 
+                                source={{ uri: checkIn.photoUri }}
+                                style={styles.checkInPhoto}
+                                resizeMode="cover"
+                              />
+                            )}
+                            {checkIn.hasPhoto && !checkIn.photoUri && (
                               <View style={styles.photoIndicator}>
                                 <Text style={styles.photoIndicatorText}>📷 Photo included</Text>
                               </View>
-                            )}
-                            {checkIn.photoURL && (
-                              <TouchableOpacity 
-                                style={styles.visitorPhotoContainer}
-                                onPress={() => setSelectedPhoto(checkIn.photoURL || null)}
-                                activeOpacity={0.9}
-                              >
-                                <Image 
-                                  source={{ uri: checkIn.photoURL }}
-                                  style={styles.visitorPhoto}
-                                  resizeMode="cover"
-                                />
-                              </TouchableOpacity>
                             )}
                           </View>
                         ))}
@@ -511,17 +419,17 @@ export default function ProfileScreen({
                 <Text style={styles.activityValue}>{totalCheckIns} visits</Text>
               </View>
             </View>
-
-            <View style={styles.activityCard}>
-              <Text style={styles.activityIcon}>💰</Text>
+              <Text style={styles.activityIcon}>{"\u{1F4B0}"}</Text>
+              <Text style={styles.activityIcon}>{String.fromCodePoint(0x1F4B0)}</Text>
+              <Text style={styles.activityIcon}>ðŸ’°</Text>
               <View style={styles.activityInfo}>
                 <Text style={styles.activityTitle}>TB Earned from Activities</Text>
                 <Text style={styles.activityValue}>{totalTBEarned} TB</Text>
               </View>
             </View>
-
-            <View style={styles.activityCard}>
-              <Text style={styles.activityIcon}>🏆</Text>
+              <Text style={styles.activityIcon}>{"\u{1F3C6}"}</Text>
+              <Text style={styles.activityIcon}>{String.fromCodePoint(0x1F3C6)}</Text>
+              <Text style={styles.activityIcon}>ðŸ†</Text>
               <View style={styles.activityInfo}>
                 <Text style={styles.activityTitle}>Properties Purchased</Text>
                 <Text style={styles.activityValue}>{ownedProperties.length} TerraAcres</Text>
@@ -531,7 +439,7 @@ export default function ProfileScreen({
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Recent Activity</Text>
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateIcon}>📊</Text>
+                <Text style={styles.emptyStateIcon}>ðŸ“Š</Text>
                 <Text style={styles.emptyStateText}>
                   Activity feed coming soon!
                 </Text>
@@ -540,19 +448,6 @@ export default function ProfileScreen({
           </View>
         )}
       </ScrollView>
-      
-      <PhotoModal 
-        visible={!!selectedPhoto}
-        photoURL={selectedPhoto}
-        onClose={() => setSelectedPhoto(null)}
-      />
-      
-      <PropertyNicknameModal
-        visible={!!editingProperty}
-        property={editingProperty}
-        onClose={() => setEditingProperty(null)}
-        onSave={handleSavePropertyNickname}
-      />
     </SafeAreaView>
   );
 }
@@ -564,7 +459,7 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: 'white',
-    paddingTop: 20,
+    paddingTop: 60,
     paddingBottom: 20,
     paddingHorizontal: 20,
     flexDirection: 'row',
@@ -572,9 +467,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
-  },
-  headerLeft: {
-    flex: 1,
   },
   headerTitle: {
     fontSize: 24,
@@ -586,12 +478,8 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   headerRight: {
-    alignItems: 'flex-end',
-  },
-  headerButtons: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     gap: 8,
-    marginTop: 8,
   },
   tbBadge: {
     backgroundColor: '#4CAF50',
@@ -603,17 +491,6 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: 'bold',
     fontSize: 16,
-  },
-  editButton: {
-    backgroundColor: '#2B6B94',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 15,
-  },
-  editButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 14,
   },
   logoutButton: {
     backgroundColor: '#f44336',
@@ -700,7 +577,7 @@ const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 10,
     flexDirection: 'row',
-    justifyContent: 'flex-start',
+    justifyContent: 'space-between',
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -712,6 +589,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
+    marginRight: 10,
   },
   mineTypeIcon: {
     fontSize: 32,
@@ -733,8 +611,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
     color: '#4CAF50',
-    marginLeft: 'auto',
-    paddingLeft: 10,
+    flexShrink: 1,
+    textAlign: 'right',
+    maxWidth: 120,
   },
   propertiesTab: {
     padding: 15,
@@ -780,18 +659,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#4CAF50',
     fontWeight: '600',
-  },
-  propertySubtype: {
-    fontSize: 12,
-    color: '#999',
-    marginBottom: 2,
-  },
-  editPropertyButton: {
-    padding: 8,
-    marginLeft: 10,
-  },
-  editPropertyIcon: {
-    fontSize: 20,
   },
   propertyArrow: {
     fontSize: 24,
@@ -905,16 +772,11 @@ const styles = StyleSheet.create({
     color: '#9C27B0',
     fontWeight: '600',
   },
-  visitorPhotoContainer: {
-    marginTop: 8,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: '#f0f0f0',
-  },
-  visitorPhoto: {
+  checkInPhoto: {
     width: '100%',
     height: 200,
-    backgroundColor: '#e0e0e0',
+    borderRadius: 8,
+    marginTop: 8,
   },
   activityTab: {
     padding: 15,

@@ -27,7 +27,7 @@ interface MapScreenProps {
     nextFreeBoostResetAt: string | null;
   };
   onPropertyPurchase: (property: GridSquare, tbSpent: number) => void;
-  onCheckIn: (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean) => Promise<void>;
+  onCheckIn: (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) => Promise<void>;
   onEarningsUpdate?: (tbEarned: number) => Promise<void>;
 }
 
@@ -123,6 +123,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   // Boost timer effect
   useEffect(() => {
     if (boostActive && boostTimeRemaining > 0) {
+      let lastSaveTime = Date.now();
+      
       boostTimerRef.current = setInterval(() => {
         setBoostTimeRemaining(prev => {
           if (prev <= 1) {
@@ -133,6 +135,14 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
             }
             return 0;
           }
+          
+          // Save to Firebase every 30 seconds
+          const timeSinceLastSave = Date.now() - lastSaveTime;
+          if (timeSinceLastSave >= 30000) {
+            saveBoostData();
+            lastSaveTime = Date.now();
+          }
+          
           return prev - 1;
         });
       }, 1000);
@@ -141,6 +151,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         if (boostTimerRef.current) {
           clearInterval(boostTimerRef.current);
         }
+        // Save when component unmounts (user logs out)
+        saveBoostData();
       };
     }
   }, [boostActive, boostTimeRemaining]);
@@ -285,7 +297,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     }
   };
 
-  const activateFreeBoost = () => {
+  const activateFreeBoost = async () => {
     if (freeBoostsRemaining <= 0) {
       Alert.alert('No Free Boosts', 'You have no free boosts remaining. Wait for the timer to reset or watch an ad.');
       return;
@@ -304,19 +316,42 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     
     const timeAdded = newBoostTime - boostTimeRemaining;
     const minutesAdded = Math.floor(timeAdded / 60);
+    const newFreeBoosts = freeBoostsRemaining - 1;
 
-    setFreeBoostsRemaining(prev => prev - 1);
-    setBoostActive(true);
-    setBoostTimeRemaining(newBoostTime);
-    
-    // Set next free boost reset time if this was the last boost
+    // Calculate next free boost reset time if this will be the last boost
+    let newResetTime = nextFreeBoostTime;
     if (freeBoostsRemaining === 1) {
       const resetTime = new Date();
       resetTime.setHours(resetTime.getHours() + 6); // Reset in 6 hours
+      newResetTime = resetTime;
       setNextFreeBoostTime(resetTime);
     }
+
+    // Update state
+    setFreeBoostsRemaining(newFreeBoosts);
+    setBoostActive(true);
+    setBoostTimeRemaining(newBoostTime);
     
-    saveBoostData();
+    // Save to Firebase with the NEW values
+    try {
+      const boostExpiresAt = new Date(Date.now() + newBoostTime * 1000).toISOString();
+      const nextFreeBoostResetAt = newResetTime ? newResetTime.toISOString() : null;
+
+      await dbService.updateBoostState(userId, {
+        freeBoostsRemaining: newFreeBoosts,
+        boostExpiresAt,
+        nextFreeBoostResetAt,
+      });
+
+      console.log('Boost state saved to Firebase:', {
+        freeBoostsRemaining: newFreeBoosts,
+        boostExpiresAt,
+        nextFreeBoostResetAt,
+      });
+    } catch (error) {
+      console.error('Error saving boost data:', error);
+    }
+    
     setShowBoostModal(false);
     Alert.alert('Boost Activated!', `Added ${minutesAdded} minutes! Total boost time: ${formatBoostTime(newBoostTime)}\n\nYou will earn 2x earnings!`);
   };
@@ -360,8 +395,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         mapRef.current.animateToRegion({
           latitude: location.latitude,
           longitude: location.longitude,
-          latitudeDelta: 0.005,
-          longitudeDelta: 0.005,
+          latitudeDelta: 0.001,
+          longitudeDelta: 0.001,
         }, 1000);
       }
       
@@ -505,7 +540,9 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         tbEarned, 
         selectedSquare.ownerId, 
         checkInMessage.trim() || undefined,
-        !!photoUri
+        !!photoUri,
+        photoUri || undefined,
+        username
       );
       
       const boostText = boostActive ? ' (2x Boost Applied!)' : '';
@@ -547,6 +584,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       ...selectedSquare,
       isOwned: true,
       ownerId: userId,
+      ownerNickname: username,
       mineType,
     };
     
@@ -634,11 +672,11 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         initialRegion={{
           latitude: userLocation?.latitude || 42.3601,
           longitude: userLocation?.longitude || -71.0589,
-          latitudeDelta: 0.005,
-          longitudeDelta: 0.005,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
         }}
         showsUserLocation
-        showsMyLocationButton
+        showsMyLocationButton={false}
         followsUserLocation={false}
       >
         {Array.from(gridSquares.entries()).map(([squareId, square]) => (
@@ -646,8 +684,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
             key={`polygon-${squareId}`}
             coordinates={square.corners}
             fillColor={getSquareFillColor(square)}
-            strokeColor={getSquareStrokeColor(square)}
-            strokeWidth={2}
+            strokeColor={selectedSquare?.id === square.id ? '#FF0000' : getSquareStrokeColor(square)}
+            strokeWidth={selectedSquare?.id === square.id ? 4 : 2}
             tappable
             onPress={() => handleSquarePress(square)}
           />
@@ -694,6 +732,23 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       <View style={styles.tbDisplay}>
         <Text style={styles.tbText}>💰 {userTB} TB</Text>
       </View>
+
+      {/* Custom Location Button - Bottom Right */}
+      <TouchableOpacity
+        style={styles.locationButton}
+        onPress={() => {
+          if (userLocation && mapRef.current) {
+            mapRef.current.animateToRegion({
+              latitude: userLocation.latitude,
+              longitude: userLocation.longitude,
+              latitudeDelta: 0.001,
+              longitudeDelta: 0.001,
+            }, 1000);
+          }
+        }}
+      >
+        <Text style={styles.locationButtonIcon}>📍</Text>
+      </TouchableOpacity>
 
       {/* Earning Boost Modal */}
       <Modal
@@ -770,7 +825,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           {selectedSquare.isOwned ? (
             <View>
               <Text style={styles.usernameText}>
-                Owner: {selectedSquare.ownerId === userId ? 'You' : selectedSquare.ownerId}
+                Owner: {selectedSquare.ownerId === userId ? 'You' : (selectedSquare.ownerNickname || selectedSquare.ownerId)}
               </Text>
               {selectedSquare.ownerId !== userId && (
                 <>
@@ -994,6 +1049,25 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: 'white',
+  },
+  locationButton: {
+    position: 'absolute',
+    bottom: 100,
+    right: 20,
+    backgroundColor: 'white',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  locationButtonIcon: {
+    fontSize: 24,
   },
   modalOverlay: {
     flex: 1,

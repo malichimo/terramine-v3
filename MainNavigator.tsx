@@ -102,11 +102,11 @@ export default function MainNavigator() {
     }
   };
 
-  const handleCheckIn = async (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean) => {
+  const handleCheckIn = async (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) => {
     if (!user) return;
 
     try {
-      await dbService.createCheckIn(user.uid, propertyId, propertyOwnerId, message, hasPhoto);
+      await dbService.createCheckIn(user.uid, propertyId, propertyOwnerId, message, hasPhoto, photoUri, visitorNickname);
       await dbService.updateUserBalance(user.uid, tbEarned);
       
       setUserTB(prev => prev + tbEarned);

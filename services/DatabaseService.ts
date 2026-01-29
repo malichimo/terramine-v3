@@ -74,6 +74,7 @@ export class DatabaseService {
     await setDoc(propertyRef, {
       id: property.id,
       ownerId: userId,
+      ownerNickname: property.ownerNickname || userId,
       mineType: property.mineType,
       centerLat: property.centerLat,
       centerLng: property.centerLng,
@@ -98,6 +99,7 @@ export class DatabaseService {
         corners: data.corners,
         isOwned: true,
         ownerId: data.ownerId,
+        ownerNickname: data.ownerNickname,
         mineType: data.mineType as 'rock' | 'coal' | 'gold' | 'diamond',
       };
     });
@@ -133,16 +135,17 @@ export class DatabaseService {
         corners: data.corners,
         isOwned: true,
         ownerId: data.ownerId,
+        ownerNickname: data.ownerNickname,
         mineType: data.mineType,
       };
     });
   }
 
-  // Check-ins - FIXED to properly handle messages
-  async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean) {
+  // Check-ins - FIXED to properly handle messages and photos
+  async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) {
     const checkInRef = doc(collection(db, 'checkIns'));
     
-    // Create check-in document with proper message handling
+    // Create check-in document with proper message and photo handling
     const checkInData: any = {
       userId,
       propertyId,
@@ -151,9 +154,19 @@ export class DatabaseService {
       timestamp: new Date().toISOString(),
     };
     
+    // Add visitor nickname if provided
+    if (visitorNickname) {
+      checkInData.visitorNickname = visitorNickname;
+    }
+    
     // Only add message field if it exists and is not empty
     if (message && message.trim() !== '') {
       checkInData.message = message.trim();
+    }
+    
+    // Only add photoUri if photo was taken
+    if (hasPhoto && photoUri) {
+      checkInData.photoUri = photoUri;
     }
     
     await setDoc(checkInRef, checkInData);
@@ -172,8 +185,10 @@ export class DatabaseService {
     
     console.log('Check-in saved to Firebase:', {
       propertyId,
+      visitorNickname,
       hasMessage: !!message,
       hasPhoto: hasPhoto || false,
+      hasPhotoUri: !!photoUri,
       messageLength: message?.length || 0
     });
   }
@@ -191,10 +206,12 @@ export class DatabaseService {
       return {
         id: doc.id,
         userId: data.userId,
+        visitorNickname: data.visitorNickname || undefined,
         propertyId: data.propertyId,
         propertyOwnerId: data.propertyOwnerId,
         message: data.message || undefined, // Convert null to undefined
         hasPhoto: data.hasPhoto || false,
+        photoUri: data.photoUri || undefined,
         timestamp: data.timestamp,
       };
     });
