@@ -226,7 +226,7 @@ export default function ProfileScreen({
               
               <View style={styles.mineTypeCard}>
                 <View style={styles.mineTypeHeader}>
-                  <Text style={styles.mineTypeIcon}>{getMineIcon('rock')}</Text>
+                  <Text style={styles.mineTypeIcon}>🪨</Text>
                   <View style={styles.mineTypeInfo}>
                     <Text style={styles.mineTypeName}>Rock Mines</Text>
                     <Text style={styles.mineTypeCount}>{propertiesByType.rock} properties</Text>
@@ -239,7 +239,7 @@ export default function ProfileScreen({
 
               <View style={styles.mineTypeCard}>
                 <View style={styles.mineTypeHeader}>
-                  <Text style={styles.mineTypeIcon}>{getMineIcon('coal')}</Text>
+                  <Text style={styles.mineTypeIcon}>⚫</Text>
                   <View style={styles.mineTypeInfo}>
                     <Text style={styles.mineTypeName}>Coal Mines</Text>
                     <Text style={styles.mineTypeCount}>{propertiesByType.coal} properties</Text>
@@ -252,7 +252,7 @@ export default function ProfileScreen({
 
               <View style={styles.mineTypeCard}>
                 <View style={styles.mineTypeHeader}>
-                  <Text style={styles.mineTypeIcon}>{getMineIcon('gold')}</Text>
+                  <Text style={styles.mineTypeIcon}>🟡</Text>
                   <View style={styles.mineTypeInfo}>
                     <Text style={styles.mineTypeName}>Gold Mines</Text>
                     <Text style={styles.mineTypeCount}>{propertiesByType.gold} properties</Text>
@@ -265,7 +265,7 @@ export default function ProfileScreen({
 
               <View style={styles.mineTypeCard}>
                 <View style={styles.mineTypeHeader}>
-                  <Text style={styles.mineTypeIcon}>{getMineIcon('diamond')}</Text>
+                  <Text style={styles.mineTypeIcon}>ðŸ’Ž</Text>
                   <View style={styles.mineTypeInfo}>
                     <Text style={styles.mineTypeName}>Diamond Mines</Text>
                     <Text style={styles.mineTypeCount}>{propertiesByType.diamond} properties</Text>
