@@ -95,11 +95,11 @@ export default function ProfileScreen({
 
   const getMineIcon = (type: string) => {
     switch (type) {
-      case 'rock': return String.fromCodePoint(0x1FAA8);
-      case 'coal': return String.fromCodePoint(0x26AB);
-      case 'gold': return String.fromCodePoint(0x1F7E1);
-      case 'diamond': return String.fromCodePoint(0x1F48E);
-      default: return String.fromCodePoint(0x2B1C);
+      case 'rock': return '🪨';
+      case 'coal': return '⚫';
+      case 'gold': return '🟡';
+      case 'diamond': return '💎';
+      default: return '⬜';
     }
   };
 
@@ -152,7 +152,7 @@ export default function ProfileScreen({
         </View>
         <View style={styles.headerRight}>
           <View style={styles.tbBadge}>
-            <Text style={styles.tbBadgeText}>{String.fromCodePoint(0x1F4B0)} {userTB} TB</Text>
+            <Text style={styles.tbBadgeText}>💰 {userTB} TB</Text>
           </View>
           <TouchableOpacity style={styles.logoutButton} onPress={useAuth().signOut}>
             <Text style={styles.logoutText}>Logout</Text>
@@ -419,17 +419,17 @@ export default function ProfileScreen({
                 <Text style={styles.activityValue}>{totalCheckIns} visits</Text>
               </View>
             </View>
-              <Text style={styles.activityIcon}>{"\u{1F4B0}"}</Text>
-              <Text style={styles.activityIcon}>{String.fromCodePoint(0x1F4B0)}</Text>
-              <Text style={styles.activityIcon}>ðŸ’°</Text>
+
+            <View style={styles.activityCard}>
+              <Text style={styles.activityIcon}>💰</Text>
               <View style={styles.activityInfo}>
                 <Text style={styles.activityTitle}>TB Earned from Activities</Text>
                 <Text style={styles.activityValue}>{totalTBEarned} TB</Text>
               </View>
             </View>
-              <Text style={styles.activityIcon}>{"\u{1F3C6}"}</Text>
-              <Text style={styles.activityIcon}>{String.fromCodePoint(0x1F3C6)}</Text>
-              <Text style={styles.activityIcon}>ðŸ†</Text>
+
+            <View style={styles.activityCard}>
+              <Text style={styles.activityIcon}>🏆</Text>
               <View style={styles.activityInfo}>
                 <Text style={styles.activityTitle}>Properties Purchased</Text>
                 <Text style={styles.activityValue}>{ownedProperties.length} TerraAcres</Text>
@@ -439,7 +439,7 @@ export default function ProfileScreen({
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Recent Activity</Text>
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateIcon}>ðŸ“Š</Text>
+                <Text style={styles.emptyStateIcon}>📊</Text>
                 <Text style={styles.emptyStateText}>
                   Activity feed coming soon!
                 </Text>
