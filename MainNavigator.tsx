@@ -15,17 +15,20 @@ const dbService = new DatabaseService();
 export default function MainNavigator() {
   const { user } = useAuth();
   const [userTB, setUserTB] = useState(1000);
-  const [usdEarnings, setUsdEarnings] = useState(0);
   const [ownedProperties, setOwnedProperties] = useState<GridSquare[]>([]);
   const [allProperties, setAllProperties] = useState<GridSquare[]>([]);
   const [totalCheckIns, setTotalCheckIns] = useState(0);
   const [totalTBEarned, setTotalTBEarned] = useState(0);
   const [dataLoaded, setDataLoaded] = useState(false);
-  const [boostState, setBoostState] = useState<{
-    freeBoostsRemaining: number;
-    boostExpiresAt: string | null;
-    nextFreeBoostResetAt: string | null;
-  } | undefined>(undefined);
+  
+  // Boost state
+  const [boostState, setBoostState] = useState({
+    freeBoostsRemaining: 4,
+    adBoostsUsed: 0,
+    boostExpiresAt: null as string | null,
+    nextFreeBoostResetAt: null as string | null,
+  });
+  
   const username = user?.displayName || user?.email?.split('@')[0] || 'User';
   const mapRef = useRef<any>(null);
 
@@ -54,29 +57,30 @@ export default function MainNavigator() {
       const allProps = await dbService.getAllProperties();
 
       setUserTB(userData?.tbBalance || 1000);
-      setUsdEarnings(userData?.usdEarnings || 0);
       setOwnedProperties(properties);
       setAllProperties(allProps);
       setTotalCheckIns(userData?.totalCheckIns || 0);
       setTotalTBEarned(userData?.totalTBEarned || 0);
       
-      // Store boost state for passing to MapScreen
-      const boostState = {
+      // Load boost state
+      setBoostState({
         freeBoostsRemaining: userData?.freeBoostsRemaining ?? 4,
-        boostExpiresAt: userData?.boostExpiresAt || null,
-        nextFreeBoostResetAt: userData?.nextFreeBoostResetAt || null,
-      };
+        adBoostsUsed: userData?.adBoostsUsed ?? 0,
+        boostExpiresAt: userData?.boostExpiresAt ?? null,
+        nextFreeBoostResetAt: userData?.nextFreeBoostResetAt ?? null,
+      });
       
       console.log('Loaded from Firestore:', {
         tb: userData?.tbBalance,
-        usd: userData?.usdEarnings,
         ownedCount: properties.length,
         allPropertiesCount: allProps.length,
-        boostState,
+        boostState: {
+          freeBoosts: userData?.freeBoostsRemaining ?? 4,
+          adBoosts: userData?.adBoostsUsed ?? 0,
+          expiresAt: userData?.boostExpiresAt,
+        }
       });
 
-      // Store in state to pass to MapScreen
-      setBoostState(boostState);
       setDataLoaded(true);
     } catch (error) {
       console.error('Error loading data:', error);
@@ -102,11 +106,11 @@ export default function MainNavigator() {
     }
   };
 
-  const handleCheckIn = async (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) => {
+  const handleCheckIn = async (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean) => {
     if (!user) return;
 
     try {
-      await dbService.createCheckIn(user.uid, propertyId, propertyOwnerId, message, hasPhoto, photoUri, visitorNickname);
+      await dbService.createCheckIn(user.uid, propertyId, propertyOwnerId, message, hasPhoto);
       await dbService.updateUserBalance(user.uid, tbEarned);
       
       setUserTB(prev => prev + tbEarned);
@@ -120,19 +124,13 @@ export default function MainNavigator() {
     }
   };
 
-  const handleEarningsUpdate = async (usdAmount: number) => {
-    if (!user) return;
-
-    try {
-      await dbService.updateUSDEarnings(user.uid, usdAmount);
-      
-      setUsdEarnings(prev => prev + usdAmount);
-
-      console.log(`Earnings saved! User earned $${usdAmount.toFixed(8)} USD from property rent`);
-    } catch (error) {
-      console.error('Error saving earnings:', error);
-      throw error;
-    }
+  const handleBoostUpdate = (newBoostData: {
+    freeBoostsRemaining?: number;
+    adBoostsUsed?: number;
+    boostExpiresAt: string | null;
+    nextFreeBoostResetAt: string | null;
+  }) => {
+    setBoostState(prev => ({ ...prev, ...newBoostData }));
   };
 
   const handlePropertyPress = (property: GridSquare) => {
@@ -177,13 +175,12 @@ export default function MainNavigator() {
               userId={user?.uid || ''}
               username={username}
               userTB={userTB}
-              usdEarnings={usdEarnings}
               ownedProperties={ownedProperties}
               allProperties={allProperties}
-              initialBoostState={boostState}
               onPropertyPurchase={handlePropertyPurchase}
               onCheckIn={handleCheckIn}
-              onEarningsUpdate={handleEarningsUpdate}
+              initialBoostState={boostState}
+              onBoostUpdate={handleBoostUpdate}
             />
           )}
         </Tab.Screen>

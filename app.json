@@ -15,8 +15,8 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.terramine.app",
       "config": {
+        "googleMobileAdsAppId": "ca-app-pub-4502698429383902~3587962923"
       }
     },
     "android": {
@@ -26,14 +26,14 @@
       },
       "package": "com.terramine.app",
       "permissions": [
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.RECORD_AUDIO"
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
       ],
       "config": {
         "googleMaps": {
-          "apiKey": "AIzaSyCWOew8UMeRv3Xw4yVTrl55pAufJD3I1lQ"
-        }
+          "apiKey": "AIzaSyBsh79SG1PlF7WMA8b_ObYMrGatmhSWrtc"
+        },
+        "googleMobileAdsAppId": "ca-app-pub-4502698429383902~4525995296"
       }
     },
     "web": {
@@ -47,12 +47,15 @@
           "photosPermission": "The app accesses your photos to let you share them with the property owner.",
           "cameraPermission": "The app accesses your camera to let you take check-in photos."
         }
-      ]
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "7137937a-c2a0-4f44-82fb-66ae790710a1"
-      }
-    }
+      ],
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-4502698429383902~4525995296",
+          "iosAppId": "ca-app-pub-4502698429383902~3587962923"
+        }
+      ],
+      "./app.plugin.js"
+    ]
   }
 }

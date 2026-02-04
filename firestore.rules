@@ -1,0 +1,67 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user owns the document
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    
+    // Users collection - users can read/write their own data
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if isOwner(userId);
+      allow delete: if isOwner(userId);
+    }
+    
+    // Properties collection
+    match /properties/{propertyId} {
+      // Anyone can read properties (to see owned properties on map)
+      allow read: if isSignedIn();
+      
+      // Only authenticated users can create properties
+      // Must set ownerId to their own user ID
+      allow create: if isSignedIn() 
+                    && request.resource.data.ownerId == request.auth.uid;
+      
+      // Only property owner can update
+      allow update: if isSignedIn() 
+                    && resource.data.ownerId == request.auth.uid;
+      
+      // Only property owner can delete
+      allow delete: if isSignedIn() 
+                    && resource.data.ownerId == request.auth.uid;
+    }
+    
+    // Check-ins collection
+    match /checkIns/{checkInId} {
+      // Anyone can read check-ins (to see visitor history)
+      allow read: if isSignedIn();
+      
+      // Only authenticated users can create check-ins
+      // Must set userId to their own user ID
+      allow create: if isSignedIn() 
+                    && request.resource.data.userId == request.auth.uid;
+      
+      // Only the user who created the check-in can update it
+      allow update: if isSignedIn() 
+                    && resource.data.userId == request.auth.uid;
+      
+      // Only the user who created the check-in can delete it
+      allow delete: if isSignedIn() 
+                    && resource.data.userId == request.auth.uid;
+    }
+    
+    // Deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

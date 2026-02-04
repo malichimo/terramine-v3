@@ -26,22 +26,26 @@ export class DatabaseService {
     await setDoc(userRef, {
       email,
       tbBalance: 1000,
-      usdEarnings: 0, // Add USD earnings tracking
       totalCheckIns: 0,
       totalTBEarned: 0,
-      // Boost tracking
+      usdEarnings: 0,
       freeBoostsRemaining: 4,
+      adBoostsUsed: 0,
       boostExpiresAt: null,
       nextFreeBoostResetAt: null,
       createdAt: new Date().toISOString(),
     });
   }
 
-  async updateUserBalance(userId: string, amount: number) {
+  // Boost management
+  async updateBoostState(userId: string, boostData: {
+    freeBoostsRemaining?: number;
+    adBoostsUsed?: number;
+    boostExpiresAt: string | null;
+    nextFreeBoostResetAt: string | null;
+  }) {
     const userRef = doc(db, 'users', userId);
-    await updateDoc(userRef, {
-      tbBalance: increment(amount),
-    });
+    await updateDoc(userRef, boostData);
   }
 
   async updateUSDEarnings(userId: string, amount: number) {
@@ -51,13 +55,11 @@ export class DatabaseService {
     });
   }
 
-  async updateBoostState(userId: string, boostData: {
-    freeBoostsRemaining: number;
-    boostExpiresAt: string | null;
-    nextFreeBoostResetAt: string | null;
-  }) {
+  async updateUserBalance(userId: string, amount: number) {
     const userRef = doc(db, 'users', userId);
-    await updateDoc(userRef, boostData);
+    await updateDoc(userRef, {
+      tbBalance: increment(amount),
+    });
   }
 
   // Properties
@@ -74,7 +76,6 @@ export class DatabaseService {
     await setDoc(propertyRef, {
       id: property.id,
       ownerId: userId,
-      ownerNickname: property.ownerNickname || userId,
       mineType: property.mineType,
       centerLat: property.centerLat,
       centerLng: property.centerLng,
@@ -99,7 +100,6 @@ export class DatabaseService {
         corners: data.corners,
         isOwned: true,
         ownerId: data.ownerId,
-        ownerNickname: data.ownerNickname,
         mineType: data.mineType as 'rock' | 'coal' | 'gold' | 'diamond',
       };
     });
@@ -135,17 +135,16 @@ export class DatabaseService {
         corners: data.corners,
         isOwned: true,
         ownerId: data.ownerId,
-        ownerNickname: data.ownerNickname,
         mineType: data.mineType,
       };
     });
   }
 
-  // Check-ins - FIXED to properly handle messages and photos
-  async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) {
+  // Check-ins - FIXED to properly handle messages
+  async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean) {
     const checkInRef = doc(collection(db, 'checkIns'));
     
-    // Create check-in document with proper message and photo handling
+    // Create check-in document with proper message handling
     const checkInData: any = {
       userId,
       propertyId,
@@ -154,19 +153,9 @@ export class DatabaseService {
       timestamp: new Date().toISOString(),
     };
     
-    // Add visitor nickname if provided
-    if (visitorNickname) {
-      checkInData.visitorNickname = visitorNickname;
-    }
-    
     // Only add message field if it exists and is not empty
     if (message && message.trim() !== '') {
       checkInData.message = message.trim();
-    }
-    
-    // Only add photoUri if photo was taken
-    if (hasPhoto && photoUri) {
-      checkInData.photoUri = photoUri;
     }
     
     await setDoc(checkInRef, checkInData);
@@ -185,10 +174,8 @@ export class DatabaseService {
     
     console.log('Check-in saved to Firebase:', {
       propertyId,
-      visitorNickname,
       hasMessage: !!message,
       hasPhoto: hasPhoto || false,
-      hasPhotoUri: !!photoUri,
       messageLength: message?.length || 0
     });
   }
@@ -206,12 +193,10 @@ export class DatabaseService {
       return {
         id: doc.id,
         userId: data.userId,
-        visitorNickname: data.visitorNickname || undefined,
         propertyId: data.propertyId,
         propertyOwnerId: data.propertyOwnerId,
         message: data.message || undefined, // Convert null to undefined
         hasPhoto: data.hasPhoto || false,
-        photoUri: data.photoUri || undefined,
         timestamp: data.timestamp,
       };
     });
