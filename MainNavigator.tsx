@@ -1,34 +1,34 @@
+// MainNavigator.tsx - UPDATED FOR PHASE 2 PROPERTYDETAILSCREEN
+
 import React, { useState, useRef, useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createStackNavigator } from '@react-navigation/stack';
 import { NavigationContainer } from '@react-navigation/native';
 import MapScreen from './screens/MapScreen';
 import ProfileScreen from './screens/ProfileScreen';
+import PropertyDetailScreen from './screens/PropertyDetailScreen';
+import UpgradeScreen from './screens/UpgradeScreen';
+import MemoryMatchScreen from './screens/games/MemoryMatch/MemoryMatchScreen';
 import { GridSquare } from './utils/GridUtils';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from './contexts/AuthContext';
 import { DatabaseService } from './services/DatabaseService';
 import { View, ActivityIndicator } from 'react-native';
+import DailyActivityScreen from './screens/DailyActivityScreen';
 
 const Tab = createBottomTabNavigator();
+const Stack = createStackNavigator();
 const dbService = new DatabaseService();
 
 export default function MainNavigator() {
   const { user } = useAuth();
   const [userTB, setUserTB] = useState(1000);
+  const [usdEarnings, setUsdEarnings] = useState(0);
   const [ownedProperties, setOwnedProperties] = useState<GridSquare[]>([]);
   const [allProperties, setAllProperties] = useState<GridSquare[]>([]);
   const [totalCheckIns, setTotalCheckIns] = useState(0);
   const [totalTBEarned, setTotalTBEarned] = useState(0);
   const [dataLoaded, setDataLoaded] = useState(false);
-  
-  // Boost state
-  const [boostState, setBoostState] = useState({
-    freeBoostsRemaining: 4,
-    adBoostsUsed: 0,
-    boostExpiresAt: null as string | null,
-    nextFreeBoostResetAt: null as string | null,
-  });
-  
   const username = user?.displayName || user?.email?.split('@')[0] || 'User';
   const mapRef = useRef<any>(null);
 
@@ -57,28 +57,16 @@ export default function MainNavigator() {
       const allProps = await dbService.getAllProperties();
 
       setUserTB(userData?.tbBalance || 1000);
+      setUsdEarnings(userData?.usdEarnings || 0);
       setOwnedProperties(properties);
       setAllProperties(allProps);
       setTotalCheckIns(userData?.totalCheckIns || 0);
       setTotalTBEarned(userData?.totalTBEarned || 0);
       
-      // Load boost state
-      setBoostState({
-        freeBoostsRemaining: userData?.freeBoostsRemaining ?? 4,
-        adBoostsUsed: userData?.adBoostsUsed ?? 0,
-        boostExpiresAt: userData?.boostExpiresAt ?? null,
-        nextFreeBoostResetAt: userData?.nextFreeBoostResetAt ?? null,
-      });
-      
       console.log('Loaded from Firestore:', {
         tb: userData?.tbBalance,
         ownedCount: properties.length,
-        allPropertiesCount: allProps.length,
-        boostState: {
-          freeBoosts: userData?.freeBoostsRemaining ?? 4,
-          adBoosts: userData?.adBoostsUsed ?? 0,
-          expiresAt: userData?.boostExpiresAt,
-        }
+        allPropertiesCount: allProps.length
       });
 
       setDataLoaded(true);
@@ -124,16 +112,8 @@ export default function MainNavigator() {
     }
   };
 
-  const handleBoostUpdate = (newBoostData: {
-    freeBoostsRemaining?: number;
-    adBoostsUsed?: number;
-    boostExpiresAt: string | null;
-    nextFreeBoostResetAt: string | null;
-  }) => {
-    setBoostState(prev => ({ ...prev, ...newBoostData }));
-  };
-
-  const handlePropertyPress = (property: GridSquare) => {
+  // ✨ UPDATED: Old function that navigated to map
+  const handlePropertyPressFromMap = (property: GridSquare) => {
     if (mapRef.current) {
       mapRef.current.navigateToProperty(property);
     }
@@ -144,6 +124,42 @@ export default function MainNavigator() {
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator size="large" color="#2196F3" />
       </View>
+    );
+  }
+
+  // ✨ NEW: Profile Stack with PropertyDetailScreen
+  function ProfileStackNavigator() {
+    return (
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="ProfileMain">
+          {(props) => (
+            <ProfileScreen
+              {...props as any}
+              userTB={userTB}
+              username={username}
+              ownedProperties={ownedProperties}
+              totalCheckIns={totalCheckIns}
+              totalTBEarned={totalTBEarned}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen 
+          name="PropertyDetail" 
+          component={PropertyDetailScreen as any}
+        />
+        <Stack.Screen 
+          name="DailyActivity" 
+          component={DailyActivityScreen as any}
+        />
+        <Stack.Screen 
+          name="Upgrade" 
+          component={UpgradeScreen as any}
+        />
+        <Stack.Screen 
+          name="MemoryMatch" 
+          component={MemoryMatchScreen as any}
+        />
+      </Stack.Navigator>
     );
   }
 
@@ -175,28 +191,16 @@ export default function MainNavigator() {
               userId={user?.uid || ''}
               username={username}
               userTB={userTB}
+              usdEarnings={usdEarnings}
               ownedProperties={ownedProperties}
               allProperties={allProperties}
               onPropertyPurchase={handlePropertyPurchase}
               onCheckIn={handleCheckIn}
-              initialBoostState={boostState}
-              onBoostUpdate={handleBoostUpdate}
             />
           )}
         </Tab.Screen>
-        <Tab.Screen name="Profile">
-          {(props) => (
-            <ProfileScreen
-              {...props}
-              userTB={userTB}
-              username={username}
-              ownedProperties={ownedProperties}
-              totalCheckIns={totalCheckIns}
-              totalTBEarned={totalTBEarned}
-              onPropertyPress={handlePropertyPress}
-            />
-          )}
-        </Tab.Screen>
+        {/* ✨ CHANGED: Use ProfileStackNavigator instead of ProfileScreen directly */}
+        <Tab.Screen name="Profile" component={ProfileStackNavigator} />
       </Tab.Navigator>
     </NavigationContainer>
   );
