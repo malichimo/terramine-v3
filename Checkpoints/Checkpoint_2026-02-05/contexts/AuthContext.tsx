@@ -13,7 +13,7 @@ interface AuthContextType {
   loading: boolean;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<void>;
-  signOut: (onBeforeSignOut?: () => Promise<void>) => Promise<void>;
+  signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -57,20 +57,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signOut = async (onBeforeSignOut?: () => Promise<void>) => {
+  const signOut = async () => {
     try {
-      // CRITICAL: Save all data BEFORE signing out
-      if (onBeforeSignOut) {
-        console.log('🔵 Saving data before sign out...');
-        await onBeforeSignOut();
-        console.log('✅ Data saved successfully');
-      }
-      
-      // Now it's safe to sign out
       await firebaseSignOut(auth);
-      console.log('👋 Sign out complete');
     } catch (error) {
-      console.error('❌ Sign Out Error:', error);
+      console.error('Sign Out Error:', error);
     }
   };
 

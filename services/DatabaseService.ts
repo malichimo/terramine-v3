@@ -1,4 +1,4 @@
-import { db } from '../firebaseConfig';
+import { db, storage } from '../firebaseConfig';
 import { 
   collection, 
   doc, 
@@ -9,11 +9,31 @@ import {
   where,
   updateDoc,
   increment,
-  serverTimestamp
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { GridSquare } from '../utils/GridUtils';
+import { dbServicePhase2 } from './DatabaseServicePhase2';
+
+export interface BoostState {
+  freeBoostsRemaining: number;
+  adBoostsRemaining: number;
+  boostExpiresAt: string | null;
+  nextFreeBoostResetAt: string | null;
+  lastAdBoostRefillAt: string | null;
+}
 
 export class DatabaseService {
+    private getNext4AMEST(): Date {
+    const now = new Date();
+    const estOffset = -5 * 60;
+    const estNow = new Date(now.getTime() + estOffset * 60 * 1000);
+    const next4AM = new Date(estNow);
+    next4AM.setHours(4, 0, 0, 0);
+    if (estNow.getHours() >= 4) {
+      next4AM.setDate(next4AM.getDate() + 1);
+    }
+    return new Date(next4AM.getTime() - estOffset * 60 * 1000);
+  }
   // User data
   async getUserData(userId: string) {
     const docRef = doc(db, 'users', userId);
@@ -28,30 +48,21 @@ export class DatabaseService {
       tbBalance: 1000,
       totalCheckIns: 0,
       totalTBEarned: 0,
-      usdEarnings: 0,
+      
+      // Phase 2: Initialize resource pools
+      rockResources: { common: 0, uncommon: 0, rare: 0, epic: 0 },
+      coalResources: { common: 0, uncommon: 0, rare: 0, epic: 0 },
+      goldResources: { common: 0, uncommon: 0, rare: 0, epic: 0 },
+      diamondResources: { common: 0, uncommon: 0, rare: 0, epic: 0 },
+      
+      // Phase 2: Initialize boost fields
       freeBoostsRemaining: 4,
-      adBoostsUsed: 0,
+      adBoostsRemaining: 12,  // ✅ ADDED THIS
       boostExpiresAt: null,
       nextFreeBoostResetAt: null,
+      lastAdBoostRefillAt: new Date().toISOString(),  // ✅ ADDED THIS
+      
       createdAt: new Date().toISOString(),
-    });
-  }
-
-  // Boost management
-  async updateBoostState(userId: string, boostData: {
-    freeBoostsRemaining?: number;
-    adBoostsUsed?: number;
-    boostExpiresAt: string | null;
-    nextFreeBoostResetAt: string | null;
-  }) {
-    const userRef = doc(db, 'users', userId);
-    await updateDoc(userRef, boostData);
-  }
-
-  async updateUSDEarnings(userId: string, amount: number) {
-    const userRef = doc(db, 'users', userId);
-    await updateDoc(userRef, {
-      usdEarnings: increment(amount),
     });
   }
 
@@ -62,17 +73,195 @@ export class DatabaseService {
     });
   }
 
+  async updateUSDEarnings(userId: string, amount: number) {
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+      usdEarnings: increment(amount),
+    });
+  }
+
+  // Boost State Management
+  async getBoostState(userId: string): Promise<BoostState> {
+    const userData = await this.getUserData(userId);
+    
+    if (!userData) {
+      return {
+        freeBoostsRemaining: 4,
+        adBoostsRemaining: 12,
+        boostExpiresAt: null,
+        nextFreeBoostResetAt: null,
+        lastAdBoostRefillAt: new Date().toISOString(),
+      };
+    }
+
+    const now = new Date();
+    
+    // ✅ CHECK IF FREE BOOSTS SHOULD RESET
+    let freeBoostsRemaining = userData.freeBoostsRemaining ?? 4;
+    let nextFreeBoostResetAt = userData.nextFreeBoostResetAt ?? null;
+    
+    // If we have a reset time set and it's in the past, reset the boosts
+    if (nextFreeBoostResetAt && new Date(nextFreeBoostResetAt) < now) {
+      freeBoostsRemaining = 4;
+      nextFreeBoostResetAt = null;
+      
+      // Update in Firebase
+      const userRef = doc(db, 'users', userId);
+      await updateDoc(userRef, {
+        freeBoostsRemaining: 4,
+        nextFreeBoostResetAt: null,
+      });
+      
+      console.log('✅ Free boosts reset to 4 (passed reset time)');
+    }
+    
+    const lastRefill = userData.lastAdBoostRefillAt 
+      ? new Date(userData.lastAdBoostRefillAt) 
+      : now;
+    
+    let adBoostsRemaining = userData.adBoostsRemaining ?? 0;
+    
+    // Auto-refill ad boosts if less than 12
+    if (adBoostsRemaining < 12) {
+      const minutesSinceRefill = (now.getTime() - lastRefill.getTime()) / (1000 * 60);
+      const boostsToAdd = Math.floor(minutesSinceRefill / 30);
+      
+      if (boostsToAdd > 0) {
+        adBoostsRemaining = Math.min(12, adBoostsRemaining + boostsToAdd);
+        
+        const newRefillTime = new Date(lastRefill.getTime() + (boostsToAdd * 30 * 60 * 1000));
+        
+        await this.updateBoostState(userId, {
+          freeBoostsRemaining: userData.freeBoostsRemaining ?? 4,
+          adBoostsRemaining,
+          boostExpiresAt: userData.boostExpiresAt ?? null,
+          nextFreeBoostResetAt: userData.nextFreeBoostResetAt ?? null,
+          lastAdBoostRefillAt: newRefillTime.toISOString(),
+        });
+      }
+    }
+
+    return {
+      freeBoostsRemaining,  // ✅ Use updated value
+      adBoostsRemaining,
+      boostExpiresAt: userData.boostExpiresAt ?? null,
+      nextFreeBoostResetAt,  // ✅ Use updated value
+      lastAdBoostRefillAt: userData.lastAdBoostRefillAt ?? new Date().toISOString(),
+    };
+  }
+
+  async updateBoostState(userId: string, boostState: BoostState) {
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+      freeBoostsRemaining: boostState.freeBoostsRemaining,
+      adBoostsRemaining: boostState.adBoostsRemaining,
+      boostExpiresAt: boostState.boostExpiresAt,
+      nextFreeBoostResetAt: boostState.nextFreeBoostResetAt,
+      lastAdBoostRefillAt: boostState.lastAdBoostRefillAt,
+    });
+  }
+
+  async useFreeBoost(userId: string, currentBoostState: BoostState): Promise<BoostState> {
+    const now = new Date();
+    
+    let newExpiryTime: Date;
+    if (currentBoostState.boostExpiresAt) {
+      const currentExpiry = new Date(currentBoostState.boostExpiresAt);
+      if (currentExpiry > now) {
+        newExpiryTime = new Date(currentExpiry.getTime() + 30 * 60 * 1000);
+      } else {
+        newExpiryTime = new Date(now.getTime() + 30 * 60 * 1000);
+      }
+    } else {
+      newExpiryTime = new Date(now.getTime() + 30 * 60 * 1000);
+    }
+
+    const maxExpiryTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    if (newExpiryTime > maxExpiryTime) {
+      newExpiryTime = maxExpiryTime;
+    }
+
+    const newState: BoostState = {
+      freeBoostsRemaining: currentBoostState.freeBoostsRemaining - 1,
+      adBoostsRemaining: currentBoostState.adBoostsRemaining,
+      boostExpiresAt: newExpiryTime.toISOString(),
+      nextFreeBoostResetAt: currentBoostState.nextFreeBoostResetAt 
+        ? currentBoostState.nextFreeBoostResetAt  // ✅ Already set, keep it
+        : this.getNext4AMEST().toISOString(),     // ✅ First boost used, set reset time
+      lastAdBoostRefillAt: currentBoostState.lastAdBoostRefillAt,
+    };
+
+    await this.updateBoostState(userId, newState);
+    return newState;
+  }
+
+  async useAdBoost(userId: string, currentBoostState: BoostState): Promise<BoostState> {
+    const now = new Date();
+    
+    let newExpiryTime: Date;
+    if (currentBoostState.boostExpiresAt) {
+      const currentExpiry = new Date(currentBoostState.boostExpiresAt);
+      if (currentExpiry > now) {
+        newExpiryTime = new Date(currentExpiry.getTime() + 30 * 60 * 1000);
+      } else {
+        newExpiryTime = new Date(now.getTime() + 30 * 60 * 1000);
+      }
+    } else {
+      newExpiryTime = new Date(now.getTime() + 30 * 60 * 1000);
+    }
+
+    const maxExpiryTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    if (newExpiryTime > maxExpiryTime) {
+      newExpiryTime = maxExpiryTime;
+    }
+
+    const newState: BoostState = {
+      freeBoostsRemaining: currentBoostState.freeBoostsRemaining,
+      adBoostsRemaining: currentBoostState.adBoostsRemaining - 1,
+      boostExpiresAt: newExpiryTime.toISOString(),
+      nextFreeBoostResetAt: currentBoostState.nextFreeBoostResetAt,
+      lastAdBoostRefillAt: now.toISOString(),
+    };
+
+    await this.updateBoostState(userId, newState);
+    return newState;
+  }
+
+  // ✅ Upload photo to Firebase Storage
+  async uploadCheckInPhoto(userId: string, propertyId: string, photoUri: string): Promise<string> {
+    try {
+      // Create a unique filename
+      const timestamp = new Date().getTime();
+      const filename = `checkIns/${userId}/${propertyId}_${timestamp}.jpg`;
+      const storageRef = ref(storage, filename);
+      
+      // Convert URI to blob
+      const response = await fetch(photoUri);
+      const blob = await response.blob();
+      
+      // Upload to Firebase Storage
+      await uploadBytes(storageRef, blob);
+      
+      // Get download URL
+      const downloadUrl = await getDownloadURL(storageRef);
+      
+      console.log('✅ Photo uploaded successfully:', downloadUrl);
+      return downloadUrl;
+    } catch (error) {
+      console.error('❌ Error uploading photo:', error);
+      throw error;
+    }
+  }
+
   // Properties
   async purchaseProperty(userId: string, property: GridSquare, tbCost: number) {
     const propertyRef = doc(db, 'properties', property.id);
     
-    // Check if already owned
     const propertySnap = await getDoc(propertyRef);
     if (propertySnap.exists()) {
       throw new Error('Property already owned');
     }
 
-    // Save property
     await setDoc(propertyRef, {
       id: property.id,
       ownerId: userId,
@@ -83,8 +272,10 @@ export class DatabaseService {
       purchasedAt: new Date().toISOString(),
     });
 
-    // Deduct TB from user
     await this.updateUserBalance(userId, -tbCost);
+
+    await dbServicePhase2.initializePropertyDetails(property.id);
+    await dbServicePhase2.initializeUserResources(userId);
   }
 
   async getPropertiesByOwner(userId: string): Promise<GridSquare[]> {
@@ -140,11 +331,10 @@ export class DatabaseService {
     });
   }
 
-  // Check-ins - FIXED to properly handle messages
-  async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean) {
+  // ✅ UPDATED: Check-ins with photoUrl (download URL from Storage)
+  async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUrl?: string, visitorNickname?: string) {
     const checkInRef = doc(collection(db, 'checkIns'));
     
-    // Create check-in document with proper message handling
     const checkInData: any = {
       userId,
       propertyId,
@@ -153,20 +343,27 @@ export class DatabaseService {
       timestamp: new Date().toISOString(),
     };
     
-    // Only add message field if it exists and is not empty
     if (message && message.trim() !== '') {
       checkInData.message = message.trim();
     }
     
+    // ✅ Save photo URL (download URL from Firebase Storage)
+    if (photoUrl && photoUrl.trim() !== '') {
+      checkInData.photoUrl = photoUrl.trim();
+    }
+    
+    // ✅ Save visitor nickname if provided
+    if (visitorNickname && visitorNickname.trim() !== '') {
+      checkInData.visitorNickname = visitorNickname.trim();
+    }
+    
     await setDoc(checkInRef, checkInData);
 
-    // Update visitor stats
     const userRef = doc(db, 'users', userId);
     await updateDoc(userRef, {
       totalCheckIns: increment(1),
     });
 
-    // Reward property owner with 1 TB
     const ownerRef = doc(db, 'users', propertyOwnerId);
     await updateDoc(ownerRef, {
       tbBalance: increment(1),
@@ -176,11 +373,12 @@ export class DatabaseService {
       propertyId,
       hasMessage: !!message,
       hasPhoto: hasPhoto || false,
-      messageLength: message?.length || 0
+      hasPhotoUrl: !!photoUrl,
+      hasVisitorNickname: !!visitorNickname,
     });
   }
 
-  // Get check-ins for a property
+  // ✅ UPDATED: Return photoUrl in check-ins
   async getCheckInsForProperty(propertyId: string) {
     const q = query(
       collection(db, 'checkIns'), 
@@ -193,16 +391,17 @@ export class DatabaseService {
       return {
         id: doc.id,
         userId: data.userId,
+        visitorNickname: data.visitorNickname || undefined,
         propertyId: data.propertyId,
         propertyOwnerId: data.propertyOwnerId,
-        message: data.message || undefined, // Convert null to undefined
+        message: data.message || undefined,
         hasPhoto: data.hasPhoto || false,
+        photoUrl: data.photoUrl || undefined,
         timestamp: data.timestamp,
       };
     });
   }
 
-  // Get all check-ins by a user
   async getCheckInsByUser(userId: string) {
     const q = query(
       collection(db, 'checkIns'),
@@ -221,6 +420,13 @@ export class DatabaseService {
         hasPhoto: data.hasPhoto || false,
         timestamp: data.timestamp,
       };
+    });
+  }
+
+  async updateLastActiveTime(userId: string) {
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+      lastActiveAt: new Date().toISOString(),
     });
   }
 }

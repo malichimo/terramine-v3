@@ -74,5 +74,3 @@ coverage/
 build/
 dist/
 out/
-"Checkpoints/*.zip" 
-"*.zip" 

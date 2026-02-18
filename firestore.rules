@@ -1,5 +1,7 @@
-rules_version = '2';
+// Firestore Security Rules for TerraMine Phase 2
+// Copy this to Firebase Console > Firestore Database > Rules
 
+rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
@@ -8,60 +10,117 @@ service cloud.firestore {
       return request.auth != null;
     }
     
-    // Helper function to check if user owns the document
+    // Helper function to check if user owns a resource
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
     
-    // Users collection - users can read/write their own data
+    // ============================================
+    // USERS COLLECTION
+    // ============================================
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.auth.uid == userId;
+      // Users can read their own data
+      allow read: if isOwner(userId);
+      
+      // Users can create their own user document on signup
+      allow create: if isOwner(userId);
+      
+      // Users can update their own data (balance, resources, etc.)
       allow update: if isOwner(userId);
-      allow delete: if isOwner(userId);
+      
+      // No deletion allowed
+      allow delete: if false;
     }
     
-    // Properties collection
+    // ============================================
+    // PROPERTIES COLLECTION
+    // ============================================
     match /properties/{propertyId} {
-      // Anyone can read properties (to see owned properties on map)
-      allow read: if isSignedIn();
+      // Anyone can read properties (to see on map)
+      allow read: if true;
       
       // Only authenticated users can create properties
-      // Must set ownerId to their own user ID
-      allow create: if isSignedIn() 
-                    && request.resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() && 
+                      request.resource.data.ownerId == request.auth.uid;
       
       // Only property owner can update
-      allow update: if isSignedIn() 
-                    && resource.data.ownerId == request.auth.uid;
+      allow update: if isSignedIn() && 
+                      resource.data.ownerId == request.auth.uid;
       
-      // Only property owner can delete
-      allow delete: if isSignedIn() 
-                    && resource.data.ownerId == request.auth.uid;
+      // No deletion allowed
+      allow delete: if false;
     }
     
-    // Check-ins collection
+    // ============================================
+    // PROPERTY DETAILS COLLECTION (NEW)
+    // ============================================
+    match /propertyDetails/{propertyId} {
+      // Anyone can read property details (to see levels, stats)
+      allow read: if true;
+      
+      // Only authenticated users can create property details
+      // (created when property is purchased)
+      allow create: if isSignedIn();
+      
+      // Only the property owner can update details
+      // (levels, custom name, daily activities, etc.)
+      allow update: if isSignedIn() && 
+                      exists(/databases/$(database)/documents/properties/$(propertyId)) &&
+                      get(/databases/$(database)/documents/properties/$(propertyId)).data.ownerId == request.auth.uid;
+      
+      // No deletion allowed
+      allow delete: if false;
+    }
+    
+    // ============================================
+    // CHECK-INS COLLECTION
+    // ============================================
     match /checkIns/{checkInId} {
-      // Anyone can read check-ins (to see visitor history)
-      allow read: if isSignedIn();
+      // Users can read check-ins for properties they own
+      // or check-ins they made
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.propertyOwnerId == request.auth.uid
+      );
       
-      // Only authenticated users can create check-ins
-      // Must set userId to their own user ID
-      allow create: if isSignedIn() 
-                    && request.resource.data.userId == request.auth.uid;
+      // Users can create check-ins
+      allow create: if isSignedIn() && 
+                      request.resource.data.userId == request.auth.uid;
       
-      // Only the user who created the check-in can update it
-      allow update: if isSignedIn() 
-                    && resource.data.userId == request.auth.uid;
-      
-      // Only the user who created the check-in can delete it
-      allow delete: if isSignedIn() 
-                    && resource.data.userId == request.auth.uid;
+      // No updates or deletes
+      allow update, delete: if false;
     }
     
-    // Deny all other access
-    match /{document=**} {
-      allow read, write: if false;
+    // ============================================
+    // DAILY ACTIVITIES COLLECTION (NEW)
+    // ============================================
+    match /dailyActivities/{activityId} {
+      // Users can read their own daily activities
+      allow read: if isSignedIn() && 
+                    resource.data.userId == request.auth.uid;
+      
+      // Users can create daily activities
+      allow create: if isSignedIn() && 
+                      request.resource.data.userId == request.auth.uid;
+      
+      // No updates or deletes
+      allow update, delete: if false;
+    }
+    
+    // ============================================
+    // GAME RESULTS COLLECTION (NEW)
+    // ============================================
+    match /gameResults/{gameId} {
+      // Users can read their own game results
+      allow read: if isSignedIn() && 
+                    resource.data.userId == request.auth.uid;
+      
+      // Users can create game results
+      allow create: if isSignedIn() && 
+                      request.resource.data.userId == request.auth.uid;
+      
+      // No updates or deletes
+      allow update, delete: if false;
     }
   }
 }

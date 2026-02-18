@@ -5,34 +5,33 @@ import { useAuth } from '../contexts/AuthContext';
 import { DatabaseService } from '../services/DatabaseService';
 
 interface ProfileScreenProps {
-  navigation: any;
   username: string;
   userTB: number;
   ownedProperties: GridSquare[];
   totalCheckIns: number;
   totalTBEarned: number;
-  onSignOut: () => void;
+  onPropertyPress: (property: GridSquare) => void;
 }
 
 interface CheckInData {
   id: string;
   userId: string;
+  visitorNickname?: string;
   propertyId: string;
   propertyOwnerId: string;
   message?: string;
   hasPhoto: boolean;
-  photoUrl?: string;  // ✅ ADD
+  photoUri?: string;
   timestamp: string;
 }
 
 export default function ProfileScreen({ 
-  navigation,
   username,
   userTB, 
   ownedProperties, 
   totalCheckIns,
   totalTBEarned,
-  onSignOut
+  onPropertyPress 
 }: ProfileScreenProps) {
   const [activeTab, setActiveTab] = useState<'portfolio' | 'properties' | 'visitors' | 'activity'>('portfolio');
   const [propertyCheckIns, setPropertyCheckIns] = useState<{[key: string]: CheckInData[]}>({});
@@ -96,10 +95,10 @@ export default function ProfileScreen({
 
   const getMineIcon = (type: string) => {
     switch (type) {
-      case 'rock': return '⚪';
+      case 'rock': return '🪨';
       case 'coal': return '⚫';
       case 'gold': return '🟡';
-      case 'diamond': return '💎';
+      case 'diamond': return '\u{1F48E}'; // Unicode escape - safer for Windows copy
       default: return '⬜';
     }
   };
@@ -115,18 +114,29 @@ export default function ProfileScreen({
   };
 
   const formatTimestamp = (timestamp: string) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
+    try {
+      const date = new Date(timestamp);
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return 'Invalid Date';
+      }
+      
+      const now = new Date();
+      const diffMs = now.getTime() - date.getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
+      if (diffMins < 1) return 'Just now';
+      if (diffMins < 60) return `${diffMins}m ago`;
+      if (diffHours < 24) return `${diffHours}h ago`;
+      if (diffDays < 7) return `${diffDays}d ago`;
+      return date.toLocaleDateString();
+    } catch (error) {
+      console.error('Error formatting timestamp:', timestamp, error);
+      return 'Invalid Date';
+    }
   };
 
   // Calculate total visitors across all properties
@@ -144,7 +154,7 @@ export default function ProfileScreen({
           <View style={styles.tbBadge}>
             <Text style={styles.tbBadgeText}>💰 {userTB} TB</Text>
           </View>
-          <TouchableOpacity style={styles.logoutButton} onPress={onSignOut}>
+          <TouchableOpacity style={styles.logoutButton} onPress={useAuth().signOut}>
             <Text style={styles.logoutText}>Logout</Text>
           </TouchableOpacity>
         </View>
@@ -216,7 +226,7 @@ export default function ProfileScreen({
               
               <View style={styles.mineTypeCard}>
                 <View style={styles.mineTypeHeader}>
-                  <Text style={styles.mineTypeIcon}>{getMineIcon('rock')}</Text>
+                  <Text style={styles.mineTypeIcon}>🪨</Text>
                   <View style={styles.mineTypeInfo}>
                     <Text style={styles.mineTypeName}>Rock Mines</Text>
                     <Text style={styles.mineTypeCount}>{propertiesByType.rock} properties</Text>
@@ -229,7 +239,7 @@ export default function ProfileScreen({
 
               <View style={styles.mineTypeCard}>
                 <View style={styles.mineTypeHeader}>
-                  <Text style={styles.mineTypeIcon}>{getMineIcon('coal')}</Text>
+                  <Text style={styles.mineTypeIcon}>⚫</Text>
                   <View style={styles.mineTypeInfo}>
                     <Text style={styles.mineTypeName}>Coal Mines</Text>
                     <Text style={styles.mineTypeCount}>{propertiesByType.coal} properties</Text>
@@ -242,7 +252,7 @@ export default function ProfileScreen({
 
               <View style={styles.mineTypeCard}>
                 <View style={styles.mineTypeHeader}>
-                  <Text style={styles.mineTypeIcon}>{getMineIcon('gold')}</Text>
+                  <Text style={styles.mineTypeIcon}>🟡</Text>
                   <View style={styles.mineTypeInfo}>
                     <Text style={styles.mineTypeName}>Gold Mines</Text>
                     <Text style={styles.mineTypeCount}>{propertiesByType.gold} properties</Text>
@@ -255,7 +265,7 @@ export default function ProfileScreen({
 
               <View style={styles.mineTypeCard}>
                 <View style={styles.mineTypeHeader}>
-                  <Text style={styles.mineTypeIcon}>{getMineIcon('diamond')}</Text>
+                  <Text style={styles.mineTypeIcon}>ðŸ’Ž</Text>
                   <View style={styles.mineTypeInfo}>
                     <Text style={styles.mineTypeName}>Diamond Mines</Text>
                     <Text style={styles.mineTypeCount}>{propertiesByType.diamond} properties</Text>
@@ -284,12 +294,7 @@ export default function ProfileScreen({
                 <TouchableOpacity 
                   key={property.id} 
                   style={styles.propertyCard}
-                  onPress={() => {
-                    navigation.navigate('PropertyDetail', {
-                      property: property,
-                      userId: user?.uid || '',
-                    });
-                  }}
+                  onPress={() => onPropertyPress(property)}
                 >
                   <View style={styles.propertyCardLeft}>
                     <Text style={styles.propertyIcon}>{getMineIcon(property.mineType || 'rock')}</Text>
@@ -349,12 +354,7 @@ export default function ProfileScreen({
                   return (
                     <View key={property.id} style={styles.propertyVisitorsCard}>
                       <TouchableOpacity 
-                        onPress={() => {
-                          navigation.navigate('PropertyDetail', {
-                            property: property,
-                            userId: user?.uid || '',
-                          });
-                        }}
+                        onPress={() => onPropertyPress(property)}
                         style={styles.propertyVisitorsHeader}
                       >
                         <Text style={styles.propertyVisitorsIcon}>
@@ -378,7 +378,7 @@ export default function ProfileScreen({
                           <View key={checkIn.id} style={styles.visitorCheckInItem}>
                             <View style={styles.visitorCheckInHeader}>
                               <Text style={styles.visitorUserId}>
-                                {checkIn.userId === user?.uid ? 'You' : checkIn.userId.substring(0, 8)}
+                                {checkIn.userId === user?.uid ? 'You' : (checkIn.visitorNickname || checkIn.userId.substring(0, 8))}
                               </Text>
                               <Text style={styles.visitorTimestamp}>
                                 {formatTimestamp(checkIn.timestamp)}
@@ -387,13 +387,16 @@ export default function ProfileScreen({
                             {checkIn.message && (
                               <Text style={styles.visitorMessage}>"{checkIn.message}"</Text>
                             )}
-                            {checkIn.photoUrl && (
-                              <View style={styles.photoContainer}>
-                                <Image 
-                                  source={{ uri: checkIn.photoUrl }} 
-                                  style={styles.checkInPhoto}
-                                  resizeMode="cover"
-                                />
+                            {checkIn.photoUri && (
+                              <Image 
+                                source={{ uri: checkIn.photoUri }}
+                                style={styles.checkInPhoto}
+                                resizeMode="cover"
+                              />
+                            )}
+                            {checkIn.hasPhoto && !checkIn.photoUri && (
+                              <View style={styles.photoIndicator}>
+                                <Text style={styles.photoIndicatorText}>📷 Photo included</Text>
                               </View>
                             )}
                           </View>
@@ -571,8 +574,7 @@ const styles = StyleSheet.create({
   mineTypeCard: {
     backgroundColor: 'white',
     borderRadius: 10,
-    paddingVertical: 15,
-    paddingHorizontal: 10,
+    padding: 15,
     marginBottom: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -587,7 +589,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
-    marginRight: 8,
+    marginRight: 10,
   },
   mineTypeIcon: {
     fontSize: 32,
@@ -595,7 +597,6 @@ const styles = StyleSheet.create({
   },
   mineTypeInfo: {
     flex: 1,
-    minWidth: 0,
   },
   mineTypeName: {
     fontSize: 16,
@@ -607,10 +608,12 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   mineTypeEarnings: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: 'bold',
     color: '#4CAF50',
-    flexShrink: 0,
+    flexShrink: 1,
+    textAlign: 'right',
+    maxWidth: 120,
   },
   propertiesTab: {
     padding: 15,
@@ -769,15 +772,11 @@ const styles = StyleSheet.create({
     color: '#9C27B0',
     fontWeight: '600',
   },
-  photoContainer: {
-    marginTop: 8,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: '#f0f0f0',
-  },
   checkInPhoto: {
     width: '100%',
     height: 200,
+    borderRadius: 8,
+    marginTop: 8,
   },
   activityTab: {
     padding: 15,

@@ -3,15 +3,9 @@ import { StyleSheet, View, Text, TouchableOpacity, Alert, ScrollView, TextInput 
 import MapView, { Polygon, PROVIDER_GOOGLE, Marker } from 'react-native-maps';
 import * as ImagePicker from 'expo-image-picker';
 import { LocationService, Coordinates } from '../services/LocationService';
-import { DatabaseService, BoostState } from '../services/DatabaseService';
+import { DatabaseService } from '../services/DatabaseService';
 import { generateGridSquare, getVisibleGridSquares, isWithinGridSquare, isAdjacentToUser, GridSquare, gridToLatLng } from '../utils/GridUtils';
 import BoostModal from '../components/BoostModal';
-
-// Extend BoostState with computed properties used locally in MapScreen
-interface MapScreenBoostState extends BoostState {
-  boostTimeRemaining?: number; // minutes
-  isBoostActive?: boolean;
-}
 
 interface CheckIn {
   id: string;
@@ -27,9 +21,15 @@ interface MapScreenProps {
   userTB: number;
   ownedProperties: GridSquare[];
   allProperties: GridSquare[];
-  initialBoostState?: BoostState;
+  initialBoostState: {
+    freeBoostsRemaining: number;
+    adBoostsUsed: number;
+    boostExpiresAt: string | null;
+    nextFreeBoostResetAt: string | null;
+  };
   onPropertyPurchase: (property: GridSquare, tbSpent: number) => void;
   onCheckIn: (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) => Promise<void>;
+  onBoostUpdate: (boostData: any) => void;
   onEarningsUpdate?: (usdAmount: number) => Promise<void>;
   usdEarnings?: number;
 }
@@ -43,6 +43,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   initialBoostState,
   onPropertyPurchase,
   onCheckIn,
+  onBoostUpdate,
   onEarningsUpdate,
   usdEarnings = 0,
 }, ref) => {
@@ -56,18 +57,17 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const [propertyCheckIns, setPropertyCheckIns] = useState<Map<string, CheckIn[]>>(new Map());
   
   // Boost state
-  const [boostState, setBoostState] = useState<MapScreenBoostState>({
-    freeBoostsRemaining: initialBoostState?.freeBoostsRemaining ?? 4,
-    adBoostsRemaining: initialBoostState?.adBoostsRemaining ?? 12,
-    boostExpiresAt: initialBoostState?.boostExpiresAt ?? null,
-    nextFreeBoostResetAt: initialBoostState?.nextFreeBoostResetAt ?? null,
-    lastAdBoostRefillAt: initialBoostState?.lastAdBoostRefillAt ?? new Date().toISOString(),
+  const [boostState, setBoostState] = useState({
+    freeBoostsRemaining: initialBoostState.freeBoostsRemaining,
+    adBoostsUsed: initialBoostState.adBoostsUsed,
+    boostExpiresAt: initialBoostState.boostExpiresAt,
+    nextFreeBoostResetAt: initialBoostState.nextFreeBoostResetAt,
     boostTimeRemaining: 0,
     isBoostActive: false,
   });
 
   // Earnings state
-  const [currentEarnings, setCurrentEarnings] = useState(usdEarnings);
+  const [currentEarnings, setCurrentEarnings] = useState(0);
   
   const mapRef = useRef<MapView>(null);
   const locationService = useRef(new LocationService()).current;
@@ -75,7 +75,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const earningsTimerRef = useRef<NodeJS.Timeout | null>(null);
   const earningsStartTime = useRef<Date>(new Date());
 
-  // Expose methods to parent
+  // Expose method to navigate to property from Profile screen
   useImperativeHandle(ref, () => ({
     navigateToProperty: (property: GridSquare) => {
       if (mapRef.current) {
@@ -86,32 +86,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           longitudeDelta: 0.002,
         }, 1000);
         setSelectedSquare(property);
-      }
-    },
-    // NEW: Method to save all data before sign out
-    saveBeforeSignOut: async () => {
-      try {
-        console.log('💾 MapScreen: Saving data before sign out...');
-        
-        // Stop the earnings timer first
-        if (earningsTimerRef.current) {
-          clearInterval(earningsTimerRef.current);
-          earningsTimerRef.current = null;
-        }
-        
-        // Save any accumulated earnings
-        if (currentEarnings > 0) {
-          console.log(`💰 Saving $${currentEarnings.toFixed(8)} USD earnings`);
-          await saveEarningsToFirebase(currentEarnings);
-        }
-        
-        // Save last active time
-        await saveLastActiveTime();
-        
-        console.log('✅ MapScreen: All data saved');
-      } catch (error) {
-        console.error('❌ MapScreen: Error saving data:', error);
-        // Don't throw - allow sign out to continue
       }
     }
   }));
@@ -138,10 +112,9 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         }));
         dbService.updateBoostState(userId, {
           freeBoostsRemaining: boostState.freeBoostsRemaining,
-          adBoostsRemaining: boostState.adBoostsRemaining,
+          adBoostsUsed: boostState.adBoostsUsed,
           boostExpiresAt: null,
           nextFreeBoostResetAt: boostState.nextFreeBoostResetAt,
-          lastAdBoostRefillAt: boostState.lastAdBoostRefillAt,
         });
       } else {
         setBoostState(prev => ({ 
@@ -156,12 +129,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     const interval = setInterval(updateBoostTimer, 1000);
     return () => clearInterval(interval);
   }, [boostState.boostExpiresAt]);
-  useEffect(() => {
-    // Only sync if significantly different (avoid loops)
-    if (Math.abs(usdEarnings - currentEarnings) > 0.00000001) {
-      setCurrentEarnings(usdEarnings);
-    }
-  }, [usdEarnings]);
 
   // Check free boost reset
   useEffect(() => {
@@ -171,39 +138,22 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       const now = new Date();
       const resetAt = new Date(boostState.nextFreeBoostResetAt);
 
-      if (now >= resetAt && boostState.freeBoostsRemaining < 4) {  // ✅ Only reset if needed
-        const newState: BoostState = {
+      if (now >= resetAt) {
+        const newState = {
           freeBoostsRemaining: 4,
-          adBoostsRemaining: boostState.adBoostsRemaining,
+          adBoostsUsed: boostState.adBoostsUsed,
           boostExpiresAt: boostState.boostExpiresAt,
           nextFreeBoostResetAt: null,
-          lastAdBoostRefillAt: boostState.lastAdBoostRefillAt,
         };
         setBoostState(prev => ({ ...prev, ...newState }));
         dbService.updateBoostState(userId, newState);
       }
     };
 
+    checkResetTimer();
     const interval = setInterval(checkResetTimer, 60000);
     return () => clearInterval(interval);
-  }, []);  // ✅ Only run on mount
-
-  // Load boost state from Firebase ONCE on mount (includes auto-refill logic)
-  useEffect(() => {
-    const loadBoostState = async () => {
-      try {
-        const state = await dbService.getBoostState(userId);
-        setBoostState(state);
-        console.log('📊 Initial boost state loaded:', state);
-      } catch (error) {
-        console.error('Error loading boost state:', error);
-      }
-    };
-
-    loadBoostState();
-    // DON'T set up interval - it causes race conditions
-    // The boost handlers will update state directly
-  }, [userId]);
+  }, [boostState.nextFreeBoostResetAt]);
 
   // Earnings update timer - updates every 100ms
   useEffect(() => {
@@ -213,15 +163,14 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       earningsTimerRef.current = setInterval(() => {
         const now = new Date();
         const elapsedSeconds = (now.getTime() - earningsStartTime.current.getTime()) / 1000;
-        const sessionEarnings = calculateEarnings() * (elapsedSeconds / 60);
-        const totalEarnings = usdEarnings + sessionEarnings;
+        const newEarnings = calculateEarnings() * (elapsedSeconds / 60);
         
-        setCurrentEarnings(totalEarnings);
+        setCurrentEarnings(newEarnings);
         
         // Save to Firebase every minute
         const timeSinceLastSave = Date.now() - lastSaveTime;
         if (timeSinceLastSave >= 60000) {
-          saveEarningsToFirebase(totalEarnings);
+          saveEarningsToFirebase(newEarnings);
           lastSaveTime = Date.now();
         }
       }, 100);
@@ -235,7 +184,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         }
       };
     }
-  }, [ownedProperties, boostState.isBoostActive]);
+  }, [ownedProperties, currentEarnings, boostState.isBoostActive]);
 
   const calculateEarnings = (): number => {
     const rentRates = {
@@ -291,9 +240,13 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       locationService.stopWatchingLocation();
       if (earningsTimerRef.current) {
         clearInterval(earningsTimerRef.current);
+        // Save any remaining earnings
+        if (currentEarnings > 0) {
+          saveEarningsToFirebase(currentEarnings);
+        }
       }
-      // NOTE: Don't save here - saveBeforeSignOut() is called explicitly before sign out
-      // Cleanup still runs on unmount, but data is already saved
+      // Save logout time to Firebase for offline earnings calculation
+      saveLastActiveTime();
     };
   }, []);
 
@@ -344,7 +297,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       let boostedSeconds = 0;
       let unboostedSeconds = offlineSeconds;
 
-      if (initialBoostState?.boostExpiresAt) {
+      if (initialBoostState.boostExpiresAt) {
         const boostExpiry = new Date(initialBoostState.boostExpiresAt);
         
         // If boost was active during offline time
@@ -520,24 +473,11 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     if (!selectedSquare || !selectedSquare.ownerId) return;
     
     let photoUri = null;
-    let photoUrl = undefined;
     
-    // Take photo if requested
     if (withPhoto) {
       photoUri = await takePhoto();
       if (!photoUri) {
         return;
-      }
-      
-      // ✅ UPLOAD PHOTO TO FIREBASE STORAGE
-      try {
-        console.log('📤 Starting upload...');
-        photoUrl = await dbService.uploadCheckInPhoto(userId, selectedSquare.id, photoUri);
-        console.log('✅ Photo uploaded successfully');
-      } catch (uploadError) {
-        console.error('❌ Upload failed:', uploadError);
-        Alert.alert('Upload Failed', 'Check-in will be saved without photo.');
-        photoUri = null;
       }
     }
     
@@ -560,12 +500,11 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         selectedSquare.ownerId, 
         checkInMessage.trim() || undefined,
         !!photoUri,
-        photoUrl,
+        photoUri || undefined,
         username
       );
       
-      const boostText = boostState.isBoostActive ? ' (2x Boost Applied!)' : '';
-      Alert.alert('Success!', `Check-in complete! You earned ${tbEarned} TB${boostText}. The owner earned 1 TB.`);
+      Alert.alert('Success!', `Check-in complete! You earned ${tbEarned} TB${boostState.isBoostActive ? ' (2x boost!)' : ''}. The owner earned 1 TB.`);
       setCheckInMessage('');
       setShowCheckInModal(false);
     } catch (error) {
@@ -621,10 +560,40 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
 
   // Boost handlers
   const handleFreeBoost = async () => {
-    // Now handled by DatabaseService.useFreeBoost() method
+    if (boostState.freeBoostsRemaining <= 0) {
+      Alert.alert('No Free Boosts', 'You have no free boosts remaining.');
+      return;
+    }
+
+    const MAX_BOOST_MINUTES = 480;
+    if (boostState.boostTimeRemaining >= MAX_BOOST_MINUTES) {
+      Alert.alert('Max Boost Reached', 'You have reached the maximum boost time of 8 hours.');
+      return;
+    }
+
     try {
-      const newState = await dbService.useFreeBoost(userId, boostState);
-      setBoostState(newState);
+      const now = new Date();
+      const newExpiresAt = boostState.boostExpiresAt 
+        ? new Date(new Date(boostState.boostExpiresAt).getTime() + 30 * 60 * 1000)
+        : new Date(now.getTime() + 30 * 60 * 1000);
+      
+      const newFreeBoosts = boostState.freeBoostsRemaining - 1;
+      let resetAt = boostState.nextFreeBoostResetAt;
+      
+      if (newFreeBoosts === 0 && !resetAt) {
+        resetAt = new Date(now.getTime() + 6 * 60 * 60 * 1000).toISOString();
+      }
+      
+      const newState = {
+        freeBoostsRemaining: newFreeBoosts,
+        adBoostsUsed: boostState.adBoostsUsed,
+        boostExpiresAt: newExpiresAt.toISOString(),
+        nextFreeBoostResetAt: resetAt,
+      };
+      
+      await dbService.updateBoostState(userId, newState);
+      setBoostState(prev => ({ ...prev, ...newState }));
+      onBoostUpdate(newState);
       setShowBoostModal(false);
       Alert.alert('Boost Activated!', '+30 minutes of 2x earnings!');
     } catch (error) {
@@ -634,24 +603,38 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   };
 
   const handleAdBoost = async () => {
-    // This is now handled by the DatabaseService.useAdBoost() method
-    console.log('🎬 Ad boost clicked. Current state:', {
-      adBoostsRemaining: boostState.adBoostsRemaining,
-      boostExpiresAt: boostState.boostExpiresAt,
-    });
-    
+    const MAX_AD_BOOSTS = 12;
+    const MAX_BOOST_MINUTES = 480;
+
+    if (boostState.adBoostsUsed >= MAX_AD_BOOSTS) {
+      Alert.alert('No Ad Boosts', 'You have used all 12 ad boosts.');
+      return;
+    }
+
+    if (boostState.boostTimeRemaining >= MAX_BOOST_MINUTES) {
+      Alert.alert('Max Boost Reached', 'You have reached the maximum boost time of 8 hours.');
+      return;
+    }
+
     try {
-      const newState = await dbService.useAdBoost(userId, boostState);
-      console.log('✅ Ad boost activated. New state:', {
-        adBoostsRemaining: newState.adBoostsRemaining,
-        boostExpiresAt: newState.boostExpiresAt,
-      });
+      const now = new Date();
+      const newExpiresAt = boostState.boostExpiresAt 
+        ? new Date(new Date(boostState.boostExpiresAt).getTime() + 30 * 60 * 1000)
+        : new Date(now.getTime() + 30 * 60 * 1000);
       
-      setBoostState(newState);
-      setShowBoostModal(false);
-      Alert.alert('Boost Activated!', `+30 minutes of 2x earnings from ad! (${newState.adBoostsRemaining}/12 remaining)`);
+      const newState = {
+        freeBoostsRemaining: boostState.freeBoostsRemaining,
+        adBoostsUsed: boostState.adBoostsUsed + 1,
+        boostExpiresAt: newExpiresAt.toISOString(),
+        nextFreeBoostResetAt: boostState.nextFreeBoostResetAt,
+      };
+      
+      await dbService.updateBoostState(userId, newState);
+      setBoostState(prev => ({ ...prev, ...newState }));
+      onBoostUpdate(newState);
+      Alert.alert('Boost Activated!', '+30 minutes of 2x earnings from ad!');
     } catch (error) {
-      console.error('❌ Error activating ad boost:', error);
+      console.error('Error activating ad boost:', error);
       Alert.alert('Error', 'Failed to activate boost. Please try again.');
     }
   };
@@ -671,16 +654,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       case 'gold': return '#FFD700';
       case 'diamond': return '#B9F2FF';
       default: return '#4CAF50';
-    }
-  };
-
-  const getMineIcon = (type: string) => {
-    switch (type) {
-      case 'rock': return '🪨';
-      case 'coal': return '⚫';
-      case 'gold': return '🟡';
-      case 'diamond': return '💎';
-      default: return '⬜';
     }
   };
 
@@ -772,20 +745,11 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           styles.boostButton,
           boostState.isBoostActive && styles.boostButtonActive
         ]}
-        onPress={async () => {
-          // Check for ad boost refills before opening modal
-          try {
-            const refreshedState = await dbService.getBoostState(userId);
-            setBoostState(refreshedState);
-          } catch (error) {
-            console.error('Error refreshing boost state:', error);
-          }
-          setShowBoostModal(true);
-        }}
+        onPress={() => setShowBoostModal(true)}
       >
         <Text style={styles.boostButtonText}>
           {boostState.isBoostActive 
-            ? `⚡ Boost: ${formatTimeRemaining(boostState.boostTimeRemaining || 0)}`
+            ? `⚡ Boost: ${formatTimeRemaining(boostState.boostTimeRemaining)}`
             : '⚡ Get Boost'}
         </Text>
       </TouchableOpacity>
@@ -939,11 +903,10 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         onFreeBoost={handleFreeBoost}
         onAdBoost={handleAdBoost}
         freeBoostsRemaining={boostState.freeBoostsRemaining}
-        adBoostsRemaining={boostState.adBoostsRemaining}
-        boostTimeRemaining={boostState.boostTimeRemaining || 0}
+        adBoostsUsed={boostState.adBoostsUsed}
+        boostTimeRemaining={boostState.boostTimeRemaining}
         maxTotalBoostMinutes={480}
         nextResetTime={boostState.nextFreeBoostResetAt}
-        lastAdBoostRefillAt={boostState.lastAdBoostRefillAt}
       />
     </View>
   );
@@ -1035,7 +998,7 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   tbText: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 'bold',
     color: 'white',
   },

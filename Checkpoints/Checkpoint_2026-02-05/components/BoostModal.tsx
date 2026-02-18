@@ -16,17 +16,15 @@ interface BoostModalProps {
   onFreeBoost: () => void;
   onAdBoost: () => void;
   freeBoostsRemaining: number;
-  adBoostsRemaining: number; // CHANGED: from adBoostsUsed to adBoostsRemaining
+  adBoostsUsed: number;
   boostTimeRemaining: number; // in minutes
   maxTotalBoostMinutes: number; // 480 (8 hours)
   nextResetTime: string | null;
-  lastAdBoostRefillAt: string | null; // NEW: for showing refill countdown
 }
 
-const MAX_AD_BOOSTS = 12;
+const MAX_AD_BOOSTS = 12; // Users can watch 12 ads for 6 hours total
 const MINUTES_PER_BOOST = 30;
 const MAX_FREE_BOOSTS = 4;
-const REFILL_INTERVAL_MINUTES = 30; // NEW: refill rate
 
 export default function BoostModal({
   visible,
@@ -34,16 +32,14 @@ export default function BoostModal({
   onFreeBoost,
   onAdBoost,
   freeBoostsRemaining,
-  adBoostsRemaining, // CHANGED
+  adBoostsUsed,
   boostTimeRemaining,
   maxTotalBoostMinutes,
   nextResetTime,
-  lastAdBoostRefillAt, // NEW
 }: BoostModalProps) {
   const [adService] = useState(() => new AdMobService());
   const [isAdLoading, setIsAdLoading] = useState(false);
   const [isAdReady, setIsAdReady] = useState(false);
-  const [nextAdBoostIn, setNextAdBoostIn] = useState(''); // NEW: refill countdown
 
   useEffect(() => {
     if (visible) {
@@ -52,35 +48,14 @@ export default function BoostModal({
   }, [visible]);
 
   useEffect(() => {
-    // Check ad status and update refill timer every second
+    // Check ad status every second
     const interval = setInterval(() => {
       setIsAdReady(adService.isAdReady());
       setIsAdLoading(adService.isAdLoading());
-      updateRefillTimer(); // NEW
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [lastAdBoostRefillAt, adBoostsRemaining]);
-
-  // NEW: Calculate time until next ad boost refill
-  const updateRefillTimer = () => {
-    if (adBoostsRemaining < MAX_AD_BOOSTS && lastAdBoostRefillAt) {
-      const now = new Date();
-      const lastRefill = new Date(lastAdBoostRefillAt);
-      const nextRefill = new Date(lastRefill.getTime() + REFILL_INTERVAL_MINUTES * 60 * 1000);
-      const diff = nextRefill.getTime() - now.getTime();
-      
-      if (diff > 0) {
-        const minutes = Math.floor(diff / (1000 * 60));
-        const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-        setNextAdBoostIn(`${minutes}m ${seconds}s`);
-      } else {
-        setNextAdBoostIn('Refilling...');
-      }
-    } else {
-      setNextAdBoostIn('');
-    }
-  };
+  }, []);
 
   const loadAd = async () => {
     try {
@@ -145,6 +120,7 @@ export default function BoostModal({
   };
 
   const canAddMoreBoost = boostTimeRemaining < maxTotalBoostMinutes;
+  const adBoostsRemaining = MAX_AD_BOOSTS - adBoostsUsed;
   const canWatchAd = canAddMoreBoost && adBoostsRemaining > 0;
 
   return (
@@ -178,7 +154,7 @@ export default function BoostModal({
             <Text style={styles.sectionInfo}>
               {freeBoostsRemaining}/{MAX_FREE_BOOSTS} available
             </Text>
-            {nextResetTime && freeBoostsRemaining === 0 && (
+            {nextResetTime && (
               <Text style={styles.resetInfo}>
                 Resets in: {formatResetTime(nextResetTime)}
               </Text>
@@ -210,17 +186,9 @@ export default function BoostModal({
               Get +{MINUTES_PER_BOOST} min boost
             </Text>
             <Text style={styles.adBoostsInfo}>
-              {adBoostsRemaining}/{MAX_AD_BOOSTS} ad boosts available
+              {adBoostsRemaining} ad boosts remaining ({adBoostsUsed}/{MAX_AD_BOOSTS} used)
             </Text>
-            {/* NEW: Show refill countdown */}
-            {adBoostsRemaining < MAX_AD_BOOSTS && nextAdBoostIn && (
-              <Text style={styles.refillInfo}>
-                Next boost in: {nextAdBoostIn}
-              </Text>
-            )}
-            <Text style={styles.maxInfo}>
-              Refills at 1 per 30 minutes • Max 6 hours from ads
-            </Text>
+            <Text style={styles.maxInfo}>Max 6 hours total from ads</Text>
 
             <TouchableOpacity
               style={[
@@ -240,7 +208,7 @@ export default function BoostModal({
                   {!canAddMoreBoost
                     ? 'Max Boost Reached'
                     : adBoostsRemaining === 0
-                    ? 'No Ad Boosts Available'
+                    ? 'No Ad Boosts Left'
                     : `📺 Watch Ad (+${MINUTES_PER_BOOST} min)`}
                 </Text>
               )}
@@ -333,12 +301,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#999',
     marginBottom: 5,
-  },
-  refillInfo: {
-    fontSize: 12,
-    color: '#9C27B0',
-    marginBottom: 5,
-    fontStyle: 'italic',
   },
   maxInfo: {
     fontSize: 12,
