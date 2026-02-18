@@ -1,0 +1,491 @@
+// screens/PropertyDetailScreen.tsx
+// Phase 2: MINE-SPECIFIC ACTIVITIES - Each mine type has unique daily activity
+
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  SafeAreaView,
+  ActivityIndicator,
+  Alert,
+  Image,
+  Platform, 
+  StatusBar, 
+} from 'react-native';
+import { PropertyDetails } from '../types/PropertyTypes';
+import { GridSquare } from '../utils/GridUtils';
+import { dbServicePhase2 } from '../services/DatabaseServicePhase2';
+import { formatTimeUntilReset } from '../utils/TimeUtils';
+import { useAuth } from '../contexts/AuthContext';
+
+export default function PropertyDetailScreen({ route, navigation }: any) {
+  const { property} = route.params;
+  const { user } = useAuth();
+  const userId = user?.uid || '';
+  
+  const [propertyDetails, setPropertyDetails] = useState<PropertyDetails | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [timeUntilReset, setTimeUntilReset] = useState('');
+
+  useEffect(() => {
+    loadPropertyDetails();
+    
+    const interval = setInterval(() => {
+      setTimeUntilReset(formatTimeUntilReset());
+    }, 60000);
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  const loadPropertyDetails = async () => {
+    try {
+      setLoading(true);
+      await dbServicePhase2.checkAndResetDailyActivity(property.id);
+      const details = await dbServicePhase2.getPropertyDetails(property.id);
+      
+      if (!details) {
+        await dbServicePhase2.initializePropertyDetails(property.id);
+        const newDetails = await dbServicePhase2.getPropertyDetails(property.id);
+        setPropertyDetails(newDetails);
+      } else {
+        setPropertyDetails(details);
+      }
+      
+      setTimeUntilReset(formatTimeUntilReset());
+    } catch (error) {
+      console.error('Error loading property details:', error);
+      Alert.alert('Error', 'Failed to load property details');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Mine-specific functions
+  const getMineIcon = () => {
+    switch (property.mineType) {
+      case 'rock': return '🪨';
+      case 'coal': return '⚫';
+      case 'gold': return '🟡';
+      case 'diamond': return '💎';
+      default: return '⬜';
+    }
+  };
+
+  const getMineColor = () => {
+    switch (property.mineType) {
+      case 'rock': return '#808080';
+      case 'coal': return '#000000';
+      case 'gold': return '#FFD700';
+      case 'diamond': return '#B9F2FF';
+      default: return '#4CAF50';
+    }
+  };
+
+  // Get activity-specific content
+  const getDailyActivityImage = () => {
+    switch (property.mineType) {
+      case 'rock':
+        return require('../assets/images/conveyor-belt-clear.png');
+      case 'coal':
+        return require('../assets/images/coal-pile.png');
+      case 'gold':
+        return require('../assets/images/sluice-box.png');
+      case 'diamond':
+        return require('../assets/images/slot-machine.png');
+      default:
+        return require('../assets/images/conveyor-belt-clear.png');
+    }
+  };
+
+  const getActivityTitle = () => {
+    switch (property.mineType) {
+      case 'rock': return '⚙️ CONVEYOR BELT';
+      case 'coal': return '⛏️ COAL PILE';
+      case 'gold': return '💧 SLUICE BOX';
+      case 'diamond': return '🎰 SLOT MACHINE';
+      default: return '⚙️ DAILY ACTIVITY';
+    }
+  };
+
+  const getActivityInstruction = () => {
+    switch (property.mineType) {
+      case 'rock': return '📦 Tap to process rocks';
+      case 'coal': return '⛏️ Tap to mine coal';
+      case 'gold': return '💧 Tap to pan for gold';
+      case 'diamond': return '🎰 Tap to spin';
+      default: return 'Tap to start';
+    }
+  };
+
+  const getGameType = () => {
+    switch (property.mineType) {
+      case 'rock': return 'Memory Matching';
+      case 'coal': return 'Headlamp Maze';
+      case 'gold': return 'Rainbow Road';
+      case 'diamond': return 'Laser Reflection';
+      default: return 'Matching Game';
+    }
+  };
+
+  const getProductionRate = () => {
+    if (!propertyDetails) return 0;
+    
+    const baseRates = {
+      rock: 0.0000000011,
+      coal: 0.0000000016,
+      gold: 0.0000000022,
+      diamond: 0.0000000044,
+    };
+    
+    return dbServicePhase2.getProductionRate(
+      property.mineType as any,
+      propertyDetails.productionLevel,
+      baseRates
+    );
+  };
+
+  const handleDailyActivity = () => {
+    if (!propertyDetails) return;
+    
+    if (propertyDetails.dailyActivitiesRemaining <= 0) {
+      Alert.alert(
+        'No Attempts Remaining',
+        `Resets in ${timeUntilReset} at 4 AM EST`
+      );
+      return;
+    }
+    
+    // Navigate to DailyActivityScreen
+    navigation.navigate('DailyActivity', {
+      property: property,
+      propertyDetails: propertyDetails,
+    });
+  };
+
+  const handleMatchingGame = () => {
+    if (!propertyDetails) return;
+    
+    navigation.navigate('MemoryMatch', {
+      property: property,
+      propertyDetails: propertyDetails,
+    });
+  };
+
+  const handleUpgrades = () => {
+    if (!propertyDetails) return;
+    
+    navigation.navigate('Upgrade', {
+      property: property,
+      propertyDetails: propertyDetails,
+    });
+  };
+
+  const handleVisitors = () => {
+    Alert.alert('Visitors', 'VisitorLogScreen coming in Week 6!');
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2196F3" />
+        <Text style={styles.loadingText}>Loading property...</Text>
+      </View>
+    );
+  }
+
+  if (!propertyDetails) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>Property details not found</Text>
+        <TouchableOpacity style={styles.button} onPress={() => navigation.goBack()}>
+          <Text style={styles.buttonText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const productionBonus = dbServicePhase2.getProductionBonus(propertyDetails.productionLevel);
+  const currentRate = getProductionRate();
+
+  return (
+    <SafeAreaView style={styles.container}>
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backButton} onPress={() => {
+          // Navigate back to Profile > Properties tab
+          navigation.navigate('ProfileMain');
+        }}>
+          <Text style={styles.backButtonText}>← Back</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>
+          {getMineIcon()} {property.mineType?.toUpperCase()} MINE
+        </Text>
+        <TouchableOpacity style={styles.settingsButton}>
+          <Text style={styles.settingsButtonText}>⚙️</Text>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView style={styles.scrollView}>
+        {/* Property Name */}
+        <View style={styles.nameSection}>
+          <Text style={styles.propertyName}>
+            {propertyDetails.customName || 'Unnamed Mine'}
+          </Text>
+          <TouchableOpacity>
+            <Text style={styles.editNameText}>✏️ Edit Name</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Stats Section */}
+        <View style={styles.statsSection}>
+          <View style={styles.statRow}>
+            <Text style={styles.statLabel}>Production Level:</Text>
+            <Text style={styles.statValue}>{propertyDetails.productionLevel}</Text>
+          </View>
+          <Text style={styles.statSubtext}>+{productionBonus}% earnings boost</Text>
+
+          <View style={[styles.statRow, styles.statRowMargin]}>
+            <Text style={styles.statLabel}>Game Level:</Text>
+            <Text style={styles.statValue}>{propertyDetails.gameLevel}</Text>
+          </View>
+          <Text style={styles.statSubtext}>XP: {propertyDetails.gameXP}/1000</Text>
+
+          <View style={[styles.statRow, styles.statRowMargin]}>
+            <Text style={styles.statLabel}>Earning:</Text>
+            <Text style={[styles.statValue, { color: getMineColor() }]}>
+              ${currentRate.toExponential(2)}/min
+            </Text>
+          </View>
+
+          <View style={styles.gameStatsRow}>
+            <View style={styles.gameStatItem}>
+              <Text style={styles.gameStatLabel}>Games Played</Text>
+              <Text style={styles.gameStatValue}>{propertyDetails.gamesPlayed}</Text>
+            </View>
+            <View style={styles.gameStatItem}>
+              <Text style={styles.gameStatLabel}>Games Won</Text>
+              <Text style={styles.gameStatValue}>{propertyDetails.gamesWon}</Text>
+            </View>
+            <View style={styles.gameStatItem}>
+              <Text style={styles.gameStatLabel}>Win Rate</Text>
+              <Text style={styles.gameStatValue}>
+                {propertyDetails.gamesPlayed > 0 
+                  ? Math.round((propertyDetails.gamesWon / propertyDetails.gamesPlayed) * 100)
+                  : 0}%
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* DAILY ACTIVITY - Mine-Specific Image */}
+        <TouchableOpacity style={styles.activityCard} onPress={handleDailyActivity} activeOpacity={0.8}>
+          <View style={styles.activityHeader}>
+            <Text style={styles.activityTitle}>{getActivityTitle()}</Text>
+            <View style={styles.attemptsBadge}>
+              <Text style={styles.attemptsBadgeText}>
+                {propertyDetails.dailyActivitiesRemaining}/3
+              </Text>
+            </View>
+          </View>
+
+          {/* Mine-Specific Activity Image */}
+          <View style={styles.imageContainer}>
+            <Image 
+              source={getDailyActivityImage()}
+              style={styles.activityImage}
+              resizeMode="contain"
+            />
+          </View>
+
+          {propertyDetails.doubleRewardAvailable && (
+            <View style={styles.doubleBanner}>
+              <Text style={styles.doubleBannerText}>⭐ DOUBLE REWARD AVAILABLE!</Text>
+            </View>
+          )}
+
+          <View style={styles.activityInfo}>
+            <Text style={styles.activityInfoText}>{getActivityInstruction()}</Text>
+            <Text style={styles.resetText}>Resets in: {timeUntilReset}</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* MINE ENTRANCE */}
+        <TouchableOpacity style={styles.mineEntranceCard} onPress={handleMatchingGame} activeOpacity={0.8}>
+          <View style={styles.mineEntranceHeader}>
+            <Text style={styles.mineEntranceTitle}>🚪 MINE ENTRANCE</Text>
+          </View>
+
+          <View style={styles.imageContainer}>
+            <Image 
+              source={require('../assets/images/mine-entrance-clear.png')}
+              style={styles.mineEntranceImage}
+              resizeMode="contain"
+            />
+          </View>
+
+          <View style={styles.gameInfoCard}>
+            <Text style={styles.gameTitle}>{getGameType()}</Text>
+            <Text style={styles.gameLevel}>Level {propertyDetails.gameLevel}</Text>
+            {(() => {
+              const difficulty = dbServicePhase2.getGameDifficulty(propertyDetails.gameLevel);
+              return (
+                <Text style={styles.gameDifficulty}>
+                  {difficulty.gridSize}x{difficulty.gridSize} Grid • {difficulty.timeLimit}s
+                  {difficulty.movesLimit && ` • ${difficulty.movesLimit} moves`}
+                </Text>
+              );
+            })()}
+            <TouchableOpacity style={styles.enterButton} onPress={handleMatchingGame}>
+              <Text style={styles.enterButtonText}>⛏️ ENTER MINE</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+
+        {/* OFFICE TRAILER */}
+        <TouchableOpacity style={styles.officeCard} onPress={handleUpgrades} activeOpacity={0.8}>
+          <View style={styles.officeHeader}>
+            <Text style={styles.officeTitle}>🏢 UPGRADES OFFICE</Text>
+          </View>
+
+          <View style={styles.imageContainer}>
+            <Image 
+              source={require('../assets/images/office-trailer.png')}
+              style={styles.officeImage}
+              resizeMode="contain"
+            />
+          </View>
+
+          <View style={styles.officeInfoCard}>
+            <Text style={styles.officeText}>
+              Level {propertyDetails.productionLevel} • +{productionBonus}% Bonus
+            </Text>
+            
+            {propertyDetails.productionLevel < 100 ? (
+              <>
+                <Text style={styles.nextLevelText}>
+                  Next: Level {propertyDetails.productionLevel + 1}
+                </Text>
+                <TouchableOpacity style={styles.upgradeButton} onPress={handleUpgrades}>
+                  <Text style={styles.upgradeButtonText}>📋 VIEW UPGRADES</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <Text style={styles.maxLevelText}>⭐ MAX LEVEL ⭐</Text>
+            )}
+          </View>
+        </TouchableOpacity>
+
+        {/* WOODEN WELCOME SIGN */}
+        <TouchableOpacity style={styles.welcomeSignCard} onPress={handleVisitors} activeOpacity={0.8}>
+          <View style={styles.signImageContainer}>
+            <Image 
+              source={require('../assets/images/wooden-sign.png')}
+              style={styles.signImage}
+              resizeMode="contain"
+            />
+            
+            <View style={styles.signTextOverlay}>
+              <Text style={styles.mineNameOnSign}>
+                {propertyDetails.customName || 'Unnamed Mine'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.visitorsButton}>
+            <Text style={styles.visitorsIcon}>👥</Text>
+            <Text style={styles.visitorsText}>View Visitor Log</Text>
+          </View>
+        </TouchableOpacity>
+
+        <View style={styles.bottomSpacer} />
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f5f5f5',
+  paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0, },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#e8d5b7' },
+  loadingText: { marginTop: 10, fontSize: 16, color: '#666' },
+  errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#e8d5b7', padding: 20 },
+  errorText: { fontSize: 18, color: '#f44336', marginBottom: 20 },
+  
+  header: { backgroundColor: '#8B4513', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, paddingHorizontal: 10, borderBottomWidth: 3, borderBottomColor: '#5C3317' },
+  backButton: { padding: 5 },
+  backButtonText: { fontSize: 16, color: '#FFD700', fontWeight: 'bold' },
+  headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#FFF' },
+  settingsButton: { padding: 5 },
+  settingsButtonText: { fontSize: 20 },
+  
+  scrollView: { flex: 1 },
+  nameSection: { backgroundColor: '#D2B48C', padding: 15, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: '#8B7355' },
+  propertyName: { fontSize: 22, fontWeight: 'bold', color: '#333', marginBottom: 5 },
+  editNameText: { fontSize: 14, color: '#2196F3' },
+  
+  statsSection: { backgroundColor: 'white', padding: 15, marginTop: 10, marginHorizontal: 10, borderRadius: 10, borderWidth: 2, borderColor: '#8B7355' },
+  statRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  statRowMargin: { marginTop: 15 },
+  statLabel: { fontSize: 16, color: '#666' },
+  statValue: { fontSize: 18, fontWeight: 'bold', color: '#333' },
+  statSubtext: { fontSize: 14, color: '#999', marginTop: 2 },
+  gameStatsRow: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 20, paddingTop: 15, borderTopWidth: 1, borderTopColor: '#e0e0e0' },
+  gameStatItem: { alignItems: 'center' },
+  gameStatLabel: { fontSize: 12, color: '#666', marginBottom: 5 },
+  gameStatValue: { fontSize: 18, fontWeight: 'bold', color: '#2196F3' },
+  
+  // Daily Activity Styles
+  activityCard: { backgroundColor: 'white', margin: 10, borderRadius: 15, overflow: 'hidden', borderWidth: 3, borderColor: '#8B7355' },
+  activityHeader: { backgroundColor: '#696969', padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  activityTitle: { fontSize: 18, fontWeight: 'bold', color: '#FFD700' },
+  attemptsBadge: { backgroundColor: '#FF9800', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 15 },
+  attemptsBadgeText: { color: 'white', fontWeight: 'bold', fontSize: 14 },
+  imageContainer: { backgroundColor: '#f5f5f5', padding: 10, alignItems: 'center' },
+  activityImage: { width: '100%', height: 180 },
+  doubleBanner: { backgroundColor: '#FF9800', padding: 10, alignItems: 'center' },
+  doubleBannerText: { color: 'white', fontWeight: 'bold', fontSize: 14 },
+  activityInfo: { padding: 12, alignItems: 'center', backgroundColor: '#f9f9f9' },
+  activityInfoText: { color: '#333', fontSize: 14, fontWeight: 'bold', marginBottom: 5 },
+  resetText: { fontSize: 12, color: '#666' },
+  
+  // Mine Entrance Styles
+  mineEntranceCard: { backgroundColor: 'white', margin: 10, borderRadius: 15, overflow: 'hidden', borderWidth: 3, borderColor: '#8B7355' },
+  mineEntranceHeader: { backgroundColor: '#8B4513', padding: 12, alignItems: 'center' },
+  mineEntranceTitle: { fontSize: 18, fontWeight: 'bold', color: '#FFD700' },
+  mineEntranceImage: { width: '100%', height: 220 },
+  gameInfoCard: { padding: 15, backgroundColor: '#3E2723', alignItems: 'center' },
+  gameTitle: { fontSize: 16, color: '#CCC', marginBottom: 5 },
+  gameLevel: { fontSize: 20, fontWeight: 'bold', color: '#FFD700', marginBottom: 5 },
+  gameDifficulty: { fontSize: 14, color: '#999', marginBottom: 15 },
+  enterButton: { backgroundColor: '#8B4513', paddingHorizontal: 30, paddingVertical: 12, borderRadius: 8 },
+  enterButtonText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+  
+  // Office Trailer Styles
+  officeCard: { backgroundColor: 'white', margin: 10, borderRadius: 15, overflow: 'hidden', borderWidth: 3, borderColor: '#8B7355' },
+  officeHeader: { backgroundColor: '#D2691E', padding: 12, alignItems: 'center' },
+  officeTitle: { fontSize: 18, fontWeight: 'bold', color: 'white' },
+  officeImage: { width: '100%', height: 200 },
+  officeInfoCard: { padding: 15, backgroundColor: '#E0E0E0', alignItems: 'center' },
+  officeText: { fontSize: 14, color: '#666', marginBottom: 10 },
+  nextLevelText: { fontSize: 14, color: '#666', marginBottom: 10 },
+  upgradeButton: { backgroundColor: '#4CAF50', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 },
+  upgradeButtonText: { color: 'white', fontWeight: 'bold', fontSize: 14 },
+  maxLevelText: { fontSize: 16, color: '#FFD700', fontWeight: 'bold' },
+  
+  // Wooden Sign Styles
+  welcomeSignCard: { margin: 10, alignItems: 'center' },
+  signImageContainer: { position: 'relative', width: '100%', alignItems: 'center' },
+  signImage: { width: '85%', height: 220 },
+  signTextOverlay: { position: 'absolute', top: '35%', left: 0, right: 0, alignItems: 'center', paddingHorizontal: 20 },
+  mineNameOnSign: { fontSize: 16, fontWeight: 'bold', color: '#333', textAlign: 'center', textShadowColor: 'rgba(255, 255, 255, 0.5)', textShadowOffset: { width: 1, height: 1 }, textShadowRadius: 2 },
+  visitorsButton: { flexDirection: 'row', alignItems: 'center', marginTop: 15, backgroundColor: '#8B7355', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 },
+  visitorsIcon: { fontSize: 20, marginRight: 10 },
+  visitorsText: { color: 'white', fontSize: 14, fontWeight: 'bold' },
+  
+  button: { backgroundColor: '#2196F3', padding: 15, borderRadius: 10, alignItems: 'center', marginTop: 10 },
+  buttonText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+  bottomSpacer: { height: 30 },
+});
