@@ -3,7 +3,6 @@ import { StyleSheet, View, Text, ScrollView, TouchableOpacity, SafeAreaView, Act
 import { GridSquare } from '../utils/GridUtils';
 import { useAuth } from '../contexts/AuthContext';
 import { DatabaseService } from '../services/DatabaseService';
-import PhotoModal from '../components/PhotoModal';
 
 interface ProfileScreenProps {
   username: string;
@@ -12,6 +11,7 @@ interface ProfileScreenProps {
   totalCheckIns: number;
   totalTBEarned: number;
   onPropertyPress: (property: GridSquare) => void;
+  onSignOut: () => Promise<void>;
 }
 
 interface CheckInData {
@@ -21,7 +21,7 @@ interface CheckInData {
   propertyOwnerId: string;
   message?: string;
   hasPhoto: boolean;
-  photoURL?: string;
+  photoUrl?: string;  // ✅ ADD
   timestamp: string;
 }
 
@@ -31,14 +31,13 @@ export default function ProfileScreen({
   ownedProperties, 
   totalCheckIns,
   totalTBEarned,
-  onPropertyPress 
+  onPropertyPress,
+  onSignOut
 }: ProfileScreenProps) {
   const [activeTab, setActiveTab] = useState<'portfolio' | 'properties' | 'visitors' | 'activity'>('portfolio');
   const [propertyCheckIns, setPropertyCheckIns] = useState<{[key: string]: CheckInData[]}>({});
   const [loadingCheckIns, setLoadingCheckIns] = useState(false);
-  const [selectedPhotoURL, setSelectedPhotoURL] = useState<string | null>(null);
-  const [showPhotoModal, setShowPhotoModal] = useState(false);
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const dbService = new DatabaseService();
 
   // Load check-ins for owned properties when Visitors tab is selected
@@ -97,7 +96,7 @@ export default function ProfileScreen({
 
   const getMineIcon = (type: string) => {
     switch (type) {
-      case 'rock': return '🪨';
+      case 'rock': return '⚪';
       case 'coal': return '⚫';
       case 'gold': return '🟡';
       case 'diamond': return '💎';
@@ -133,26 +132,8 @@ export default function ProfileScreen({
   // Calculate total visitors across all properties
   const totalVisitors = Object.values(propertyCheckIns).reduce((sum, checkIns) => sum + checkIns.length, 0);
 
-  const handleSignOut = async () => {
-    try {
-      await signOut();
-    } catch (error) {
-      console.error('Sign out error:', error);
-    }
-  };
-
-  const handlePhotoPress = (photoURL: string) => {
-    setSelectedPhotoURL(photoURL);
-    setShowPhotoModal(true);
-  };
-
   return (
     <SafeAreaView style={styles.container}>
-      <PhotoModal
-        visible={showPhotoModal}
-        photoURL={selectedPhotoURL}
-        onClose={() => { setShowPhotoModal(false); setSelectedPhotoURL(null); }}
-      />
       {/* Header */}
       <View style={styles.header}>
         <View>
@@ -163,7 +144,7 @@ export default function ProfileScreen({
           <View style={styles.tbBadge}>
             <Text style={styles.tbBadgeText}>💰 {userTB} TB</Text>
           </View>
-          <TouchableOpacity style={styles.logoutButton} onPress={handleSignOut}>
+          <TouchableOpacity style={styles.logoutButton} onPress={() => onSignOut()}>
             <Text style={styles.logoutText}>Logout</Text>
           </TouchableOpacity>
         </View>
@@ -235,7 +216,7 @@ export default function ProfileScreen({
               
               <View style={styles.mineTypeCard}>
                 <View style={styles.mineTypeHeader}>
-                  <Text style={styles.mineTypeIcon}>🪨</Text>
+                  <Text style={styles.mineTypeIcon}>{getMineIcon('rock')}</Text>
                   <View style={styles.mineTypeInfo}>
                     <Text style={styles.mineTypeName}>Rock Mines</Text>
                     <Text style={styles.mineTypeCount}>{propertiesByType.rock} properties</Text>
@@ -248,7 +229,7 @@ export default function ProfileScreen({
 
               <View style={styles.mineTypeCard}>
                 <View style={styles.mineTypeHeader}>
-                  <Text style={styles.mineTypeIcon}>⚫</Text>
+                  <Text style={styles.mineTypeIcon}>{getMineIcon('coal')}</Text>
                   <View style={styles.mineTypeInfo}>
                     <Text style={styles.mineTypeName}>Coal Mines</Text>
                     <Text style={styles.mineTypeCount}>{propertiesByType.coal} properties</Text>
@@ -261,7 +242,7 @@ export default function ProfileScreen({
 
               <View style={styles.mineTypeCard}>
                 <View style={styles.mineTypeHeader}>
-                  <Text style={styles.mineTypeIcon}>🟡</Text>
+                  <Text style={styles.mineTypeIcon}>{getMineIcon('gold')}</Text>
                   <View style={styles.mineTypeInfo}>
                     <Text style={styles.mineTypeName}>Gold Mines</Text>
                     <Text style={styles.mineTypeCount}>{propertiesByType.gold} properties</Text>
@@ -274,7 +255,7 @@ export default function ProfileScreen({
 
               <View style={styles.mineTypeCard}>
                 <View style={styles.mineTypeHeader}>
-                  <Text style={styles.mineTypeIcon}>💎</Text>
+                  <Text style={styles.mineTypeIcon}>{getMineIcon('diamond')}</Text>
                   <View style={styles.mineTypeInfo}>
                     <Text style={styles.mineTypeName}>Diamond Mines</Text>
                     <Text style={styles.mineTypeCount}>{propertiesByType.diamond} properties</Text>
@@ -292,7 +273,7 @@ export default function ProfileScreen({
           <View style={styles.propertiesTab}>
             {ownedProperties.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateIcon}>🗺️</Text>
+                <Text style={styles.emptyStateIcon}>ðŸ—ï¸</Text>
                 <Text style={styles.emptyStateTitle}>No Properties Yet</Text>
                 <Text style={styles.emptyStateText}>
                   Start exploring the map and purchase your first property!
@@ -335,7 +316,7 @@ export default function ProfileScreen({
               </View>
             ) : ownedProperties.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateIcon}>🗺️</Text>
+                <Text style={styles.emptyStateIcon}>ðŸ—ï¸</Text>
                 <Text style={styles.emptyStateTitle}>No Properties Yet</Text>
                 <Text style={styles.emptyStateText}>
                   Purchase properties to see visitor check-ins!
@@ -343,7 +324,7 @@ export default function ProfileScreen({
               </View>
             ) : totalVisitors === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateIcon}>👋</Text>
+                <Text style={styles.emptyStateIcon}>ðŸ‘‹</Text>
                 <Text style={styles.emptyStateTitle}>No Visitors Yet</Text>
                 <Text style={styles.emptyStateText}>
                   Your properties haven't received any check-ins yet. Share your locations with friends!
@@ -383,10 +364,7 @@ export default function ProfileScreen({
                       </TouchableOpacity>
 
                       <View style={styles.checkInsList}>
-                        {checkIns
-                          .slice()
-                          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-                          .map(checkIn => (
+                        {checkIns.slice().reverse().map(checkIn => (
                           <View key={checkIn.id} style={styles.visitorCheckInItem}>
                             <View style={styles.visitorCheckInHeader}>
                               <Text style={styles.visitorUserId}>
@@ -399,17 +377,14 @@ export default function ProfileScreen({
                             {checkIn.message && (
                               <Text style={styles.visitorMessage}>"{checkIn.message}"</Text>
                             )}
-                            {checkIn.hasPhoto && checkIn.photoURL && (
-                              <TouchableOpacity onPress={() => handlePhotoPress(checkIn.photoURL!)}>
-                                <Image
-                                  source={{ uri: checkIn.photoURL }}
+                            {checkIn.photoUrl && (
+                              <View style={styles.photoContainer}>
+                                <Image 
+                                  source={{ uri: checkIn.photoUrl }} 
                                   style={styles.checkInPhoto}
                                   resizeMode="cover"
                                 />
-                              </TouchableOpacity>
-                            )}
-                            {checkIn.hasPhoto && !checkIn.photoURL && (
-                              <Text style={styles.photoIndicatorText}>📷 Photo included</Text>
+                              </View>
                             )}
                           </View>
                         ))}
@@ -586,7 +561,8 @@ const styles = StyleSheet.create({
   mineTypeCard: {
     backgroundColor: 'white',
     borderRadius: 10,
-    padding: 15,
+    paddingVertical: 15,
+    paddingHorizontal: 10,
     marginBottom: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -600,6 +576,8 @@ const styles = StyleSheet.create({
   mineTypeHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
   },
   mineTypeIcon: {
     fontSize: 32,
@@ -607,6 +585,7 @@ const styles = StyleSheet.create({
   },
   mineTypeInfo: {
     flex: 1,
+    minWidth: 0,
   },
   mineTypeName: {
     fontSize: 16,
@@ -618,9 +597,10 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   mineTypeEarnings: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: 'bold',
     color: '#4CAF50',
+    flexShrink: 0,
   },
   propertiesTab: {
     padding: 15,
@@ -779,11 +759,15 @@ const styles = StyleSheet.create({
     color: '#9C27B0',
     fontWeight: '600',
   },
+  photoContainer: {
+    marginTop: 8,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#f0f0f0',
+  },
   checkInPhoto: {
     width: '100%',
-    height: 180,
-    borderRadius: 8,
-    marginTop: 8,
+    height: 200,
   },
   activityTab: {
     padding: 15,

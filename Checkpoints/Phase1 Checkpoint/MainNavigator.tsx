@@ -1,29 +1,19 @@
-// MainNavigator.tsx - UPDATED FOR PHASE 2 PROPERTYDETAILSCREEN
-
 import React, { useState, useRef, useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createStackNavigator } from '@react-navigation/stack';
 import { NavigationContainer } from '@react-navigation/native';
 import MapScreen from './screens/MapScreen';
 import ProfileScreen from './screens/ProfileScreen';
-import PropertyDetailScreen from './screens/PropertyDetailScreen';
-import UpgradeScreen from './screens/UpgradeScreen';
-import MemoryMatchScreen from './screens/games/MemoryMatch/MemoryMatchScreen';
-import GoldRushGame from './screens/games/GoldRush/GoldRushGame';
-import MinerMazeScreen from './screens/games/MinerMaze/MinerMazeScreen';
 import { GridSquare } from './utils/GridUtils';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from './contexts/AuthContext';
 import { DatabaseService } from './services/DatabaseService';
 import { View, ActivityIndicator } from 'react-native';
-import DailyActivityScreen from './screens/DailyActivityScreen';
 
 const Tab = createBottomTabNavigator();
-const Stack = createStackNavigator();
 const dbService = new DatabaseService();
 
 export default function MainNavigator() {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const [userTB, setUserTB] = useState(1000);
   const [usdEarnings, setUsdEarnings] = useState(0);
   const [ownedProperties, setOwnedProperties] = useState<GridSquare[]>([]);
@@ -31,6 +21,16 @@ export default function MainNavigator() {
   const [totalCheckIns, setTotalCheckIns] = useState(0);
   const [totalTBEarned, setTotalTBEarned] = useState(0);
   const [dataLoaded, setDataLoaded] = useState(false);
+  
+  // Boost state
+  const [boostState, setBoostState] = useState({
+    freeBoostsRemaining: 4,
+    adBoostsRemaining: 12,
+    boostExpiresAt: null as string | null,
+    nextFreeBoostResetAt: null as string | null,
+    lastAdBoostRefillAt: new Date().toISOString(),
+  });
+  
   const username = user?.displayName || user?.email?.split('@')[0] || 'User';
   const mapRef = useRef<any>(null);
 
@@ -65,10 +65,25 @@ export default function MainNavigator() {
       setTotalCheckIns(userData?.totalCheckIns || 0);
       setTotalTBEarned(userData?.totalTBEarned || 0);
       
+      // Load boost state
+      setBoostState({
+        freeBoostsRemaining: userData?.freeBoostsRemaining ?? 4,
+        adBoostsRemaining: userData?.adBoostsRemaining ?? 12,
+        boostExpiresAt: userData?.boostExpiresAt ?? null,
+        nextFreeBoostResetAt: userData?.nextFreeBoostResetAt ?? null,
+        lastAdBoostRefillAt: userData?.lastAdBoostRefillAt ?? new Date().toISOString(),
+      });
+      
       console.log('Loaded from Firestore:', {
         tb: userData?.tbBalance,
+        usd: userData?.usdEarnings,
         ownedCount: properties.length,
-        allPropertiesCount: allProps.length
+        allPropertiesCount: allProps.length,
+        boostState: {
+          freeBoosts: userData?.freeBoostsRemaining ?? 4,
+          adBoosts: userData?.adBoostsRemaining ?? 12,
+          expiresAt: userData?.boostExpiresAt,
+        }
       });
 
       setDataLoaded(true);
@@ -96,11 +111,11 @@ export default function MainNavigator() {
     }
   };
 
-  const handleCheckIn = async (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string) => {
+  const handleCheckIn = async (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUrl?: string, visitorNickname?: string) => {
     if (!user) return;
 
     try {
-      await dbService.createCheckIn(user.uid, propertyId, propertyOwnerId, message, hasPhoto, photoUri);
+      await dbService.createCheckIn(user.uid, propertyId, propertyOwnerId, message, hasPhoto, photoUrl, visitorNickname);  // ✅ Add photoUrl and visitorNickname
       await dbService.updateUserBalance(user.uid, tbEarned);
       
       setUserTB(prev => prev + tbEarned);
@@ -114,10 +129,48 @@ export default function MainNavigator() {
     }
   };
 
-  // âœ¨ UPDATED: Old function that navigated to map
-  const handlePropertyPressFromMap = (property: GridSquare) => {
+  const handlePropertyPress = (property: GridSquare) => {
     if (mapRef.current) {
       mapRef.current.navigateToProperty(property);
+    }
+  };
+
+  const handleBoostUpdate = (newBoostData: {
+    freeBoostsRemaining?: number;
+    adBoostsRemaining?: number;
+    boostExpiresAt: string | null;
+    nextFreeBoostResetAt: string | null;
+    lastAdBoostRefillAt?: string;
+  }) => {
+    setBoostState(prev => ({ ...prev, ...newBoostData }));
+  };
+
+  const handleEarningsUpdate = async (usdAmount: number) => {
+    if (!user) return;
+
+    try {
+      await dbService.updateUSDEarnings(user.uid, usdAmount);
+      
+      setUsdEarnings(prev => prev + usdAmount);
+
+      console.log(`Earnings saved! User earned $${usdAmount.toFixed(8)} USD from property rent`);
+    } catch (error) {
+      console.error('Error saving earnings:', error);
+      throw error;
+    }
+  };
+
+  // Handle sign out with data saving
+  const handleSignOut = async () => {
+    try {
+      // Call MapScreen's save function before signing out
+      await signOut(async () => {
+        if (mapRef.current?.saveBeforeSignOut) {
+          await mapRef.current.saveBeforeSignOut();
+        }
+      });
+    } catch (error) {
+      console.error('Error during sign out:', error);
     }
   };
 
@@ -126,56 +179,6 @@ export default function MainNavigator() {
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator size="large" color="#2196F3" />
       </View>
-    );
-  }
-
-  // âœ¨ NEW: Profile Stack with PropertyDetailScreen
-  function ProfileStackNavigator() {
-    return (
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="ProfileMain">
-          {(props) => (
-            <ProfileScreen
-              {...props as any}
-              userTB={userTB}
-              username={username}
-              ownedProperties={ownedProperties}
-              totalCheckIns={totalCheckIns}
-              totalTBEarned={totalTBEarned}
-              onPropertyPress={(property: GridSquare) =>
-                props.navigation.navigate('PropertyDetail', {
-                  property,
-                  userId: user?.uid || '',
-                })
-              }
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen 
-          name="PropertyDetail" 
-          component={PropertyDetailScreen as any}
-        />
-        <Stack.Screen 
-          name="DailyActivity" 
-          component={DailyActivityScreen as any}
-        />
-        <Stack.Screen 
-          name="Upgrade" 
-          component={UpgradeScreen as any}
-        />
-        <Stack.Screen 
-          name="MemoryMatch" 
-          component={MemoryMatchScreen as any}
-        />
-        <Stack.Screen 
-          name="GoldRush" 
-          component={GoldRushGame as any}
-        />
-        <Stack.Screen 
-          name="MinerMaze" 
-          component={MinerMazeScreen as any}
-        />
-      </Stack.Navigator>
     );
   }
 
@@ -207,16 +210,31 @@ export default function MainNavigator() {
               userId={user?.uid || ''}
               username={username}
               userTB={userTB}
-              usdEarnings={usdEarnings}
               ownedProperties={ownedProperties}
               allProperties={allProperties}
+              initialBoostState={boostState}
               onPropertyPurchase={handlePropertyPurchase}
               onCheckIn={handleCheckIn}
+              onBoostUpdate={handleBoostUpdate}
+              onEarningsUpdate={handleEarningsUpdate}
+              usdEarnings={usdEarnings}
             />
           )}
         </Tab.Screen>
-        {/* âœ¨ CHANGED: Use ProfileStackNavigator instead of ProfileScreen directly */}
-        <Tab.Screen name="Profile" component={ProfileStackNavigator} />
+        <Tab.Screen name="Profile">
+          {(props) => (
+            <ProfileScreen
+              {...props}
+              userTB={userTB}
+              username={username}
+              ownedProperties={ownedProperties}
+              totalCheckIns={totalCheckIns}
+              totalTBEarned={totalTBEarned}
+              onPropertyPress={handlePropertyPress}
+              onSignOut={handleSignOut}
+            />
+          )}
+        </Tab.Screen>
       </Tab.Navigator>
     </NavigationContainer>
   );

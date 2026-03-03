@@ -40,6 +40,13 @@ export default function PropertyDetailScreen({ route, navigation }: any) {
     return () => clearInterval(interval);
   }, []);
 
+  // Reload XP/stats when returning from a game
+  useEffect(() => {
+    if (route.params?.refresh) {
+      loadPropertyDetails();
+    }
+  }, [route.params?.refresh]);
+
   const loadPropertyDetails = async () => {
     try {
       setLoading(true);
@@ -165,22 +172,26 @@ export default function PropertyDetailScreen({ route, navigation }: any) {
     });
   };
 
-  const handleMatchingGame = () => {
+  const handleMineEntrance = () => {
     if (!propertyDetails) return;
-    
-    navigation.navigate('MemoryMatch', {
-      property: property,
-      propertyDetails: propertyDetails,
-    });
+    switch (property.mineType) {
+      case 'coal':
+        navigation.navigate('MinerMaze', { propertyId: property.id, mineType: property.mineType, property, propertyDetails });
+        break;
+      case 'gold':
+        navigation.navigate('GoldRush', { property, userId, propertyDetails });
+        break;
+      case 'rock':
+      case 'diamond':
+      default:
+        navigation.navigate('MemoryMatch', { property, propertyDetails });
+        break;
+    }
   };
 
   const handleUpgrades = () => {
     if (!propertyDetails) return;
-    
-    navigation.navigate('Upgrade', {
-      property: property,
-      propertyDetails: propertyDetails,
-    });
+    navigation.navigate('Upgrade', { property, propertyDetails });
   };
 
   const handleVisitors = () => {
@@ -313,7 +324,7 @@ export default function PropertyDetailScreen({ route, navigation }: any) {
         </TouchableOpacity>
 
         {/* MINE ENTRANCE */}
-        <TouchableOpacity style={styles.mineEntranceCard} onPress={handleMatchingGame} activeOpacity={0.8}>
+        <TouchableOpacity style={styles.mineEntranceCard} onPress={handleMineEntrance} activeOpacity={0.8}>
           <View style={styles.mineEntranceHeader}>
             <Text style={styles.mineEntranceTitle}>🚪 MINE ENTRANCE</Text>
           </View>
@@ -338,7 +349,7 @@ export default function PropertyDetailScreen({ route, navigation }: any) {
                 </Text>
               );
             })()}
-            <TouchableOpacity style={styles.enterButton} onPress={handleMatchingGame}>
+            <TouchableOpacity style={styles.enterButton} onPress={handleMineEntrance}>
               <Text style={styles.enterButtonText}>⛏️ ENTER MINE</Text>
             </TouchableOpacity>
           </View>

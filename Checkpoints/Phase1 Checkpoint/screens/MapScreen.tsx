@@ -3,7 +3,15 @@ import { StyleSheet, View, Text, TouchableOpacity, Alert, ScrollView, TextInput 
 import MapView, { Polygon, PROVIDER_GOOGLE, Marker } from 'react-native-maps';
 import * as ImagePicker from 'expo-image-picker';
 import { LocationService, Coordinates } from '../services/LocationService';
+import { DatabaseService, BoostState } from '../services/DatabaseService';
 import { generateGridSquare, getVisibleGridSquares, isWithinGridSquare, isAdjacentToUser, GridSquare, gridToLatLng } from '../utils/GridUtils';
+import BoostModal from '../components/BoostModal';
+
+// Extend BoostState with computed properties used locally in MapScreen
+interface MapScreenBoostState extends BoostState {
+  boostTimeRemaining?: number; // minutes
+  isBoostActive?: boolean;
+}
 
 interface CheckIn {
   id: string;
@@ -17,11 +25,14 @@ interface MapScreenProps {
   userId: string;
   username: string;
   userTB: number;
-  usdEarnings: number;
   ownedProperties: GridSquare[];
   allProperties: GridSquare[];
+  initialBoostState: BoostState;
   onPropertyPurchase: (property: GridSquare, tbSpent: number) => void;
-  onCheckIn: (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string) => Promise<void>;
+  onCheckIn: (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) => Promise<void>;
+  onBoostUpdate: (boostData: any) => void;
+  onEarningsUpdate?: (usdAmount: number) => Promise<void>;
+  usdEarnings?: number;
 }
 
 const MapScreen = React.forwardRef<any, MapScreenProps>(({ 
@@ -30,21 +41,43 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   userTB, 
   ownedProperties,
   allProperties,
+  initialBoostState,
   onPropertyPurchase,
-  onCheckIn 
+  onCheckIn,
+  onBoostUpdate,
+  onEarningsUpdate,
+  usdEarnings = 0,
 }, ref) => {
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
   const [gridSquares, setGridSquares] = useState<Map<string, GridSquare>>(new Map());
   const [selectedSquare, setSelectedSquare] = useState<GridSquare | null>(null);
   const [showCheckInModal, setShowCheckInModal] = useState(false);
+  const [showBoostModal, setShowBoostModal] = useState(false);
   const [checkInMessage, setCheckInMessage] = useState('');
   const [lastCheckIns, setLastCheckIns] = useState<Map<string, string>>(new Map());
   const [propertyCheckIns, setPropertyCheckIns] = useState<Map<string, CheckIn[]>>(new Map());
   
+  // Boost state
+  const [boostState, setBoostState] = useState<MapScreenBoostState>({
+    freeBoostsRemaining: initialBoostState.freeBoostsRemaining || 4,
+    adBoostsRemaining: initialBoostState.adBoostsRemaining || 12,
+    boostExpiresAt: initialBoostState.boostExpiresAt || null,
+    nextFreeBoostResetAt: initialBoostState.nextFreeBoostResetAt || null,
+    lastAdBoostRefillAt: initialBoostState.lastAdBoostRefillAt || new Date().toISOString(),
+    boostTimeRemaining: 0,
+    isBoostActive: false,
+  });
+
+  // Earnings state
+  const [currentEarnings, setCurrentEarnings] = useState(0);
+  
   const mapRef = useRef<MapView>(null);
   const locationService = useRef(new LocationService()).current;
+  const dbService = useRef(new DatabaseService()).current;
+  const earningsTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const earningsStartTime = useRef<Date>(new Date());
 
-  // Expose method to navigate to property from Profile screen
+  // Expose methods to parent
   useImperativeHandle(ref, () => ({
     navigateToProperty: (property: GridSquare) => {
       if (mapRef.current) {
@@ -56,8 +89,189 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         }, 1000);
         setSelectedSquare(property);
       }
+    },
+    // NEW: Method to save all data before sign out
+    saveBeforeSignOut: async () => {
+      try {
+        console.log('💾 MapScreen: Saving data before sign out...');
+        
+        // Stop the earnings timer first
+        if (earningsTimerRef.current) {
+          clearInterval(earningsTimerRef.current);
+          earningsTimerRef.current = null;
+        }
+        
+        // Save any accumulated earnings
+        if (currentEarnings > 0) {
+          console.log(`💰 Saving $${currentEarnings.toFixed(8)} USD earnings`);
+          await saveEarningsToFirebase(currentEarnings);
+        }
+        
+        // Save last active time
+        await saveLastActiveTime();
+        
+        console.log('✅ MapScreen: All data saved');
+      } catch (error) {
+        console.error('❌ MapScreen: Error saving data:', error);
+        // Don't throw - allow sign out to continue
+      }
     }
   }));
+
+  // Update boost timer
+  useEffect(() => {
+    const updateBoostTimer = () => {
+      if (!boostState.boostExpiresAt) {
+        setBoostState(prev => ({ ...prev, boostTimeRemaining: 0, isBoostActive: false }));
+        return;
+      }
+
+      const now = new Date();
+      const expiresAt = new Date(boostState.boostExpiresAt);
+      const diffMs = expiresAt.getTime() - now.getTime();
+      const diffMinutes = Math.max(0, diffMs / (1000 * 60));
+
+      if (diffMinutes <= 0) {
+        setBoostState(prev => ({ 
+          ...prev, 
+          boostTimeRemaining: 0, 
+          isBoostActive: false,
+          boostExpiresAt: null 
+        }));
+        dbService.updateBoostState(userId, {
+          freeBoostsRemaining: boostState.freeBoostsRemaining,
+          adBoostsRemaining: boostState.adBoostsRemaining,
+          boostExpiresAt: null,
+          nextFreeBoostResetAt: boostState.nextFreeBoostResetAt,
+          lastAdBoostRefillAt: boostState.lastAdBoostRefillAt,
+        });
+      } else {
+        setBoostState(prev => ({ 
+          ...prev, 
+          boostTimeRemaining: diffMinutes,
+          isBoostActive: true 
+        }));
+      }
+    };
+
+    updateBoostTimer();
+    const interval = setInterval(updateBoostTimer, 1000);
+    return () => clearInterval(interval);
+  }, [boostState.boostExpiresAt]);
+
+  // Check free boost reset
+  useEffect(() => {
+    const checkResetTimer = () => {
+      if (!boostState.nextFreeBoostResetAt) return;
+
+      const now = new Date();
+      const resetAt = new Date(boostState.nextFreeBoostResetAt);
+
+      if (now >= resetAt && boostState.freeBoostsRemaining < 4) {  // ✅ Only reset if needed
+        const newState: BoostState = {
+          freeBoostsRemaining: 4,
+          adBoostsRemaining: boostState.adBoostsRemaining,
+          boostExpiresAt: boostState.boostExpiresAt,
+          nextFreeBoostResetAt: null,
+          lastAdBoostRefillAt: boostState.lastAdBoostRefillAt,
+        };
+        setBoostState(prev => ({ ...prev, ...newState }));
+        dbService.updateBoostState(userId, newState);
+      }
+    };
+
+    const interval = setInterval(checkResetTimer, 60000);
+    return () => clearInterval(interval);
+  }, []);  // ✅ Only run on mount
+
+  // Load boost state from Firebase ONCE on mount (includes auto-refill logic)
+  useEffect(() => {
+    const loadBoostState = async () => {
+      try {
+        const state = await dbService.getBoostState(userId);
+        setBoostState(state);
+        console.log('📊 Initial boost state loaded:', state);
+      } catch (error) {
+        console.error('Error loading boost state:', error);
+      }
+    };
+
+    loadBoostState();
+    // DON'T set up interval - it causes race conditions
+    // The boost handlers will update state directly
+  }, [userId]);
+
+  // Earnings update timer - updates every 100ms
+  useEffect(() => {
+    if (ownedProperties.length > 0) {
+      let lastSaveTime = Date.now();
+      
+      earningsTimerRef.current = setInterval(() => {
+        const now = new Date();
+        const elapsedSeconds = (now.getTime() - earningsStartTime.current.getTime()) / 1000;
+        const newEarnings = calculateEarnings() * (elapsedSeconds / 60);
+        
+        setCurrentEarnings(newEarnings);
+        
+        // Save to Firebase every minute
+        const timeSinceLastSave = Date.now() - lastSaveTime;
+        if (timeSinceLastSave >= 60000) {
+          saveEarningsToFirebase(newEarnings);
+          lastSaveTime = Date.now();
+        }
+      }, 100);
+
+      return () => {
+        if (earningsTimerRef.current) {
+          clearInterval(earningsTimerRef.current);
+          if (currentEarnings > 0) {
+            saveEarningsToFirebase(currentEarnings);
+          }
+        }
+      };
+    }
+  }, [ownedProperties, currentEarnings, boostState.isBoostActive]);
+
+  const calculateEarnings = (): number => {
+    const rentRates = {
+      rock: 0.0000000011,
+      coal: 0.0000000016,
+      gold: 0.0000000022,
+      diamond: 0.0000000044,
+    };
+
+    const totalRentPerSecond = ownedProperties.reduce((sum, property) => {
+      const rate = rentRates[property.mineType as keyof typeof rentRates] || 0;
+      return sum + rate;
+    }, 0);
+
+    const multiplier = boostState.isBoostActive ? 2 : 1;
+    return totalRentPerSecond * 60 * multiplier; // Convert to per minute
+  };
+
+  const saveEarningsToFirebase = async (earnings: number) => {
+    if (earnings <= 0) return;
+    
+    try {
+      console.log(`Saving $${earnings.toFixed(8)} USD earnings to Firebase`);
+      
+      if (onEarningsUpdate) {
+        await onEarningsUpdate(earnings);
+        earningsStartTime.current = new Date();
+      }
+    } catch (error) {
+      console.error('Error saving earnings to Firebase:', error);
+    }
+  };
+
+  const saveLastActiveTime = async () => {
+    try {
+      await dbService.updateLastActiveTime(userId);
+      console.log('Last active time saved');
+    } catch (error) {
+      console.error('Error saving last active time:', error);
+    }
+  };
 
   useEffect(() => {
     if (userLocation) {
@@ -70,10 +284,100 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     
     return () => {
       locationService.stopWatchingLocation();
+      if (earningsTimerRef.current) {
+        clearInterval(earningsTimerRef.current);
+      }
+      // NOTE: Don't save here - saveBeforeSignOut() is called explicitly before sign out
+      // Cleanup still runs on unmount, but data is already saved
     };
   }, []);
 
-  // Update grid squares when owned properties change
+  // Calculate and apply offline earnings when component mounts
+  useEffect(() => {
+    if (ownedProperties.length > 0 && initialBoostState) {
+      calculateOfflineEarnings();
+    }
+  }, [ownedProperties.length]); // Only run once when properties load
+
+  const calculateOfflineEarnings = async () => {
+    try {
+      // Get the last logout time from Firebase (we'll need to add this field)
+      const userData = await dbService.getUserData(userId);
+      const lastActiveAt = userData?.lastActiveAt ? new Date(userData.lastActiveAt) : null;
+      
+      if (!lastActiveAt) {
+        // First time login or no previous session, start fresh
+        earningsStartTime.current = new Date();
+        return;
+      }
+
+      const now = new Date();
+      const offlineSeconds = Math.floor((now.getTime() - lastActiveAt.getTime()) / 1000);
+      
+      if (offlineSeconds < 60) {
+        // Less than a minute offline, just continue
+        earningsStartTime.current = new Date();
+        return;
+      }
+
+      console.log(`User was offline for ${(offlineSeconds / 60).toFixed(1)} minutes`);
+
+      // Calculate base earnings rate
+      const rentRates = {
+        rock: 0.0000000011,
+        coal: 0.0000000016,
+        gold: 0.0000000022,
+        diamond: 0.0000000044,
+      };
+
+      const totalRentPerSecond = ownedProperties.reduce((sum, property) => {
+        const rate = rentRates[property.mineType as keyof typeof rentRates] || 0;
+        return sum + rate;
+      }, 0);
+
+      // Calculate how much time was boosted during offline period
+      let boostedSeconds = 0;
+      let unboostedSeconds = offlineSeconds;
+
+      if (initialBoostState.boostExpiresAt) {
+        const boostExpiry = new Date(initialBoostState.boostExpiresAt);
+        
+        // If boost was active during offline time
+        if (boostExpiry > lastActiveAt) {
+          // Calculate how much of the offline time had boost active
+          const boostActiveUntil = boostExpiry < now ? boostExpiry : now;
+          boostedSeconds = Math.floor((boostActiveUntil.getTime() - lastActiveAt.getTime()) / 1000);
+          unboostedSeconds = offlineSeconds - boostedSeconds;
+        }
+      }
+
+      // Calculate earnings: boosted time at 2x, rest at 1x
+      const boostedEarnings = totalRentPerSecond * (boostedSeconds / 60) * 60 * 2; // per minute * minutes * 2x
+      const unboostedEarnings = totalRentPerSecond * (unboostedSeconds / 60) * 60; // per minute * minutes
+      const totalOfflineEarnings = boostedEarnings + unboostedEarnings;
+
+      if (totalOfflineEarnings > 0) {
+        console.log(`Offline earnings calculated:`, {
+          offlineMinutes: (offlineSeconds / 60).toFixed(1),
+          boostedMinutes: (boostedSeconds / 60).toFixed(1),
+          unboostedMinutes: (unboostedSeconds / 60).toFixed(1),
+          earnings: `$${totalOfflineEarnings.toFixed(8)}`
+        });
+
+        // Save offline earnings to Firebase
+        if (onEarningsUpdate) {
+          await onEarningsUpdate(totalOfflineEarnings);
+        }
+      }
+
+      // Start fresh timer from now
+      earningsStartTime.current = new Date();
+    } catch (error) {
+      console.error('Error calculating offline earnings:', error);
+      earningsStartTime.current = new Date();
+    }
+  };
+
   useEffect(() => {
     if (userLocation) {
       loadNearbyProperties(userLocation);
@@ -86,24 +390,24 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     }
   }, [allProperties]);
 
+  // Auto-zoom to user location on first load
+  useEffect(() => {
+    if (userLocation && mapRef.current) {
+      mapRef.current.animateToRegion({
+        latitude: userLocation.latitude,
+        longitude: userLocation.longitude,
+        latitudeDelta: 0.001,
+        longitudeDelta: 0.001,
+      }, 1000);
+    }
+  }, [userLocation?.latitude, userLocation?.longitude]);
+
   const initializeLocation = async () => {
     const location = await locationService.getCurrentLocation();
     if (location) {
       setUserLocation(location);
       loadNearbyProperties(location);
-
-      // Zoom map to user's location on first load
-      setTimeout(() => {
-        if (mapRef.current) {
-          mapRef.current.animateToRegion({
-            latitude: location.latitude,
-            longitude: location.longitude,
-            latitudeDelta: 0.0005,
-            longitudeDelta: 0.0005,
-          }, 1000);
-        }
-      }, 500); // slight delay to ensure map is mounted
-
+      
       locationService.startWatchingLocation((newLocation) => {
         setUserLocation(newLocation);
         loadNearbyProperties(newLocation);
@@ -118,17 +422,14 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     visibleGridIds.forEach(gridId => {
       const [x, y] = gridId.split('_').map(Number);
       
-      // Check if this square is in allProperties (owned by anyone)
       const ownedProperty = allProperties.find(p => p.id === gridId);
       if (ownedProperty) {
         newGridSquares.set(gridId, ownedProperty);
       } else {
-        // Check if already exists in grid with ownership
         const existingSquare = gridSquares.get(gridId);
         if (existingSquare && existingSquare.isOwned) {
           newGridSquares.set(gridId, existingSquare);
         } else {
-          // Generate new unowned square - REMOVED FAKE USER LOGIC
           const center = gridToLatLng(x, y, location.latitude);
           const square = generateGridSquare(center.latitude, center.longitude);
           newGridSquares.set(gridId, square);
@@ -178,31 +479,22 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     setShowCheckInModal(true);
   };
 
-  // Request camera permissions
   const requestCameraPermission = async () => {
-    const { status, canAskAgain } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status === 'granted') return true;
-
-    if (!canAskAgain) {
-      Alert.alert(
-        'Camera Permission Required',
-        'Camera access was denied. Please enable it in your device Settings to take check-in photos.',
-        [{ text: 'OK' }]
-      );
-    } else {
-      Alert.alert('Permission Required', 'Camera permission is needed to take check-in photos.');
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Camera permission is needed to take photos.');
+      return false;
     }
-    return false;
+    return true;
   };
 
-  // Take a photo
   const takePhoto = async () => {
     const hasPermission = await requestCameraPermission();
     if (!hasPermission) return null;
 
     try {
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ['images'] as any,
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.5,
@@ -223,13 +515,24 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     if (!selectedSquare || !selectedSquare.ownerId) return;
     
     let photoUri = null;
+    let photoUrl = undefined;
     
-    // If withPhoto is true, actually take the photo
+    // Take photo if requested
     if (withPhoto) {
       photoUri = await takePhoto();
       if (!photoUri) {
-        // User cancelled or photo failed
         return;
+      }
+      
+      // ✅ UPLOAD PHOTO TO FIREBASE STORAGE
+      try {
+        console.log('📤 Starting upload...');
+        photoUrl = await dbService.uploadCheckInPhoto(userId, selectedSquare.id, photoUri);
+        console.log('✅ Photo uploaded successfully');
+      } catch (uploadError) {
+        console.error('❌ Upload failed:', uploadError);
+        Alert.alert('Upload Failed', 'Check-in will be saved without photo.');
+        photoUri = null;
       }
     }
     
@@ -238,7 +541,12 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     
     let tbEarned = 1;
     if (checkInMessage.trim()) tbEarned += 2;
-    if (photoUri) tbEarned += 2; // Only add bonus if photo was actually taken
+    if (photoUri) tbEarned += 2;
+    
+    // Apply boost multiplier
+    if (boostState.isBoostActive) {
+      tbEarned *= 2;
+    }
     
     try {
       await onCheckIn(
@@ -247,10 +555,12 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         selectedSquare.ownerId, 
         checkInMessage.trim() || undefined,
         !!photoUri,
-        photoUri || undefined
+        photoUrl,
+        username
       );
       
-      Alert.alert('Success!', `Check-in complete! You earned ${tbEarned} TB. The owner earned 1 TB.`);
+      const boostText = boostState.isBoostActive ? ' (2x Boost Applied!)' : '';
+      Alert.alert('Success!', `Check-in complete! You earned ${tbEarned} TB${boostText}. The owner earned 1 TB.`);
       setCheckInMessage('');
       setShowCheckInModal(false);
     } catch (error) {
@@ -267,13 +577,11 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       return;
     }
     
-    // Check if already owned by ANYONE (including you)
     if (selectedSquare.isOwned) {
       Alert.alert('Already Owned', 'This property is already owned.');
       return;
     }
     
-    // Double-check against owned properties array
     const alreadyOwned = ownedProperties.some(p => p.id === selectedSquare.id);
     if (alreadyOwned) {
       Alert.alert('Already Owned', 'You already own this property.');
@@ -293,10 +601,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       mineType,
     };
     
-    // Update parent state first
     onPropertyPurchase(updatedSquare, 100);
     
-    // Then update local grid
     setGridSquares(prev => {
       const updated = new Map(prev);
       updated.set(selectedSquare.id, updatedSquare);
@@ -306,6 +612,45 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     setSelectedSquare(updatedSquare);
     
     Alert.alert('Success!', `You purchased a ${mineType} mine!`);
+  };
+
+  // Boost handlers
+  const handleFreeBoost = async () => {
+    // Now handled by DatabaseService.useFreeBoost() method
+    try {
+      const newState = await dbService.useFreeBoost(userId, boostState);
+      setBoostState(newState);
+      onBoostUpdate(newState);
+      setShowBoostModal(false);
+      Alert.alert('Boost Activated!', '+30 minutes of 2x earnings!');
+    } catch (error) {
+      console.error('Error activating free boost:', error);
+      Alert.alert('Error', 'Failed to activate boost. Please try again.');
+    }
+  };
+
+  const handleAdBoost = async () => {
+    // This is now handled by the DatabaseService.useAdBoost() method
+    console.log('🎬 Ad boost clicked. Current state:', {
+      adBoostsRemaining: boostState.adBoostsRemaining,
+      boostExpiresAt: boostState.boostExpiresAt,
+    });
+    
+    try {
+      const newState = await dbService.useAdBoost(userId, boostState);
+      console.log('✅ Ad boost activated. New state:', {
+        adBoostsRemaining: newState.adBoostsRemaining,
+        boostExpiresAt: newState.boostExpiresAt,
+      });
+      
+      setBoostState(newState);
+      onBoostUpdate(newState);
+      setShowBoostModal(false);
+      Alert.alert('Boost Activated!', `+30 minutes of 2x earnings from ad! (${newState.adBoostsRemaining}/12 remaining)`);
+    } catch (error) {
+      console.error('❌ Error activating ad boost:', error);
+      Alert.alert('Error', 'Failed to activate boost. Please try again.');
+    }
   };
 
   const assignMineType = (): 'rock' | 'coal' | 'gold' | 'diamond' => {
@@ -326,13 +671,19 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     }
   };
 
+  const getMineIcon = (type: string) => {
+    switch (type) {
+      case 'rock': return '🪨';
+      case 'coal': return '⚫';
+      case 'gold': return '🟡';
+      case 'diamond': return '💎';
+      default: return '⬜';
+    }
+  };
+
   const getSquareFillColor = (square: GridSquare): string => {
     if (square.isOwned) {
-      if (square.ownerId === userId) {
-        return getMineColor(square.mineType);
-      } else {
-        return getMineColor(square.mineType);
-      }
+      return getMineColor(square.mineType);
     }
     return 'rgba(76, 175, 80, 0.3)';
   };
@@ -340,16 +691,25 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const getSquareStrokeColor = (square: GridSquare): string => {
     if (square.isOwned) {
       if (square.ownerId === userId) {
-        return '#2196F3'; // Your properties - blue border
+        return '#2196F3';
       } else {
-        return '#FF9800'; // Others' properties - orange border
+        return '#FF9800';
       }
     }
-    return '#4CAF50'; // Unowned - green border
+    return '#4CAF50';
   };
 
   const selectedPropertyCheckIns = selectedSquare ? 
     (propertyCheckIns.get(selectedSquare.id) || []) : [];
+
+  const formatTimeRemaining = (minutes: number): string => {
+    const hours = Math.floor(minutes / 60);
+    const mins = Math.floor(minutes % 60);
+    if (hours > 0) {
+      return `${hours}:${mins.toString().padStart(2, '0')}`;
+    }
+    return `${mins}m`;
+  };
 
   return (
     <View style={styles.container}>
@@ -360,14 +720,13 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         initialRegion={{
           latitude: userLocation?.latitude || 42.3601,
           longitude: userLocation?.longitude || -71.0589,
-          latitudeDelta: 0.005,
-          longitudeDelta: 0.005,
+          latitudeDelta: 0.001,
+          longitudeDelta: 0.001,
         }}
         showsUserLocation
         showsMyLocationButton
         followsUserLocation={false}
       >
-        {/* Using Array.from to ensure unique rendering and proper key usage */}
         {Array.from(gridSquares.entries()).map(([squareId, square]) => (
           <Polygon
             key={`polygon-${squareId}`}
@@ -380,7 +739,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           />
         ))}
         
-        {/* User location marker - this should match exactly where the blue dot appears */}
         {userLocation && (
           <Marker
             coordinate={{
@@ -393,6 +751,43 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         )}
       </MapView>
 
+      {/* Welcome Badge */}
+      <View style={styles.welcomeBadge}>
+        <Text style={styles.welcomeText}>Welcome, {username}!</Text>
+      </View>
+
+      {/* Earnings Counter */}
+      <View style={styles.earningsDisplay}>
+        <Text style={styles.earningsText}>
+          ${(usdEarnings + currentEarnings).toFixed(8)} 📈
+        </Text>
+      </View>
+
+      {/* Boost Button */}
+      <TouchableOpacity 
+        style={[
+          styles.boostButton,
+          boostState.isBoostActive && styles.boostButtonActive
+        ]}
+        onPress={async () => {
+          // Check for ad boost refills before opening modal
+          try {
+            const refreshedState = await dbService.getBoostState(userId);
+            setBoostState(refreshedState);
+          } catch (error) {
+            console.error('Error refreshing boost state:', error);
+          }
+          setShowBoostModal(true);
+        }}
+      >
+        <Text style={styles.boostButtonText}>
+          {boostState.isBoostActive 
+            ? `⚡ Boost: ${formatTimeRemaining(boostState.boostTimeRemaining || 0)}`
+            : '⚡ Get Boost'}
+        </Text>
+      </TouchableOpacity>
+
+      {/* TB Display */}
       <View style={styles.tbDisplay}>
         <Text style={styles.tbText}>💰 {userTB} TB</Text>
       </View>
@@ -415,8 +810,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
                       userLocation?.longitude || 0,
                       selectedSquare
                     )
-                      ? 'âœ“ You are within property'
-                      : 'âœ— Too far to check in'}
+                      ? '✓ You are within property'
+                      : '✗ Too far to check in'}
                   </Text>
                   <TouchableOpacity 
                     style={[
@@ -465,8 +860,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
               <Text style={styles.infoText}>Cost: 100 TB</Text>
               <Text style={styles.infoSubtext}>
                 {isAdjacentToUser(userLocation?.latitude || 0, userLocation?.longitude || 0, selectedSquare)
-                  ? 'âœ“ Within purchase range'
-                  : 'âœ— Too far to purchase'}
+                  ? '✓ Within purchase range'
+                  : '✗ Too far to purchase'}
               </Text>
               <TouchableOpacity 
                 style={[
@@ -511,14 +906,14 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
               style={styles.modalButton}
               onPress={() => submitCheckIn(false)}
             >
-              <Text style={styles.buttonText}>Check In (1 TB)</Text>
+              <Text style={styles.buttonText}>Check In (1 TB{boostState.isBoostActive ? ' x2' : ''})</Text>
             </TouchableOpacity>
             
             <TouchableOpacity 
               style={[styles.modalButton, styles.photoButton]}
               onPress={() => submitCheckIn(true)}
             >
-              <Text style={styles.buttonText}>📷 With Photo (+2 TB)</Text>
+              <Text style={styles.buttonText}>📷 With Photo (+2 TB{boostState.isBoostActive ? ' x2' : ''})</Text>
             </TouchableOpacity>
           </View>
           
@@ -533,6 +928,20 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Boost Modal */}
+      <BoostModal
+        visible={showBoostModal}
+        onClose={() => setShowBoostModal(false)}
+        onFreeBoost={handleFreeBoost}
+        onAdBoost={handleAdBoost}
+        freeBoostsRemaining={boostState.freeBoostsRemaining}
+        adBoostsRemaining={boostState.adBoostsRemaining}
+        boostTimeRemaining={boostState.boostTimeRemaining || 0}
+        maxTotalBoostMinutes={480}
+        nextResetTime={boostState.nextFreeBoostResetAt}
+        lastAdBoostRefillAt={boostState.lastAdBoostRefillAt}
+      />
     </View>
   );
 });
@@ -544,13 +953,78 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
+  welcomeBadge: {
+    position: 'absolute',
+    top: 250,
+    left: 35,
+    backgroundColor: 'white',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 25,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  welcomeText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2196F3',
+  },
+  earningsDisplay: {
+    position: 'absolute',
+    top: 85,
+    alignSelf: 'center',
+    backgroundColor: '#4CAF50',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 25,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+    minWidth: 180,
+  },
+  earningsText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: 'white',
+    textAlign: 'center',
+  },
+  boostButton: {
+    position: 'absolute',
+    top: 160,
+    alignSelf: 'center',
+    backgroundColor: '#2196F3',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 25,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+    minWidth: 160,
+  },
+  boostButtonActive: {
+    backgroundColor: '#FF9800',
+  },
+  boostButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
   tbDisplay: {
     position: 'absolute',
-    top: 50,
-    right: 20,
-    backgroundColor: 'white',
-    padding: 12,
-    borderRadius: 20,
+    top: 250,
+    right: 35,
+    backgroundColor: '#4CAF50',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 25,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
@@ -558,8 +1032,9 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   tbText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
+    color: 'white',
   },
   infoPanel: {
     position: 'absolute',
