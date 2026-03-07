@@ -58,10 +58,10 @@ export interface GameResult {
 }
 
 export interface GameRewards {
-  common: number;
-  uncommon: number;
-  rare: number;
-  epic: number;
+  shards: number;
+  pieces: number;
+  stones: number;
+  diamonds: number;
   tb: number;
   xp: number;
 }

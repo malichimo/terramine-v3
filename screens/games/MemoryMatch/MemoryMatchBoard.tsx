@@ -3,9 +3,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, Dimensions } from 'react-native';
-import { GameState } from './MemoryMatchTypes';
-import { getDifficultyConfig, MISMATCH_DELAY } from './MemoryMatchConstants';
-import { flipCard, checkMatch, flipCardsBack } from './MemoryMatchEngine';
+import { GameState } from '../../../types/MemoryMatchTypes';
+import { getDifficultyConfig, MISMATCH_DELAY } from '../../../utils/MemoryMatchConstants';
+import { flipCard, checkMatch, flipCardsBack } from '../../../utils/MemoryMatchEngine';
 import Card from './Card';
 
 interface MemoryMatchBoardProps {

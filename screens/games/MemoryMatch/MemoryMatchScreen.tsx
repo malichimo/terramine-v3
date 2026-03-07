@@ -18,9 +18,9 @@ import { PropertyDetails } from '../../../types/PropertyTypes';
 import { useAuth } from '../../../contexts/AuthContext';
 import { dbServicePhase2 } from '../../../services/DatabaseServicePhase2';
 import { AdMobService } from '../../../services/AdMobService';
-import { GameState } from './MemoryMatchTypes';
-import { initializeGame, tickTimer, checkGameOver, getGameResult } from './MemoryMatchEngine';
-import { calculateRewards, getDifficultyConfig } from './MemoryMatchConstants';
+import { GameState } from '../../../types/MemoryMatchTypes';
+import { initializeGame, tickTimer, checkGameOver, getGameResult } from '../../../utils/MemoryMatchEngine';
+import { calculateRewards, getDifficultyConfig } from '../../../utils/MemoryMatchConstants';
 import MemoryMatchBoard from './MemoryMatchBoard';
 
 interface MemoryMatchScreenProps {
@@ -180,7 +180,10 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
             `Rewards:\n` +
               `💰 ${rewards.tb} TB\n` +
               `⭐ ${rewards.xp} XP\n` +
-              `Resources earned!`,
+              `🪨 ${rewards.shards} Shards\n` +
+              (rewards.pieces > 0 ? `💚 ${rewards.pieces} Pieces\n` : '') +
+              (rewards.stones > 0 ? `🔷 ${rewards.stones} Stones\n` : '') +
+              (rewards.diamonds > 0 ? `💎 ${rewards.diamonds} Diamonds` : ''),
             [
               {
                 text: 'Collect',
@@ -294,8 +297,8 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
       `Better luck next time!\n\n` +
         `Matched: ${result.matchedPairs}/${gameState!.totalPairs} pairs\n\n` +
         `Consolation prize:\n` +
-        `💰 ${rewards.tb} TB\n` +
-        `⭐ ${rewards.xp} XP`,
+        `⭐ ${rewards.xp} XP\n` +
+        `🪨 ${rewards.shards} Shards`,
       [
         {
           text: 'Collect',
@@ -339,7 +342,7 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
             onPress: () => {
               navigation.navigate('PropertyDetail', {
                 property: property,
-                refresh: true,
+                refresh: Date.now(),
               });
             },
           },
@@ -365,7 +368,7 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
           onPress: () => {
             navigation.navigate('PropertyDetail', {
               property: property,
-              refresh: true,
+              refresh: Date.now(),
             });
           },
         },

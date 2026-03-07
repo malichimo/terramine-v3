@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../../../contexts/AuthContext';
 import { dbServicePhase2 } from '../../../services/DatabaseServicePhase2';
+import { AdMobService } from '../../../services/AdMobService';
 import type { GameReward } from '../../../services/DatabaseServicePhase2';
 import {
   GameTile,
@@ -94,10 +95,15 @@ export default function GoldRushGame({ route, navigation }: any) {
   const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
   const resultSaved     = useRef(false);
   const puzzleRef       = useRef<PuzzleConfig | null>(null);
+  const adService       = useRef<AdMobService | null>(null);
+
+  const [outOfMoves, setOutOfMoves] = useState(false);
+  const [adLoading, setAdLoading]   = useState(false);
 
   // ── Init ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     initNewPuzzle();
+    adService.current = new AdMobService();
   }, []);
 
   function initNewPuzzle() {
@@ -149,7 +155,7 @@ export default function GoldRushGame({ route, navigation }: any) {
     if (tile.type === 'grass' || tile.isStart || tile.isEnd) return;
 
     if (movesLimit !== null && tapsUsed >= movesLimit) {
-      Alert.alert('No moves left!', "You've used all your moves.");
+      setOutOfMoves(true);
       return;
     }
 
@@ -265,10 +271,35 @@ export default function GoldRushGame({ route, navigation }: any) {
     }
   }
 
+  // ── Ad for extra moves ────────────────────────────────────────────────────
+  async function handleAdForMoves() {
+    if (!adService.current) return;
+    setAdLoading(true);
+    try {
+      await adService.current.showAd(
+        () => {
+          // Rewarded: grant 3 extra moves
+          setOutOfMoves(false);
+          setAdLoading(false);
+          // Temporarily bump movesLimit by extending tapsUsed back by 3
+          // We do this by just reducing tapsUsed by 3 (can't mutate movesLimit const)
+          setTapsUsed(prev => Math.max(0, prev - 3));
+        },
+        () => {
+          // Ad closed without reward
+          setAdLoading(false);
+        }
+      );
+    } catch {
+      setAdLoading(false);
+    }
+  }
+
   // ── Restart ────────────────────────────────────────────────────────────────
   function restart() {
     if (timerRef.current) clearInterval(timerRef.current);
     resultSaved.current = false;
+    setOutOfMoves(false);
     lepScale.setValue(1);
     sparkleOp.setValue(0);
     sparkleScale.setValue(0.5);
@@ -423,21 +454,26 @@ export default function GoldRushGame({ route, navigation }: any) {
           )}
 
           {/* ── Sparkle burst on the pot at win ── */}
-          <Animated.Image
-            source={GOLD_SPARKLE}
+          <View
             pointerEvents="none"
             style={[styles.sparkle, {
+              position: 'absolute',
               width:  TILE_SIZE * 1.4,
               height: TILE_SIZE * 1.4,
               left:   p.endCell.col * TILE_SIZE - TILE_SIZE * 0.2,
               top:    p.endCell.row * TILE_SIZE - TILE_SIZE * 0.2,
-              opacity:   sparkleOp,
-              transform: [{ scale: sparkleScale }],
-              // 'screen' blend makes pure black pixels invisible,
-              // so the gold glow shows through without a black box
-              mixBlendMode: 'screen' as any,
             }]}
-          />
+          >
+            <Animated.Image
+              source={GOLD_SPARKLE}
+              style={{
+                width: '100%',
+                height: '100%',
+                opacity:   sparkleOp,
+                transform: [{ scale: sparkleScale }],
+              }}
+            />
+          </View>
         </View>
       </View>
 
@@ -473,22 +509,28 @@ export default function GoldRushGame({ route, navigation }: any) {
                   <Text style={styles.rewardVal}>+{reward.tb}</Text>
                   <Text style={styles.rewardLbl}>TB</Text>
                 </View>
-                {reward.common > 0 && (
+                {reward.shards > 0 && (
                   <View style={styles.rewardItem}>
-                    <Text style={styles.rewardVal}>+{reward.common}</Text>
-                    <Text style={styles.rewardLbl}>Common</Text>
+                    <Text style={styles.rewardVal}>+{reward.shards}</Text>
+                    <Text style={styles.rewardLbl}>Shards</Text>
                   </View>
                 )}
-                {reward.uncommon > 0 && (
+                {reward.pieces > 0 && (
                   <View style={styles.rewardItem}>
-                    <Text style={styles.rewardVal}>+{reward.uncommon}</Text>
-                    <Text style={styles.rewardLbl}>Uncommon</Text>
+                    <Text style={styles.rewardVal}>+{reward.pieces}</Text>
+                    <Text style={styles.rewardLbl}>Pieces</Text>
                   </View>
                 )}
-                {reward.rare > 0 && (
+                {reward.stones > 0 && (
                   <View style={styles.rewardItem}>
-                    <Text style={styles.rewardVal}>+{reward.rare}</Text>
-                    <Text style={styles.rewardLbl}>Rare</Text>
+                    <Text style={styles.rewardVal}>+{reward.stones}</Text>
+                    <Text style={styles.rewardLbl}>Stones</Text>
+                  </View>
+                )}
+                {reward.diamonds > 0 && (
+                  <View style={styles.rewardItem}>
+                    <Text style={styles.rewardVal}>+{reward.diamonds}</Text>
+                    <Text style={styles.rewardLbl}>Diamonds</Text>
                   </View>
                 )}
               </View>
@@ -503,6 +545,27 @@ export default function GoldRushGame({ route, navigation }: any) {
             </View>
           </View>
         )}
+        {/* ── Out of Moves overlay ── */}
+        {outOfMoves && phase === 'puzzle' && (
+          <View style={styles.outOfMovesOverlay}>
+            <Text style={styles.outOfMovesTitle}>🚫 Out of Moves!</Text>
+            <Text style={styles.outOfMovesHint}>Watch an ad for 3 extra turns</Text>
+            <TouchableOpacity
+              style={[styles.btn, styles.btnGold, adLoading && { opacity: 0.6 }]}
+              onPress={handleAdForMoves}
+              disabled={adLoading}
+            >
+              <Text style={styles.btnTxt}>{adLoading ? '⏳ Loading Ad...' : '📺 Watch Ad (+3 Turns)'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.btn, { marginTop: 10 }]}
+              onPress={() => navigation.navigate('PropertyDetail', { property, userId: property.ownerId, refresh: Date.now() })}
+            >
+              <Text style={styles.btnTxt}>🚪 Quit</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {phase === 'gameover' && (
           <View style={styles.resultPanel}>
             <Text style={styles.loseTitle}>⏰ Time's Up!</Text>
@@ -650,6 +713,33 @@ const styles = StyleSheet.create({
   winTitle:    { color: '#FFD700', fontSize: 18, fontWeight: 'bold' },
   winScore:    { color: '#eee',    fontSize: 12 },
   loseTitle:   { color: '#F44336', fontSize: 18, fontWeight: 'bold' },
+  outOfMovesOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.82)',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    zIndex: 50,
+    paddingBottom: 50,
+    paddingHorizontal: 24,
+  },
+  outOfMovesTitle: {
+    color: '#FFD700',
+    fontSize: 26,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  outOfMovesHint: {
+    color: '#fff',
+    fontSize: 15,
+    marginBottom: 20,
+    textAlign: 'center',
+    opacity: 0.85,
+  },
+  btnGold: {
+    backgroundColor: '#F9A825',
+  },
   consolationTxt: { color: '#aaa', fontSize: 12 },
 
   // Reward pills

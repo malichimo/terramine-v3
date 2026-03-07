@@ -23,6 +23,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AdMobService } from '../../../services/AdMobService';
+import { dbServicePhase2 } from '../../../services/DatabaseServicePhase2';
+import { useAuth } from '../../../contexts/AuthContext';
 
 // ─────────────────────────────────────────────────────────────────
 //  SCREEN METRICS
@@ -107,9 +109,9 @@ const HAZARD_DEFS: Record<HazardType, HazardDef> = {
 const HAZARD_TYPES: HazardType[] = ['water', 'fire', 'gas', 'collapse'];
 
 const DIFFS: Record<string, DiffCfg> = {
-  easy:   { label:'Easy',   emoji:'🟢', cols:15, rows:19, timeLimit:180, hazardCount:4,  coneLen:3.5, coneAngle:100, tbReward:15, resMult:1   },
-  medium: { label:'Medium', emoji:'🟡', cols:19, rows:25, timeLimit:120, hazardCount:10, coneLen:2.8, coneAngle:80,  tbReward:30, resMult:1.5 },
-  hard:   { label:'Hard',   emoji:'🔴', cols:25, rows:33, timeLimit:90,  hazardCount:20, coneLen:2.2, coneAngle:65,  tbReward:60, resMult:2.5 },
+  easy:   { label:'Easy',   emoji:'🟢', cols:15, rows:19, timeLimit:180, hazardCount:4,  coneLen:3.5, coneAngle:100, tbReward:1,  resMult:1   },
+  medium: { label:'Medium', emoji:'🟡', cols:19, rows:25, timeLimit:120, hazardCount:10, coneLen:2.8, coneAngle:80,  tbReward:1,  resMult:1.5 },
+  hard:   { label:'Hard',   emoji:'🔴', cols:25, rows:33, timeLimit:90,  hazardCount:20, coneLen:2.2, coneAngle:65,  tbReward:2,  resMult:2.5 },
 };
 
 const BOOST_DUR   = 12;
@@ -316,7 +318,11 @@ const Vignette = () => (
 //  MAIN SCREEN
 // ─────────────────────────────────────────────────────────────────
 
-export default function MinerMazeScreen({ navigation }: any) {
+export default function MinerMazeScreen({ route, navigation }: any) {
+  const { property, propertyDetails } = route.params;
+  const { user } = useAuth();
+  const resultSaved = useRef(false);
+
   // Lazy-init AdMob: create exactly once, never on re-renders
   const adService = useRef<AdMobService | null>(null);
   useEffect(() => {
@@ -326,6 +332,7 @@ export default function MinerMazeScreen({ navigation }: any) {
 
   // ── state ──────────────────────────────────────────────────
   const [phase,   setPhase]   = useState<'menu'|'playing'|'won'|'lost'>('menu');
+  const [liveDetails, setLiveDetails] = useState(propertyDetails);
   const [diffKey, setDiffKey] = useState('easy');
   const [grid,    setGrid]    = useState<Cell[][]>([]);
   const [miner,   setMiner]   = useState<MinerPos>({ row:0, col:0, dir:'right' });
@@ -357,7 +364,7 @@ export default function MinerMazeScreen({ navigation }: any) {
   const [pu,      setPu]      = useState<PowerUps>({ charges:1, boosted:false, boostLeft:0, canary:false });
   const [litSet,  setLitSet]  = useState<Set<string>>(new Set());
   const [lastHaz, setLastHaz] = useState<HazardDef|null>(null);
-  const [reward,  setReward]  = useState<{tb:number,res:number}|null>(null);
+  const [reward,  setReward]  = useState<{tb:number,shards:number,pieces:number,stones:number}|null>(null);
 
   // Animated camera offset (px) – world translates so miner stays centred
   const camX = useRef(new Animated.Value(0)).current;
@@ -534,14 +541,40 @@ export default function MinerMazeScreen({ navigation }: any) {
 
   const doEnd = (res: 'won'|'lost') => {
     if (timerRef.current) clearInterval(timerRef.current);
+    const finalSc = res === 'won' ? score + tLeft * 5 + health * 2 : score;
     if (res === 'won') {
-      const finalSc = score + tLeft * 5 + health * 2;
-      const tb  = Math.max(cfg.tbReward, Math.floor(cfg.tbReward * finalSc / 1000));
-      const res2 = Math.floor(50 * cfg.resMult);
+      const tb     = cfg.tbReward; // already capped at 1–2 in difficulty config
+      const shards  = Math.floor(150 * cfg.resMult);
+      const pieces  = Math.floor(15 * cfg.resMult);
+      const stones  = Math.floor(Math.max(0, (cfg.resMult - 1) * 5)); // pieces/hard only
       setScore(finalSc);
-      setReward({ tb, res: res2 });
+      setReward({ tb, shards, pieces, stones });
     }
     setPhase(res);
+    saveResult(res === 'won', finalSc);
+  };
+
+  const saveResult = async (won: boolean, finalScore: number) => {
+    if (resultSaved.current || !user) return;
+    resultSaved.current = true;
+    try {
+      const perfect = won && steps <= (cfg.cols * cfg.rows);
+      await dbServicePhase2.recordGameResult(
+        user.uid,
+        property.id,
+        property.mineType,
+        won,
+        perfect,
+        finalScore,
+        tLeft,
+        steps
+      );
+      // Re-fetch so XP meter reflects the just-saved values
+      const updated = await dbServicePhase2.getPropertyDetails(property.id);
+      if (updated) setLiveDetails(updated);
+    } catch (e) {
+      console.error('MinerMaze: error saving result:', e);
+    }
   };
 
   // ── START GAME ─────────────────────────────────────────────
@@ -759,7 +792,7 @@ export default function MinerMazeScreen({ navigation }: any) {
   if (phase === 'menu') return (
     <View style={st.screen}>
       <View style={st.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={st.back}>
+        <TouchableOpacity onPress={() => navigation.navigate('PropertyDetail', { property, userId: user?.uid || '', refresh: Date.now() })} style={st.back}>
           <Ionicons name="arrow-back" size={24} color="#FFD700" />
         </TouchableOpacity>
         <Text style={st.hTitle}>⛏️  Miner Maze</Text>
@@ -815,12 +848,12 @@ export default function MinerMazeScreen({ navigation }: any) {
               <Text style={st.dLbl}>{d.label}</Text>
               <Text style={st.dSub}>{d.cols}×{d.rows}</Text>
               <Text style={st.dSub}>{d.timeLimit}s</Text>
-              <Text style={st.dTb}>+{d.tbReward} TB</Text>
+              <Text style={st.dTb}>+{d.tbReward} TB · Shards & Pieces</Text>
             </TouchableOpacity>
           ))}
         </View>
 
-        <TouchableOpacity style={st.bigBtn} onPress={startGame}>
+        <TouchableOpacity style={st.bigBtn} onPress={() => { resultSaved.current = false; startGame(); }}>
           <Text style={st.bigBtnTxt}>🚇  Enter the Mine</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -833,7 +866,7 @@ export default function MinerMazeScreen({ navigation }: any) {
   if (phase === 'won' || phase === 'lost') return (
     <View style={st.screen}>
       <View style={st.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={st.back}>
+        <TouchableOpacity onPress={() => navigation.navigate('PropertyDetail', { property, userId: user?.uid || '', refresh: Date.now() })} style={st.back}>
           <Ionicons name="arrow-back" size={24} color="#FFD700" />
         </TouchableOpacity>
         <Text style={st.hTitle}>⛏️  Miner Maze</Text>
@@ -845,18 +878,35 @@ export default function MinerMazeScreen({ navigation }: any) {
         <View style={st.rewardBox}>
           {phase==='won' && reward ? <>
             <Text style={st.rHead}>Rewards</Text>
-            <Text style={st.rLine}>⛏️  +{reward.tb} TB</Text>
-            <Text style={st.rLine}>🪨  +{reward.res} Coal Resources</Text>
+            <Text style={st.rLine}>💰  +{reward.tb} TB</Text>
+            <Text style={st.rLine}>🪨  +{reward.shards} Shards</Text>
+            {reward.pieces > 0 && <Text style={st.rLine}>💚  +{reward.pieces} Pieces</Text>}
+            {reward.stones > 0 && <Text style={st.rLine}>🔷  +{reward.stones} Stones</Text>}
             <Text style={st.rLine}>📊  Score: {score.toLocaleString()}</Text>
             <Text style={st.rLine}>👣  Steps: {steps}</Text>
+            <View style={st.xpRow}>
+              <Text style={st.xpLbl}>⚡ Lv {liveDetails?.gameLevel ?? 1}</Text>
+              <View style={st.xpBg}>
+                <View style={[st.xpFill, { width: `${Math.min(100, ((liveDetails?.gameXP ?? 0) / 1000) * 100)}%` }]} />
+              </View>
+              <Text style={st.xpTxt}>{liveDetails?.gameXP ?? 0}/1000 XP</Text>
+            </View>
           </> : <>
             <Text style={st.rHead}>Result</Text>
             <Text style={st.rLine}>❤️  HP remaining: {health}</Text>
             <Text style={st.rLine}>⏱️  Time left: {tLeft}s</Text>
             <Text style={st.rLine}>👣  Steps: {steps}</Text>
+            <Text style={st.rLine}>📊  +10 XP earned</Text>
+            <View style={st.xpRow}>
+              <Text style={st.xpLbl}>⚡ Lv {liveDetails?.gameLevel ?? 1}</Text>
+              <View style={st.xpBg}>
+                <View style={[st.xpFill, { width: `${Math.min(100, ((liveDetails?.gameXP ?? 0) / 1000) * 100)}%` }]} />
+              </View>
+              <Text style={st.xpTxt}>{liveDetails?.gameXP ?? 0}/1000 XP</Text>
+            </View>
           </>}
         </View>
-        <TouchableOpacity style={st.bigBtn} onPress={startGame}>
+        <TouchableOpacity style={st.bigBtn} onPress={() => { resultSaved.current = false; startGame(); }}>
           <Text style={st.bigBtnTxt}>🔄  Try Again</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[st.bigBtn,{backgroundColor:'#4E342E',marginTop:10}]} onPress={() => setPhase('menu')}>
@@ -910,6 +960,15 @@ export default function MinerMazeScreen({ navigation }: any) {
           <Text style={st.hudLbl}>📊 SCORE</Text>
           <Text style={st.hudV}>{score}</Text>
         </View>
+      </View>
+
+      {/* ── XP Meter ── */}
+      <View style={st.xpRow}>
+        <Text style={st.xpLbl}>⚡ Lv {liveDetails?.gameLevel ?? 1}</Text>
+        <View style={st.xpBg}>
+          <View style={[st.xpFill, { width: `${Math.min(100, ((liveDetails?.gameXP ?? 0) / 1000) * 100)}%` }]} />
+        </View>
+        <Text style={st.xpTxt}>{liveDetails?.gameXP ?? 0}/1000 XP</Text>
       </View>
 
       {/* ── Status banners ── */}
@@ -1146,6 +1205,11 @@ const st = StyleSheet.create({
   hudMid: { borderLeftWidth:1, borderRightWidth:1, borderColor:'#3E2723' },
   hudLbl: { color:'#6D4C1F', fontSize:10, fontWeight:'bold' },
   hudV:   { color:'#FFF', fontSize:13, fontWeight:'bold' },
+  xpRow:  { flexDirection:'row', alignItems:'center', backgroundColor:'#0A0400', paddingHorizontal:12, paddingVertical:4, gap:6 },
+  xpLbl:  { color:'#FFD700', fontSize:10, fontWeight:'bold', minWidth:42 },
+  xpBg:   { flex:1, height:6, backgroundColor:'rgba(255,255,255,0.12)', borderRadius:3, overflow:'hidden' },
+  xpFill: { height:'100%', backgroundColor:'#FFD700', borderRadius:3 },
+  xpTxt:  { color:'#FFD700', fontSize:10, fontWeight:'bold', minWidth:62, textAlign:'right' },
   hudTime:{ color:'#FFD700', fontSize:20, fontWeight:'bold' },
   hpBg:   { width:'80%', height:6, backgroundColor:'#3E2723', borderRadius:3, overflow:'hidden', marginVertical:2 },
   hpFg:   { height:6, borderRadius:3 },

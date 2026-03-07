@@ -3,8 +3,8 @@
 
 import React, { useEffect, useRef } from 'react';
 import { TouchableOpacity, Animated, StyleSheet, Text, View } from 'react-native';
-import { Card as CardType } from './MemoryMatchTypes';
-import { FLIP_DURATION } from './MemoryMatchConstants';
+import { Card as CardType } from '../../../types/MemoryMatchTypes';
+import { FLIP_DURATION } from '../../../utils/MemoryMatchConstants';
 
 interface CardProps {
   card: CardType;

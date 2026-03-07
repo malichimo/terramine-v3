@@ -1,54 +1,59 @@
 // types/PropertyTypes.ts
-// Phase 2: Property Details with Daily Ad Attempt Caps
+// Central type definitions for TerraMine Phase 2
+// All game, property, and resource types exported from here
 
 export type MineType = 'rock' | 'coal' | 'gold' | 'diamond';
 
+export interface ResourcePool {
+  shards: number;    // most common
+  pieces: number;    // uncommon
+  stones: number;    // rare
+  diamonds: number;  // epic/rarest
+}
+
 export interface PropertyDetails {
   propertyId: string;
-  customName?: string;
-  productionLevel: number;          // 1-100
-  gameLevel: number;                // Memory match difficulty
-  gameXP: number;                   // Progress to next level (0-999)
+  productionLevel: number;
+  gameLevel: number;
+  gameXP: number;
   gamesPlayed: number;
   gamesWon: number;
-  dailyActivitiesRemaining: number; // Base attempts (1-3)
-  doubleRewardAvailable: boolean;   // Can watch ad for 2x on first attempt
-  adAttemptsUsedToday: number;      // NEW: Track ad attempts used (0-6)
-  lastAdAttemptDate: string;        // NEW: Last time ad attempt was used (for reset)
-  lastDailyReset: string;           // ISO timestamp (4 AM EST)
+  dailyActivitiesRemaining: number;
+  doubleRewardAvailable: boolean;
+  customName?: string;
+  lastGameDate?: string;
+  lastDailyReset: string;
   createdAt: string;
   lastUpdated: string;
-}
-
-export interface ResourcePool {
-  common: number;
-  uncommon: number;
-  rare: number;
-  epic: number;
-}
-
-export interface DailyReward {
-  common: number;
-  uncommon: number;
-  rare: number;
-  epic: number;
+  adAttemptsToday?: number;
+  adAttemptsUsedToday?: number;
+  lastAdAttemptDate?: string;
+  [key: string]: any;
 }
 
 export interface GameReward {
-  common: number;
-  uncommon: number;
-  rare: number;
-  epic: number;
+  shards: number;
+  pieces: number;
+  stones: number;
+  diamonds: number;
   tb: number;
   propertyXP: number;
 }
 
+export interface DailyReward {
+  shards: number;
+  pieces: number;
+  stones: number;
+  diamonds: number;
+  tb?: number;
+}
+
 export interface UpgradeCost {
   level: number;
-  common: number;
-  uncommon: number;
-  rare: number;
-  epic: number;
+  shards: number;
+  pieces: number;
+  stones: number;
+  diamonds: number;
   requiresAd: boolean;
 }
 
@@ -62,13 +67,9 @@ export interface GameDifficulty {
 export interface DailyActivityLog {
   propertyId: string;
   userId: string;
-  attemptNumber: number;
-  rewardsEarned: ResourcePool;
-  wasDoubled: boolean;
-  perfectTiming: boolean;
-  wasAdPurchased: boolean;
-  timestamp: string;
-  resetDay: string;
+  date: string;
+  completed: boolean;
+  reward?: DailyReward;
 }
 
 export interface GameResultLog {

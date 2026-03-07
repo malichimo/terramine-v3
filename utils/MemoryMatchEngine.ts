@@ -1,7 +1,7 @@
 // screens/games/MemoryMatch/MemoryMatchEngine.ts
 // Phase 2 Week 5: Memory Match Game - Core Engine (Portable Logic)
 
-import { Card, CardSymbol, GameState, GameResult } from './MemoryMatchTypes';
+import { Card, CardSymbol, GameState, GameResult } from '../types/MemoryMatchTypes';
 import { getDifficultyConfig, SCORE_PER_MATCH, SCORE_PER_MOVE_BONUS, SCORE_PER_SECOND_BONUS, PERFECT_GAME_BONUS } from './MemoryMatchConstants';
 
 /**

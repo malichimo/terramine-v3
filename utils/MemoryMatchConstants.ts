@@ -1,7 +1,7 @@
 // screens/games/MemoryMatch/MemoryMatchConstants.ts
 // Phase 2 Week 5: Memory Match Game - Difficulty Configurations
 
-import { CardSymbol, GameDifficulty } from './MemoryMatchTypes';
+import { CardSymbol, GameDifficulty } from '../types/MemoryMatchTypes';
 
 // Symbol sets for different difficulty levels
 export const BASIC_SYMBOLS: CardSymbol[] = ['💎', '🟨', '🟠', '🪨', '⚫', '✨'];
@@ -79,10 +79,10 @@ export function calculateBaseRewards(
   gameLevel: number,
   mineType: 'rock' | 'coal' | 'gold' | 'diamond'
 ): {
-  common: number;
-  uncommon: number;
-  rare: number;
-  epic: number;
+  shards: number;
+  pieces: number;
+  stones: number;
+  diamonds: number;
   tb: number;
   xp: number;
 } {
@@ -96,12 +96,12 @@ export function calculateBaseRewards(
   const mult = mineMultipliers[mineType];
 
   return {
-    common: Math.floor(50 * gameLevel * mult),
-    uncommon: Math.floor(5 * gameLevel * mult),
-    rare: Math.floor(1 * gameLevel * mult),
-    epic: Math.floor((gameLevel / 10) * mult),
-    tb: Math.floor(5 * gameLevel),
-    xp: 100, // Base XP, doubled for perfect game
+    shards:   Math.floor(50 * gameLevel * mult),
+    pieces:   Math.floor(5 * gameLevel * mult),
+    stones:   Math.floor(1 * gameLevel * mult),
+    diamonds: Math.floor((gameLevel / 10) * mult),
+    tb: 1, // TB capped at 1 (base win), 2 for perfect game
+    xp: 100,
   };
 }
 
@@ -114,38 +114,38 @@ export function calculateRewards(
   won: boolean,
   isPerfect: boolean
 ): {
-  common: number;
-  uncommon: number;
-  rare: number;
-  epic: number;
+  shards: number;
+  pieces: number;
+  stones: number;
+  diamonds: number;
   tb: number;
   xp: number;
 } {
   if (!won) {
-    // Consolation prize
+    // Consolation prize — small shards only, no TB
     return {
-      common: 10,
-      uncommon: 0,
-      rare: 0,
-      epic: 0,
-      tb: 1,
+      shards:   10,
+      pieces:   0,
+      stones:   0,
+      diamonds: 0,
+      tb: 0,
       xp: 10,
     };
   }
 
   const baseRewards = calculateBaseRewards(gameLevel, mineType);
 
-  // Perfect game doubles all rewards (except XP which has special handling)
+  // Perfect game doubles resources; TB capped at 2
   if (isPerfect) {
     return {
-      common: baseRewards.common * 2,
-      uncommon: baseRewards.uncommon * 2,
-      rare: baseRewards.rare * 2,
-      epic: baseRewards.epic * 2,
-      tb: baseRewards.tb * 2,
-      xp: 200, // Perfect game XP
+      shards:   baseRewards.shards * 2,
+      pieces:   baseRewards.pieces * 2,
+      stones:   baseRewards.stones * 2,
+      diamonds: baseRewards.diamonds * 2,
+      tb: 2,
+      xp: 200,
     };
   }
 
-  return baseRewards;
+  return { ...baseRewards, tb: 1 };
 }

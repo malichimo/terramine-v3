@@ -20,10 +20,10 @@ export const MINE_COLORS: Record<MineType, string> = {
 
 // Mine icons (emojis)
 export const MINE_ICONS: Record<MineType, string> = {
-  rock: '🪨',
-  coal: '⚫',
-  gold: '🟡',
-  diamond: '💎',
+  rock: 'ðŸª¨',
+  coal: 'âš«',
+  gold: 'ðŸŸ¡',
+  diamond: 'ðŸ’Ž',
 };
 
 // Upgrade limits
@@ -40,10 +40,10 @@ export const XP_PER_GAME_LEVEL = 1000;
 
 // Resource tier colors (for UI)
 export const RESOURCE_TIER_COLORS = {
-  common: '#9E9E9E',    // Gray
-  uncommon: '#4CAF50',  // Green
-  rare: '#2196F3',      // Blue
-  epic: '#9C27B0',      // Purple
+  shards:   '#9E9E9E',    // Gray   — most common
+  pieces:   '#4CAF50',    // Green  — uncommon
+  stones:   '#2196F3',    // Blue   — rare
+  diamonds: '#9C27B0',    // Purple — rarest
 };
 
 // Reward multipliers by mine type (for daily activities)
@@ -56,10 +56,10 @@ export const MINE_REWARD_MULTIPLIERS: Record<MineType, number> = {
 
 // Daily activity reward ranges (base values for rock mine)
 export const DAILY_REWARD_RANGES = {
-  common: { min: 300, max: 600 },
-  uncommon: { min: 30, max: 60 },
-  rare: { min: 3, max: 10 },
-  epic: { min: 0, max: 2, chance: 0.2 }, // 20% chance
+  shards:   { min: 300, max: 600 },
+  pieces:   { min: 30, max: 60 },
+  stones:   { min: 3, max: 10 },
+  diamonds: { min: 0, max: 2, chance: 0.2 }, // 20% chance
 };
 
 // Perfect timing bonus for daily activity
@@ -73,12 +73,12 @@ export const GAME_DIFFICULTY_LEVELS = {
   EXPERT: { min: 51, max: Infinity },
 };
 
-// Initial upgrade cost (Level 1 → 2)
+// Initial upgrade cost (Level 1 â†’ 2)
 export const BASE_UPGRADE_COST = {
-  common: 10000,
-  uncommon: 1000,
-  rare: 500,
-  epic: 50,
+  shards:   10000,
+  pieces:   1000,
+  stones:   500,
+  diamonds: 50,
 };
 
 // UI dimensions
