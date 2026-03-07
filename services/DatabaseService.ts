@@ -14,6 +14,14 @@ import {
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { GridSquare } from '../utils/GridUtils';
 
+export interface BoostState {
+  freeBoostsRemaining: number;
+  adBoostsRemaining: number;
+  boostExpiresAt: string | null;
+  nextFreeBoostResetAt: string | null;
+  lastAdBoostRefillAt: string;
+}
+
 export class DatabaseService {
   // User data
   async getUserData(userId: string) {
@@ -119,7 +127,7 @@ export class DatabaseService {
   }
 
   // Check-ins - FIXED to properly handle messages
-  async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string) {
+  async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) {
     const checkInRef = doc(collection(db, 'checkIns'));
     
     // Upload photo to Storage if provided
@@ -145,6 +153,7 @@ export class DatabaseService {
       propertyOwnerId,
       hasPhoto: !!photoURL,
       timestamp: new Date().toISOString(),
+      ...(visitorNickname ? { visitorNickname } : {}),
     };
     
     if (message && message.trim() !== '') {
@@ -221,5 +230,122 @@ export class DatabaseService {
         timestamp: data.timestamp,
       };
     });
+  }
+
+  // USD Earnings
+  async updateUSDEarnings(userId: string, amount: number) {
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+      usdEarnings: increment(amount),
+    });
+  }
+
+  // Boost system
+  async getBoostState(userId: string): Promise<BoostState> {
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+
+    if (!userSnap.exists()) {
+      return this.getDefaultBoostState();
+    }
+
+    const data = userSnap.data();
+
+    // Check if ad boost refill is needed (every 24h)
+    let adBoostsRemaining = data.adBoostsRemaining ?? 12;
+    const lastRefill = data.lastAdBoostRefillAt
+      ? new Date(data.lastAdBoostRefillAt)
+      : new Date(0);
+    const hoursSinceRefill = (Date.now() - lastRefill.getTime()) / (1000 * 60 * 60);
+
+    let lastAdBoostRefillAt = data.lastAdBoostRefillAt || new Date().toISOString();
+    if (hoursSinceRefill >= 24 && adBoostsRemaining < 12) {
+      adBoostsRemaining = 12;
+      lastAdBoostRefillAt = new Date().toISOString();
+      await updateDoc(userRef, {
+        adBoostsRemaining: 12,
+        lastAdBoostRefillAt,
+      });
+    }
+
+    return {
+      freeBoostsRemaining: data.freeBoostsRemaining ?? 4,
+      adBoostsRemaining,
+      boostExpiresAt: data.boostExpiresAt ?? null,
+      nextFreeBoostResetAt: data.nextFreeBoostResetAt ?? null,
+      lastAdBoostRefillAt,
+    };
+  }
+
+  async updateBoostState(userId: string, boostState: BoostState): Promise<void> {
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+      freeBoostsRemaining: boostState.freeBoostsRemaining,
+      adBoostsRemaining: boostState.adBoostsRemaining,
+      boostExpiresAt: boostState.boostExpiresAt,
+      nextFreeBoostResetAt: boostState.nextFreeBoostResetAt,
+      lastAdBoostRefillAt: boostState.lastAdBoostRefillAt,
+    });
+  }
+
+  async useFreeBoost(userId: string, currentState: BoostState): Promise<BoostState> {
+    if (currentState.freeBoostsRemaining <= 0) {
+      throw new Error('No free boosts remaining');
+    }
+
+    const boostDurationMs = 30 * 60 * 1000; // 30 minutes
+    const now = new Date();
+    const boostExpiresAt = new Date(now.getTime() + boostDurationMs).toISOString();
+
+    // Reset free boosts at midnight
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+    const nextFreeBoostResetAt = tomorrow.toISOString();
+
+    const newState: BoostState = {
+      ...currentState,
+      freeBoostsRemaining: currentState.freeBoostsRemaining - 1,
+      boostExpiresAt,
+      nextFreeBoostResetAt,
+    };
+
+    await this.updateBoostState(userId, newState);
+    return newState;
+  }
+
+  async useAdBoost(userId: string, currentState: BoostState): Promise<BoostState> {
+    if (currentState.adBoostsRemaining <= 0) {
+      throw new Error('No ad boosts remaining');
+    }
+
+    const boostDurationMs = 30 * 60 * 1000; // 30 minutes
+    const now = new Date();
+
+    // If boost already active, extend it
+    const currentExpiry = currentState.boostExpiresAt
+      ? new Date(currentState.boostExpiresAt)
+      : now;
+    const baseTime = currentExpiry > now ? currentExpiry : now;
+    const boostExpiresAt = new Date(baseTime.getTime() + boostDurationMs).toISOString();
+
+    const newState: BoostState = {
+      ...currentState,
+      adBoostsRemaining: currentState.adBoostsRemaining - 1,
+      boostExpiresAt,
+    };
+
+    await this.updateBoostState(userId, newState);
+    return newState;
+  }
+
+  private getDefaultBoostState(): BoostState {
+    return {
+      freeBoostsRemaining: 4,
+      adBoostsRemaining: 12,
+      boostExpiresAt: null,
+      nextFreeBoostResetAt: null,
+      lastAdBoostRefillAt: new Date().toISOString(),
+    };
   }
 }

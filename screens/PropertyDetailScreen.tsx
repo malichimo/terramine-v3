@@ -182,7 +182,11 @@ export default function PropertyDetailScreen({ route, navigation }: any) {
         navigation.navigate('GoldRush', { property, userId, propertyDetails });
         break;
       case 'rock':
+        navigation.navigate('MemoryMatch', { property, propertyDetails });
+        break;
       case 'diamond':
+        navigation.navigate('LaserBlast', { property, propertyDetails });
+        break;
       default:
         navigation.navigate('MemoryMatch', { property, propertyDetails });
         break;
