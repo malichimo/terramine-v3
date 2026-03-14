@@ -7,6 +7,7 @@ import { GameState } from '../../../types/MemoryMatchTypes';
 import { getDifficultyConfig, MISMATCH_DELAY } from '../../../utils/MemoryMatchConstants';
 import { flipCard, checkMatch, flipCardsBack } from '../../../utils/MemoryMatchEngine';
 import Card from './Card';
+import { soundService } from '../../../services/SoundService';
 
 interface MemoryMatchBoardProps {
   gameState: GameState;
@@ -33,28 +34,28 @@ export default function MemoryMatchBoard({
   const handleCardPress = (cardId: string) => {
     if (isProcessing || gameState.isGameOver) return;
 
-    // Flip the card
+    // Flip sound on every tap
+    soundService.play('flip');
+
     const newState = flipCard(gameState, cardId);
     onGameStateChange(newState);
 
-    // If two cards are now flipped, check for match
     if (newState.flippedCards.length === 2) {
       setIsProcessing(true);
       
-      // Small delay to show both cards before checking match
       setTimeout(() => {
         const { newState: matchedState, isMatch } = checkMatch(newState);
         onGameStateChange(matchedState);
 
         if (!isMatch) {
-          // If no match, flip cards back after delay
+          soundService.play('mismatch');
           mismatchTimeoutRef.current = setTimeout(() => {
             const flippedBackState = flipCardsBack(matchedState);
             onGameStateChange(flippedBackState);
             setIsProcessing(false);
           }, MISMATCH_DELAY);
         } else {
-          // Match found, allow next move immediately
+          soundService.play('match');
           setIsProcessing(false);
         }
       }, 300);

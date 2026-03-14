@@ -29,6 +29,8 @@ import {
 // Re-export for consumers that import GameReward from this file
 export type { GameReward, PropertyDetails, MineType, GameDifficulty, ResourcePool, DailyReward, UpgradeCost, DailyActivityLog, GameResultLog };
 import { shouldResetDailyActivity, getResetDay, isSameResetDay } from '../utils/TimeUtils';
+import { DatabaseService } from './DatabaseService';
+const dbService = new DatabaseService();
 
 /**
  * Maximum ad attempts allowed per day (3 ads × 2 attempts each)
@@ -149,10 +151,10 @@ export class DatabaseServicePhase2 {
       
       // Apply doubling if applicable
       const finalReward: DailyReward = wasDoubled ? {
-        shards: baseReward.shards * 2,
-        unshards: baseReward.pieces * 2,
-        stones: baseReward.stones * 2,
-        diamonds: baseReward.diamonds * 2,
+        common: baseReward.common * 2,
+        uncommon: baseReward.uncommon * 2,
+        rare: baseReward.rare * 2,
+        epic: baseReward.epic * 2,
       } : baseReward;
 
       // Add resources to user's pool
@@ -227,10 +229,10 @@ export class DatabaseServicePhase2 {
     const perfectBonus = perfectTiming ? 1.1 : 1.0;
 
     return {
-      shards: Math.floor((300 + Math.random() * 300) * mult * perfectBonus),
-      unshards: Math.floor((30 + Math.random() * 30) * mult * perfectBonus),
-      stones: Math.floor((3 + Math.random() * 7) * mult * perfectBonus),
-      diamonds: Math.random() < 0.2 ? Math.floor((1 + Math.random()) * mult * perfectBonus) : 0,
+      common: Math.floor((300 + Math.random() * 300) * mult * perfectBonus),
+      uncommon: Math.floor((30 + Math.random() * 30) * mult * perfectBonus),
+      rare: Math.floor((3 + Math.random() * 7) * mult * perfectBonus),
+      epic: Math.random() < 0.2 ? Math.floor((1 + Math.random()) * mult * perfectBonus) : 0,
     };
   }
 
@@ -250,7 +252,7 @@ export class DatabaseServicePhase2 {
       const userData = userSnap.data();
       const resourceKey = `${mineType}Resources`;
       
-      return userData[resourceKey] || { shards: 0, unshards: 0, stones: 0, diamonds: 0 };
+      return userData[resourceKey] || { common: 0, uncommon: 0, rare: 0, epic: 0 };
     } catch (error) {
       console.error('Error getting user resources:', error);
       throw error;
@@ -266,11 +268,17 @@ export class DatabaseServicePhase2 {
       const userRef = doc(db, 'users', userId);
       const resourceKey = `${mineType}Resources`;
 
+      // First ensure the parent resource map exists (setDoc merge creates it if missing)
+      await setDoc(userRef, {
+        [resourceKey]: { common: 0, uncommon: 0, rare: 0, epic: 0 },
+      }, { merge: true });
+
+      // Now safely increment the nested fields
       await updateDoc(userRef, {
-        [`${resourceKey}.shards`]: increment(resources.shards),
-        [`${resourceKey}.pieces`]: increment(resources.pieces),
-        [`${resourceKey}.stones`]: increment(resources.stones),
-        [`${resourceKey}.diamonds`]: increment(resources.diamonds),
+        [`${resourceKey}.common`]:   increment(resources.common),
+        [`${resourceKey}.uncommon`]: increment(resources.uncommon),
+        [`${resourceKey}.rare`]:     increment(resources.rare),
+        [`${resourceKey}.epic`]:     increment(resources.epic),
       });
       
       console.log('Resources added to pool:', { mineType, resources });
@@ -290,10 +298,10 @@ export class DatabaseServicePhase2 {
       const resourceKey = `${mineType}Resources`;
 
       await updateDoc(userRef, {
-        [`${resourceKey}.shards`]: increment(-cost.shards),
-        [`${resourceKey}.pieces`]: increment(-cost.pieces),
-        [`${resourceKey}.stones`]: increment(-cost.stones),
-        [`${resourceKey}.diamonds`]: increment(-cost.diamonds),
+        [`${resourceKey}.common`]: increment(-cost.common),
+        [`${resourceKey}.uncommon`]: increment(-cost.uncommon),
+        [`${resourceKey}.rare`]: increment(-cost.rare),
+        [`${resourceKey}.epic`]: increment(-cost.epic),
       });
       
       console.log('Resources deducted from pool:', { mineType, cost });
@@ -318,16 +326,16 @@ export class DatabaseServicePhase2 {
       const updates: any = {};
       
       if (!userData.rockResources) {
-        updates.rockResources = { shards: 0, unshards: 0, stones: 0, diamonds: 0 };
+        updates.rockResources = { common: 0, uncommon: 0, rare: 0, epic: 0 };
       }
       if (!userData.coalResources) {
-        updates.coalResources = { shards: 0, unshards: 0, stones: 0, diamonds: 0 };
+        updates.coalResources = { common: 0, uncommon: 0, rare: 0, epic: 0 };
       }
       if (!userData.goldResources) {
-        updates.goldResources = { shards: 0, unshards: 0, stones: 0, diamonds: 0 };
+        updates.goldResources = { common: 0, uncommon: 0, rare: 0, epic: 0 };
       }
       if (!userData.diamondResources) {
-        updates.diamondResources = { shards: 0, unshards: 0, stones: 0, diamonds: 0 };
+        updates.diamondResources = { common: 0, uncommon: 0, rare: 0, epic: 0 };
       }
       
       if (Object.keys(updates).length > 0) {
@@ -361,10 +369,10 @@ export class DatabaseServicePhase2 {
 
       // Verify sufficient resources
       if (
-        userResources.shards < cost.shards ||
-        userResources.pieces < cost.pieces ||
-        userResources.stones < cost.stones ||
-        userResources.diamonds < cost.diamonds
+        userResources.common < cost.common ||
+        userResources.uncommon < cost.uncommon ||
+        userResources.rare < cost.rare ||
+        userResources.epic < cost.epic
       ) {
         throw new Error('Insufficient resources');
       }
@@ -395,10 +403,10 @@ export class DatabaseServicePhase2 {
     
     return {
       level: currentLevel + 1,
-      shards: 10000 * multiplier,
-      unshards: 1000 * multiplier,
-      stones: 500 * multiplier,
-      diamonds: 50 * multiplier,
+      common: 10000 * multiplier,
+      uncommon: 1000 * multiplier,
+      rare: 500 * multiplier,
+      epic: 50 * multiplier,
       requiresAd: true,
     };
   }
@@ -461,14 +469,14 @@ export class DatabaseServicePhase2 {
       if (won) {
         // Add resources
         await this.addResourcesToPool(userId, mineType, {
-          shards: reward.shards,
-          unshards: reward.pieces,
-          stones: reward.stones,
-          diamonds: reward.diamonds,
+          common:   reward.common,
+          uncommon: reward.uncommon,
+          rare:     reward.rare,
+          epic:     reward.epic,
         });
 
         // Add TB (would need to import DatabaseService for this)
-        // await dbService.updateUserBalance(userId, reward.tb);
+        await dbService.updateUserBalance(userId, reward.tb);
       }
 
       // Always add XP (wins get full reward.propertyXP, losses get 10)
@@ -542,10 +550,10 @@ export class DatabaseServicePhase2 {
   ): GameReward {
     if (!won) {
       return {
-        shards: 10,
-        unshards: 1,
-        stones: 0,
-        diamonds: 0,
+        common: 10,
+        uncommon: 1,
+        rare: 0,
+        epic: 0,
         tb: 1,
         propertyXP: 10,
       };
@@ -562,10 +570,10 @@ export class DatabaseServicePhase2 {
     const perfectMult = perfectGame ? 2 : 1;
 
     return {
-      shards: Math.floor(50 * gameLevel * mult * perfectMult),
-      unshards: Math.floor(5 * gameLevel * mult * perfectMult),
-      stones: Math.floor(1 * gameLevel * mult * perfectMult),
-      diamonds: Math.floor((gameLevel / 10) * mult * perfectMult),
+      common: Math.floor(50 * gameLevel * mult * perfectMult),
+      uncommon: Math.floor(5 * gameLevel * mult * perfectMult),
+      rare: Math.floor(1 * gameLevel * mult * perfectMult),
+      epic: Math.floor((gameLevel / 10) * mult * perfectMult),
       tb: perfectGame ? 2 : 1,  // TB capped at 2 per game
       propertyXP: perfectGame ? 200 : 100,
     };

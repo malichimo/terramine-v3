@@ -28,6 +28,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { dbServicePhase2 } from '../../services/DatabaseServicePhase2';
 import { DatabaseService } from '../../services/DatabaseService';
 import { AdMobService } from '../../services/AdMobService';
+import { soundService } from '../../services/SoundService';
 
 const { width, height } = Dimensions.get('window');
 
@@ -41,8 +42,17 @@ interface RewardTier {
   tier: 'common' | 'uncommon' | 'rare' | 'epic';
   amount: number;
   displayName: string;
-  emoji: string;
+  image: any;
 }
+
+
+// ── Resource images ─────────────────────────────────────────────────────────
+const RESOURCE_IMAGES = {
+  common:   require('../../assets/images/resources/rock/rock-common.png'),
+  uncommon: require('../../assets/images/resources/rock/rock-uncommon.png'),
+  rare:     require('../../assets/images/resources/rock/rock-rare.png'),
+  epic:     require('../../assets/images/resources/rock/rock-epic.png'),
+};
 
 export default function RockConveyorActivity({
   property,
@@ -136,7 +146,8 @@ export default function RockConveyorActivity({
 
   const startConveyor = () => {
     if (isRunning || !user || attemptsRemaining <= 0) return;
-    
+    soundService.play('machine_start');
+    setTimeout(() => soundService.play('machine_loop'), 400);
     setIsRunning(true);
 
     Animated.stagger(500, [
@@ -191,28 +202,28 @@ export default function RockConveyorActivity({
         tier: 'common',
         amount: Math.floor(300 + Math.random() * 300),
         displayName: 'Gravel',
-        emoji: '🪨',
+        image: RESOURCE_IMAGES.common,
       };
     } else if (roll < 85) {
       reward = {
         tier: 'uncommon',
         amount: Math.floor(30 + Math.random() * 30),
         displayName: 'Slate',
-        emoji: '🟫',
+        image: RESOURCE_IMAGES.uncommon,
       };
     } else if (roll < 97) {
       reward = {
         tier: 'rare',
         amount: Math.floor(3 + Math.random() * 7),
         displayName: 'Granite',
-        emoji: '⬜',
+        image: RESOURCE_IMAGES.rare,
       };
     } else {
       reward = {
         tier: 'epic',
         amount: Math.floor(1 + Math.random() * 2),
         displayName: 'Marble',
-        emoji: '⬛',
+        image: RESOURCE_IMAGES.epic,
       };
     }
 
@@ -275,6 +286,8 @@ export default function RockConveyorActivity({
 
       setRewardTier(reward);
       setTbBonus(tbBonusAmount);
+      soundService.stop('machine_loop');
+      soundService.play('reward');
       setShowRewards(true);
       
       // Reset double flag after first use (base attempt)
@@ -305,10 +318,7 @@ export default function RockConveyorActivity({
   };
 
   const handleBack = () => {
-    navigation.navigate('PropertyDetail', {
-      property: property,
-      refresh: true,
-    });
+    navigation.goBack();
   };
 
   // Can only double on the first (base) attempt
@@ -468,7 +478,7 @@ export default function RockConveyorActivity({
 
           <View style={styles.rewardsList}>
             <View style={styles.mainReward}>
-              <Text style={styles.rewardEmoji}>{rewardTier.emoji}</Text>
+              <Image source={rewardTier.image} style={styles.rewardEmoji} />
               <Text style={styles.rewardAmount}>{rewardTier.amount}</Text>
               <Text style={styles.rewardName}>
                 {rewardTier.displayName} ({rewardTier.tier.toUpperCase()})
@@ -698,7 +708,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   rewardEmoji: {
-    fontSize: 64,
+    width: 80,
+    height: 80,
     marginBottom: 10,
   },
   rewardAmount: {

@@ -1,5 +1,4 @@
 import * as Location from 'expo-location';
-import { Alert } from 'react-native';
 
 export interface Coordinates {
   latitude: number;
@@ -9,18 +8,21 @@ export interface Coordinates {
 export class LocationService {
   private watchSubscription: Location.LocationSubscription | null = null;
 
+  // Check current permission status without prompting
+  async checkPermissionStatus(): Promise<'granted' | 'denied' | 'undetermined'> {
+    try {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      return status as 'granted' | 'denied' | 'undetermined';
+    } catch {
+      return 'undetermined';
+    }
+  }
+
+  // Request permission — caller is responsible for showing rationale UI first
   async requestPermissions(): Promise<boolean> {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      
-      if (status !== 'granted') {
-        Alert.alert(
-          'Permission Denied',
-          'TerraMine needs location access to show properties near you.'
-        );
-        return false;
-      }
-      return true;
+      return status === 'granted';
     } catch (error) {
       console.error('Permission error:', error);
       return false;

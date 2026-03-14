@@ -11,14 +11,18 @@ export class AdMobService {
   private adUnitId: string;
   private isLoading: boolean = false;
   private isLoaded: boolean = false;
+  // Track permanent listeners so we can clean them up
+  private unsubscribeLoaded:  (() => void) | null = null;
+  private unsubscribeClosed:  (() => void) | null = null;
+  private unsubscribeError:   (() => void) | null = null;
+  private unsubscribeEarned:  (() => void) | null = null;
 
   constructor() {
-    // Use test ads in development, production ads in production
     this.adUnitId = __DEV__ 
       ? TestIds.REWARDED 
       : Platform.OS === 'android' 
-        ? 'ca-app-pub-4502698429383902/1899831956'  // Your Android Rewarded Ad ID
-        : 'ca-app-pub-4502698429383902/4156946740'; // Your iOS Rewarded Ad ID
+        ? 'ca-app-pub-4502698429383902/1899831956'
+        : 'ca-app-pub-4502698429383902/4156946740';
     
     console.log('AdMob initialized with ad unit:', this.adUnitId);
     this.initializeAd();
@@ -26,40 +30,69 @@ export class AdMobService {
 
   private initializeAd() {
     try {
+      // Clean up any previous instance before creating a new one
+      this.destroyAd();
+
       console.log('Creating rewarded ad instance...');
       this.rewardedAd = RewardedAd.createForAdRequest(this.adUnitId, {
         requestNonPersonalizedAdsOnly: false,
       });
 
-      // Set up event listeners
-      this.rewardedAd.addAdEventListener(RewardedAdEventType.LOADED, () => {
-        console.log('✅ Rewarded ad loaded successfully');
-        this.isLoaded = true;
-        this.isLoading = false;
-      });
+      this.unsubscribeLoaded = this.rewardedAd.addAdEventListener(
+        RewardedAdEventType.LOADED,
+        () => {
+          console.log('✅ Rewarded ad loaded successfully');
+          this.isLoaded = true;
+          this.isLoading = false;
+        }
+      );
 
-      this.rewardedAd.addAdEventListener(RewardedAdEventType.EARNED_REWARD, (reward) => {
-        console.log('🎉 User earned reward:', reward);
-      });
+      this.unsubscribeEarned = this.rewardedAd.addAdEventListener(
+        RewardedAdEventType.EARNED_REWARD,
+        (reward) => {
+          console.log('🎉 User earned reward:', reward);
+        }
+      );
 
-      this.rewardedAd.addAdEventListener(AdEventType.ERROR, (error) => {
-        console.error('❌ Rewarded ad error:', error);
-        this.isLoading = false;
-        this.isLoaded = false;
-      });
+      this.unsubscribeError = this.rewardedAd.addAdEventListener(
+        AdEventType.ERROR,
+        (error) => {
+          console.error('❌ Rewarded ad error:', error);
+          this.isLoading = false;
+          this.isLoaded = false;
+        }
+      );
 
-      this.rewardedAd.addAdEventListener(AdEventType.CLOSED, () => {
-        console.log('📱 Rewarded ad closed');
-        this.isLoaded = false;
-        // Preload the next ad
-        setTimeout(() => this.loadAd(), 1000);
-      });
+      this.unsubscribeClosed = this.rewardedAd.addAdEventListener(
+        AdEventType.CLOSED,
+        () => {
+          console.log('📱 Rewarded ad closed');
+          this.isLoaded = false;
+          // Reinitialize with fresh instance to avoid stale listener buildup
+          setTimeout(() => this.initializeAd(), 1000);
+        }
+      );
 
       // Load the first ad
       this.loadAd();
     } catch (error) {
       console.error('❌ Error initializing AdMob:', error);
     }
+  }
+
+  private destroyAd() {
+    // Remove all permanent listeners before discarding the instance
+    this.unsubscribeLoaded?.();
+    this.unsubscribeClosed?.();
+    this.unsubscribeError?.();
+    this.unsubscribeEarned?.();
+    this.unsubscribeLoaded  = null;
+    this.unsubscribeClosed  = null;
+    this.unsubscribeError   = null;
+    this.unsubscribeEarned  = null;
+    this.rewardedAd = null;
+    this.isLoaded   = false;
+    this.isLoading  = false;
   }
 
   async loadAd(): Promise<void> {
@@ -90,11 +123,10 @@ export class AdMobService {
     try {
       console.log('📺 Showing rewarded ad...');
       
-      // Set up one-time listeners for this specific ad show
+      // One-time listeners for this specific show — unsubscribe immediately after firing
       const unsubscribeEarned = this.rewardedAd.addAdEventListener(
         RewardedAdEventType.EARNED_REWARD,
-        (reward) => {
-          console.log('🎉 Reward earned:', reward);
+        () => {
           onRewarded();
           unsubscribeEarned();
         }
@@ -103,7 +135,6 @@ export class AdMobService {
       const unsubscribeClosed = this.rewardedAd.addAdEventListener(
         AdEventType.CLOSED,
         () => {
-          console.log('📱 Ad closed by user');
           onAdClosed();
           unsubscribeClosed();
         }

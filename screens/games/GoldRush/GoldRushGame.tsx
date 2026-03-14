@@ -19,7 +19,16 @@ import {
 import { useAuth } from '../../../contexts/AuthContext';
 import { dbServicePhase2 } from '../../../services/DatabaseServicePhase2';
 import { AdMobService } from '../../../services/AdMobService';
-import type { GameReward } from '../../../services/DatabaseServicePhase2';
+import { soundService } from '../../../services/SoundService';
+// Local GameReward type — avoids re-export resolution issues
+interface GameReward {
+  common: number;
+  uncommon: number;
+  rare: number;
+  epic: number;
+  tb: number;
+  propertyXP: number;
+}
 import {
   GameTile,
   PuzzleConfig,
@@ -81,6 +90,7 @@ export default function GoldRushGame({ route, navigation }: any) {
   const [reward, setReward]     = useState<GameReward | null>(null);
   const [leveledUp, setLeveledUp] = useState(false);
   const [newLevel, setNewLevel]   = useState(gameLevel);
+  const [adLevelLoading, setAdLevelLoading] = useState(false);
 
   // ── Animated values ────────────────────────────────────────────────────────
   const lepX         = useRef(new Animated.Value(0)).current;
@@ -94,6 +104,7 @@ export default function GoldRushGame({ route, navigation }: any) {
 
   const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
   const resultSaved     = useRef(false);
+  const activeLevelRef  = useRef(gameLevel);  // tracks level across restarts
   const puzzleRef       = useRef<PuzzleConfig | null>(null);
   const adService       = useRef<AdMobService | null>(null);
 
@@ -159,6 +170,8 @@ export default function GoldRushGame({ route, navigation }: any) {
       return;
     }
 
+    soundService.play('rotate');
+
     // Animate the rotation
     const k = `${row},${col}`;
     const anim = tileAnims.current[k];
@@ -222,6 +235,7 @@ export default function GoldRushGame({ route, navigation }: any) {
 
   // ── Win / timeout ──────────────────────────────────────────────────────────
   function handleWin(finalScore: number, finalTaps: number, finalTimeLeft: number) {
+    soundService.play('win');
     setPhase('celebrating');
     setLepImage(LEPRECHAUN_CELEBRATE);
 
@@ -244,6 +258,7 @@ export default function GoldRushGame({ route, navigation }: any) {
 
   function handleTimeout() {
     if (phase !== 'puzzle') return;
+    soundService.play('lose');
     setPhase('gameover');
     saveResult(false, 0, tapsUsed, 0);
   }
@@ -258,13 +273,14 @@ export default function GoldRushGame({ route, navigation }: any) {
         user.uid, property.id, property.mineType,
         won, perfect, finalScore, finalTimeLeft, finalTaps
       );
-      setReward(earned);
+      setReward(earned as GameReward);
 
       // Check if level changed by re-fetching property details
       const updated = await dbServicePhase2.getPropertyDetails(property.id);
       if (updated && updated.gameLevel > levelBefore) {
         setLeveledUp(true);
         setNewLevel(updated.gameLevel);
+        activeLevelRef.current = updated.gameLevel;
       }
     } catch (e) {
       console.error('Error saving game result:', e);
@@ -292,6 +308,26 @@ export default function GoldRushGame({ route, navigation }: any) {
       );
     } catch {
       setAdLoading(false);
+    }
+  }
+
+
+  // ── Ad to play next level ─────────────────────────────────────────────────
+  async function handlePlayNextLevel() {
+    if (!adService.current) return;
+    setAdLevelLoading(true);
+    try {
+      await adService.current.showAd(
+        async () => {
+          // Rewarded: fetch fresh propertyDetails and replace screen
+          const updated = await dbServicePhase2.getPropertyDetails(property.id);
+          setAdLevelLoading(false);
+          navigation.replace('GoldRush', { property, userId: user?.uid ?? '', propertyDetails: updated ?? propertyDetails });
+        },
+        () => { setAdLevelLoading(false); }
+      );
+    } catch {
+      setAdLevelLoading(false);
     }
   }
 
@@ -326,7 +362,7 @@ export default function GoldRushGame({ route, navigation }: any) {
 
       {/* ── Header ── */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.navigate('PropertyDetail', { property, userId: property.ownerId, refresh: Date.now() })} style={styles.backBtn}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backBtnTxt}>← Back</Text>
         </TouchableOpacity>
         <View style={styles.hCenter}>
@@ -493,6 +529,13 @@ export default function GoldRushGame({ route, navigation }: any) {
             {leveledUp && (
               <View style={styles.levelUpBanner}>
                 <Text style={styles.levelUpTxt}>⬆️ LEVEL UP! Now Level {newLevel}</Text>
+                {adLevelLoading ? (
+                  <Text style={[styles.levelUpTxt, { marginTop: 6 }]}>⏳ Loading ad...</Text>
+                ) : (
+                  <TouchableOpacity style={styles.levelUpAdBtn} onPress={handlePlayNextLevel}>
+                    <Text style={styles.levelUpAdTxt}>📺 Watch Ad → Play Level {newLevel}</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
             <Text style={styles.winTitle}>🏆 Pot of Gold Found!</Text>
@@ -509,37 +552,41 @@ export default function GoldRushGame({ route, navigation }: any) {
                   <Text style={styles.rewardVal}>+{reward.tb}</Text>
                   <Text style={styles.rewardLbl}>TB</Text>
                 </View>
-                {reward.shards > 0 && (
+                {reward.common > 0 && (
                   <View style={styles.rewardItem}>
-                    <Text style={styles.rewardVal}>+{reward.shards}</Text>
-                    <Text style={styles.rewardLbl}>Shards</Text>
+                    <Text style={styles.rewardVal}>+{reward.common}</Text>
+                    <Text style={styles.rewardLbl}>Common</Text>
                   </View>
                 )}
-                {reward.pieces > 0 && (
+                {reward.uncommon > 0 && (
                   <View style={styles.rewardItem}>
-                    <Text style={styles.rewardVal}>+{reward.pieces}</Text>
-                    <Text style={styles.rewardLbl}>Pieces</Text>
+                    <Text style={styles.rewardVal}>+{reward.uncommon}</Text>
+                    <Text style={styles.rewardLbl}>Uncommon</Text>
                   </View>
                 )}
-                {reward.stones > 0 && (
+                {reward.rare > 0 && (
                   <View style={styles.rewardItem}>
-                    <Text style={styles.rewardVal}>+{reward.stones}</Text>
-                    <Text style={styles.rewardLbl}>Stones</Text>
-                  </View>
-                )}
-                {reward.diamonds > 0 && (
-                  <View style={styles.rewardItem}>
-                    <Text style={styles.rewardVal}>+{reward.diamonds}</Text>
-                    <Text style={styles.rewardLbl}>Diamonds</Text>
+                    <Text style={styles.rewardVal}>+{reward.rare}</Text>
+                    <Text style={styles.rewardLbl}>Rare</Text>
                   </View>
                 )}
               </View>
             )}
             <View style={styles.btnRow}>
-              <TouchableOpacity style={styles.btn} onPress={restart}>
-                <Text style={styles.btnTxt}>🔄 Play Again</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.btn, styles.btnGreen]} onPress={() => navigation.navigate('PropertyDetail', { property, userId: property.ownerId, refresh: Date.now() })}>
+              {leveledUp ? (
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnGold, adLevelLoading && { opacity: 0.6 }]}
+                  onPress={handlePlayNextLevel}
+                  disabled={adLevelLoading}
+                >
+                  <Text style={styles.btnTxt}>{adLevelLoading ? '⏳ Loading...' : `📺 Play Level ${newLevel}`}</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity style={styles.btn} onPress={restart}>
+                  <Text style={styles.btnTxt}>🔄 Play Again</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={[styles.btn, styles.btnGreen]} onPress={() => navigation.goBack()}>
                 <Text style={styles.btnTxt}>🚪 Exit</Text>
               </TouchableOpacity>
             </View>
@@ -559,7 +606,7 @@ export default function GoldRushGame({ route, navigation }: any) {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.btn, { marginTop: 10 }]}
-              onPress={() => navigation.navigate('PropertyDetail', { property, userId: property.ownerId, refresh: Date.now() })}
+              onPress={() => navigation.goBack()}
             >
               <Text style={styles.btnTxt}>🚪 Quit</Text>
             </TouchableOpacity>
@@ -579,7 +626,7 @@ export default function GoldRushGame({ route, navigation }: any) {
               <TouchableOpacity style={styles.btn} onPress={restart}>
                 <Text style={styles.btnTxt}>🔄 Try Again</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.btn, styles.btnGreen]} onPress={() => navigation.navigate('PropertyDetail', { property, userId: property.ownerId, refresh: Date.now() })}>
+              <TouchableOpacity style={[styles.btn, styles.btnGreen]} onPress={() => navigation.goBack()}>
                 <Text style={styles.btnTxt}>🚪 Exit</Text>
               </TouchableOpacity>
             </View>
@@ -706,7 +753,9 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     marginBottom: 6,
   },
-  levelUpTxt: { color: '#1a3a1a', fontWeight: 'bold', fontSize: 15 },
+  levelUpTxt:    { color: '#1a3a1a', fontWeight: 'bold', fontSize: 15 },
+  levelUpAdBtn:  { marginTop: 6, backgroundColor: '#F59E0B', borderRadius: 6, paddingHorizontal: 14, paddingVertical: 6 },
+  levelUpAdTxt:  { color: 'white', fontWeight: 'bold', fontSize: 13 },
 
   // Result panels
   resultPanel: { alignItems: 'center', width: '100%', gap: 4 },

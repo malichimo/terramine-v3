@@ -1,8 +1,8 @@
 // screens/games/MemoryMatch/MemoryMatchEngine.ts
 // Phase 2 Week 5: Memory Match Game - Core Engine (Portable Logic)
 
-import { Card, CardSymbol, GameState, GameResult } from '../types/MemoryMatchTypes';
-import { getDifficultyConfig, SCORE_PER_MATCH, SCORE_PER_MOVE_BONUS, SCORE_PER_SECOND_BONUS, PERFECT_GAME_BONUS } from './MemoryMatchConstants';
+import { Card, CardSymbol, GameState, GameResult } from './MemoryMatchTypes';
+import { getDifficultyConfig, CARD_IMAGES, SCORE_PER_MATCH, SCORE_PER_MOVE_BONUS, SCORE_PER_SECOND_BONUS, PERFECT_GAME_BONUS } from './MemoryMatchConstants';
 
 /**
  * Generate pairs of cards for the game
@@ -19,6 +19,7 @@ export function generateCards(gameLevel: number): Card[] {
     cards.push({
       id: `card-${i * 2}`,
       symbol: symbol,
+      imageSource: CARD_IMAGES[symbol],
       pairId: i,
       isFlipped: false,
       isMatched: false,
@@ -27,6 +28,7 @@ export function generateCards(gameLevel: number): Card[] {
     cards.push({
       id: `card-${i * 2 + 1}`,
       symbol: symbol,
+      imageSource: CARD_IMAGES[symbol],
       pairId: i,
       isFlipped: false,
       isMatched: false,

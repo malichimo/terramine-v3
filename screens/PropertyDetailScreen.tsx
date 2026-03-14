@@ -12,16 +12,19 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  Platform, 
-  StatusBar, 
+  Platform,
+  StatusBar,
+  TextInput,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { PropertyDetails } from '../types/PropertyTypes';
 import { GridSquare } from '../utils/GridUtils';
 import { dbServicePhase2 } from '../services/DatabaseServicePhase2';
 import { formatTimeUntilReset } from '../utils/TimeUtils';
 import { useAuth } from '../contexts/AuthContext';
+import { getDifficultyConfig as getMemoryMatchDifficulty } from '../utils/MemoryMatchConstants';
 
-export default function PropertyDetailScreen({ route, navigation }: any) {
+export default function PropertyDetailScreen({ route, navigation, onPropertyUpdate }: any) {
   const { property} = route.params;
   const { user } = useAuth();
   const userId = user?.uid || '';
@@ -29,23 +32,36 @@ export default function PropertyDetailScreen({ route, navigation }: any) {
   const [propertyDetails, setPropertyDetails] = useState<PropertyDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [timeUntilReset, setTimeUntilReset] = useState('');
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState('');
+  const [savingName, setSavingName] = useState(false);
 
   useEffect(() => {
+    // Initial load
     loadPropertyDetails();
     
+    // Timer for the reset countdown
     const interval = setInterval(() => {
       setTimeUntilReset(formatTimeUntilReset());
     }, 60000);
     
-    return () => clearInterval(interval);
-  }, []);
-
-  // Reload XP/stats when returning from a game
-  useEffect(() => {
-    if (route.params?.refresh) {
-      loadPropertyDetails();
-    }
-  }, [route.params?.refresh]);
+    // Reload from Firestore when returning from sub-screens (games, upgrade, daily activity)
+    // Use a mounted ref to skip the focus event that fires on initial mount — we already
+    // call loadPropertyDetails() above, so the focus listener is only for return navigation
+    let isMounted = false;
+    const unsubscribeFocus = navigation.addListener('focus', () => {
+      if (isMounted) {
+        loadPropertyDetails();
+      } else {
+        isMounted = true;
+      }
+    });
+    
+    return () => {
+      clearInterval(interval);
+      unsubscribeFocus();
+    };
+  }, []); // Empty deps — navigation ref is stable, this should only run once
 
   const loadPropertyDetails = async () => {
     try {
@@ -78,6 +94,15 @@ export default function PropertyDetailScreen({ route, navigation }: any) {
       case 'gold': return '🟡';
       case 'diamond': return '💎';
       default: return '⬜';
+    }
+  };
+
+  const getMineImage = () => {
+    switch (property.mineType) {
+      case 'coal':    return require('../assets/images/diamond-mine/coal-lump-clear.png');
+      case 'gold':    return require('../assets/images/resources/gold/gold-epic.png');
+      case 'diamond': return require('../assets/images/resources/coal/coal-epic.png');
+      default:        return null; // rock uses emoji
     }
   };
 
@@ -130,9 +155,9 @@ export default function PropertyDetailScreen({ route, navigation }: any) {
   const getGameType = () => {
     switch (property.mineType) {
       case 'rock': return 'Memory Matching';
-      case 'coal': return 'Headlamp Maze';
-      case 'gold': return 'Rainbow Road';
-      case 'diamond': return 'Laser Reflection';
+      case 'coal': return 'Miner Maze';
+      case 'gold': return 'Gold Rush';
+      case 'diamond': return 'Laser Blast';
       default: return 'Matching Game';
     }
   };
@@ -199,7 +224,36 @@ export default function PropertyDetailScreen({ route, navigation }: any) {
   };
 
   const handleVisitors = () => {
-    Alert.alert('Visitors', 'VisitorLogScreen coming in Week 6!');
+    navigation.navigate('VisitorLog', { property });
+  };
+
+  const handleEditName = () => {
+    setNameInput(propertyDetails?.customName || '');
+    setIsEditingName(true);
+  };
+
+  const handleSaveName = async () => {
+    const trimmed = nameInput.trim();
+    if (!trimmed) {
+      Alert.alert('Invalid Name', 'Please enter a name for your mine.');
+      return;
+    }
+    setSavingName(true);
+    try {
+      await dbServicePhase2.updatePropertyCustomName(property.id, trimmed);
+      setPropertyDetails(prev => prev ? { ...prev, customName: trimmed } : prev);
+      setIsEditingName(false);
+      if (onPropertyUpdate) onPropertyUpdate(); // Refresh parent property list
+    } catch (error) {
+      Alert.alert('Error', 'Failed to save name. Please try again.');
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditingName(false);
+    setNameInput('');
   };
 
   if (loading) {
@@ -229,15 +283,19 @@ export default function PropertyDetailScreen({ route, navigation }: any) {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => {
-          // Navigate back to Profile > Properties tab
-          navigation.navigate('ProfileMain');
-        }}>
+        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
           <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>
-          {getMineIcon()} {property.mineType?.toUpperCase()} MINE
-        </Text>
+        <View style={styles.headerTitleRow}>
+          {getMineImage() ? (
+            <Image source={getMineImage()!} style={styles.headerMineImage} resizeMode="contain" />
+          ) : (
+            <Text style={styles.headerMineEmoji}>{getMineIcon()}</Text>
+          )}
+          <Text style={styles.headerTitle}>
+            {property.mineType?.toUpperCase()} MINE
+          </Text>
+        </View>
         <TouchableOpacity style={styles.settingsButton}>
           <Text style={styles.settingsButtonText}>⚙️</Text>
         </TouchableOpacity>
@@ -245,14 +303,63 @@ export default function PropertyDetailScreen({ route, navigation }: any) {
 
       <ScrollView style={styles.scrollView}>
         {/* Property Name */}
+        {/* Property Name */}
         <View style={styles.nameSection}>
-          <Text style={styles.propertyName}>
-            {propertyDetails.customName || 'Unnamed Mine'}
-          </Text>
-          <TouchableOpacity>
-            <Text style={styles.editNameText}>✏️ Edit Name</Text>
-          </TouchableOpacity>
+          {isEditingName ? (
+            <KeyboardAvoidingView behavior="padding" style={styles.nameEditContainer}>
+              <TextInput
+                style={styles.nameInput}
+                value={nameInput}
+                onChangeText={setNameInput}
+                placeholder="Enter mine name..."
+                placeholderTextColor="#999"
+                maxLength={30}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={handleSaveName}
+              />
+              <Text style={styles.nameCharCount}>{nameInput.length}/30</Text>
+              <View style={styles.nameEditButtons}>
+                <TouchableOpacity
+                  style={[styles.nameButton, styles.nameCancelButton]}
+                  onPress={handleCancelEdit}
+                >
+                  <Text style={styles.nameCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.nameButton, styles.nameSaveButton, savingName && styles.nameButtonDisabled]}
+                  onPress={handleSaveName}
+                  disabled={savingName}
+                >
+                  {savingName
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <Text style={styles.nameSaveText}>Save</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+            </KeyboardAvoidingView>
+          ) : (
+            <>
+              <Text style={styles.propertyName}>
+                {propertyDetails.customName || 'Unnamed Mine'}
+              </Text>
+              <TouchableOpacity onPress={handleEditName}>
+                <Text style={styles.editNameText}>✏️ Edit Name</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
+
+        {/* Mine Hero Image */}
+        {getMineImage() && (
+          <View style={styles.mineHeroContainer}>
+            <Image
+              source={getMineImage()!}
+              style={styles.mineHeroImage}
+              resizeMode="contain"
+            />
+          </View>
+        )}
 
         {/* Stats Section */}
         <View style={styles.statsSection}>
@@ -345,13 +452,24 @@ export default function PropertyDetailScreen({ route, navigation }: any) {
             <Text style={styles.gameTitle}>{getGameType()}</Text>
             <Text style={styles.gameLevel}>Level {propertyDetails.gameLevel}</Text>
             {(() => {
-              const difficulty = dbServicePhase2.getGameDifficulty(propertyDetails.gameLevel);
-              return (
-                <Text style={styles.gameDifficulty}>
-                  {difficulty.gridSize}x{difficulty.gridSize} Grid • {difficulty.timeLimit}s
-                  {difficulty.movesLimit && ` • ${difficulty.movesLimit} moves`}
-                </Text>
-              );
+              if (property.mineType === 'rock' || property.mineType === 'diamond') {
+                // Memory Match: uses gridRows x gridCols layout
+                const d = getMemoryMatchDifficulty(propertyDetails.gameLevel);
+                return (
+                  <Text style={styles.gameDifficulty}>
+                    {d.gridRows}x{d.gridCols} Grid • {d.timeLimit}s • {d.totalPairs} pairs
+                  </Text>
+                );
+              } else {
+                // GoldRush / MinerMaze: uses square gridSize
+                const d = dbServicePhase2.getGameDifficulty(propertyDetails.gameLevel);
+                return (
+                  <Text style={styles.gameDifficulty}>
+                    {d.gridSize}x{d.gridSize} Grid • {d.timeLimit}s
+                    {d.movesLimit ? ` • ${d.movesLimit} moves` : ''}
+                  </Text>
+                );
+              }
             })()}
             <TouchableOpacity style={styles.enterButton} onPress={handleMineEntrance}>
               <Text style={styles.enterButtonText}>⛏️ ENTER MINE</Text>
@@ -440,6 +558,28 @@ const styles = StyleSheet.create({
   nameSection: { backgroundColor: '#D2B48C', padding: 15, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: '#8B7355' },
   propertyName: { fontSize: 22, fontWeight: 'bold', color: '#333', marginBottom: 5 },
   editNameText: { fontSize: 14, color: '#2196F3' },
+  nameEditContainer: { width: '100%', alignItems: 'center', paddingHorizontal: 10 },
+  nameInput: {
+    width: '100%',
+    borderWidth: 2,
+    borderColor: '#2196F3',
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    backgroundColor: '#fff',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  nameCharCount: { fontSize: 12, color: '#999', marginBottom: 10 },
+  nameEditButtons: { flexDirection: 'row', gap: 10 },
+  nameButton: { paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8, minWidth: 90, alignItems: 'center' },
+  nameCancelButton: { backgroundColor: '#9e9e9e' },
+  nameSaveButton: { backgroundColor: '#4CAF50' },
+  nameButtonDisabled: { opacity: 0.6 },
+  nameCancelText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
+  nameSaveText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
   
   statsSection: { backgroundColor: 'white', padding: 15, marginTop: 10, marginHorizontal: 10, borderRadius: 10, borderWidth: 2, borderColor: '#8B7355' },
   statRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -460,6 +600,11 @@ const styles = StyleSheet.create({
   attemptsBadgeText: { color: 'white', fontWeight: 'bold', fontSize: 14 },
   imageContainer: { backgroundColor: '#f5f5f5', padding: 10, alignItems: 'center' },
   activityImage: { width: '100%', height: 180 },
+  headerTitleRow: { flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'center', gap: 8 },
+  headerMineImage: { width: 32, height: 32 },
+  headerMineEmoji: { fontSize: 20 },
+  mineHeroContainer: { alignItems: 'center', paddingVertical: 16, backgroundColor: '#111', marginBottom: 0 },
+  mineHeroImage: { width: 180, height: 180 },
   doubleBanner: { backgroundColor: '#FF9800', padding: 10, alignItems: 'center' },
   doubleBannerText: { color: 'white', fontWeight: 'bold', fontSize: 14 },
   activityInfo: { padding: 12, alignItems: 'center', backgroundColor: '#f9f9f9' },

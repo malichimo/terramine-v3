@@ -5,10 +5,10 @@
 export type MineType = 'rock' | 'coal' | 'gold' | 'diamond';
 
 export interface ResourcePool {
-  shards: number;    // most common
-  pieces: number;    // uncommon
-  stones: number;    // rare
-  diamonds: number;  // epic/rarest
+  common: number;
+  uncommon: number;
+  rare: number;
+  epic: number;
 }
 
 export interface PropertyDetails {
@@ -32,28 +32,28 @@ export interface PropertyDetails {
 }
 
 export interface GameReward {
-  shards: number;
-  pieces: number;
-  stones: number;
-  diamonds: number;
+  common: number;
+  uncommon: number;
+  rare: number;
+  epic: number;
   tb: number;
   propertyXP: number;
 }
 
 export interface DailyReward {
-  shards: number;
-  pieces: number;
-  stones: number;
-  diamonds: number;
+  common: number;
+  uncommon: number;
+  rare: number;
+  epic: number;
   tb?: number;
 }
 
 export interface UpgradeCost {
   level: number;
-  shards: number;
-  pieces: number;
-  stones: number;
-  diamonds: number;
+  common: number;
+  uncommon: number;
+  rare: number;
+  epic: number;
   requiresAd: boolean;
 }
 

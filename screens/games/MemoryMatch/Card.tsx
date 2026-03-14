@@ -2,7 +2,7 @@
 // Phase 2 Week 5: Memory Match Game - Animated Card Component
 
 import React, { useEffect, useRef } from 'react';
-import { TouchableOpacity, Animated, StyleSheet, Text, View } from 'react-native';
+import { TouchableOpacity, Animated, StyleSheet, Text, View, Image } from 'react-native';
 import { Card as CardType } from '../../../types/MemoryMatchTypes';
 import { FLIP_DURATION } from '../../../utils/MemoryMatchConstants';
 
@@ -100,7 +100,7 @@ export default function Card({ card, onPress, cardSize, disabled }: CardProps) {
           </View>
         </Animated.View>
 
-        {/* Card Front (face-up with symbol) */}
+        {/* Card Front (face-up with symbol or image) */}
         <Animated.View
           style={[
             styles.cardFace,
@@ -112,7 +112,15 @@ export default function Card({ card, onPress, cardSize, disabled }: CardProps) {
             },
           ]}
         >
-          <Text style={styles.symbol}>{card.symbol}</Text>
+          {card.imageSource ? (
+            <Image
+              source={card.imageSource}
+              style={styles.cardImage}
+              resizeMode="contain"
+            />
+          ) : (
+            <Text style={styles.symbol}>?</Text>
+          )}
         </Animated.View>
       </Animated.View>
     </TouchableOpacity>
@@ -168,5 +176,9 @@ const styles = StyleSheet.create({
   },
   symbol: {
     fontSize: 48,
+  },
+  cardImage: {
+    width: '75%',
+    height: '75%',
   },
 });

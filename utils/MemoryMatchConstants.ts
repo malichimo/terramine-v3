@@ -1,13 +1,39 @@
 // screens/games/MemoryMatch/MemoryMatchConstants.ts
-// Phase 2 Week 5: Memory Match Game - Difficulty Configurations
+// Phase 2: Memory Match Game - Difficulty Configurations
 
-import { CardSymbol, GameDifficulty } from '../types/MemoryMatchTypes';
+import { CardSymbol, GameDifficulty } from './MemoryMatchTypes';
 
-// Symbol sets for different difficulty levels
-export const BASIC_SYMBOLS: CardSymbol[] = ['💎', '🟨', '🟠', '🪨', '⚫', '✨'];
-export const EXTENDED_SYMBOLS: CardSymbol[] = [
-  '💎', '🟨', '🟠', '🪨', '⚫', '✨',
-  '🟡', '🔶', '⬛', '🟤', '⬜', '💚'
+// ── Card images ───────────────────────────────────────────────────────────────
+export const CARD_IMAGES: Record<CardSymbol, any> = {
+  pickaxe:  require('../assets/images/memory-match/card-pickaxe.png'),
+  goldpan:  require('../assets/images/memory-match/card-goldpan.png'),
+  diamond:  require('../assets/images/memory-match/card-diamond.png'),
+  headlamp: require('../assets/images/memory-match/card-headlamp.png'),
+  lantern:  require('../assets/images/memory-match/card-lantern.png'),
+  minecart: require('../assets/images/memory-match/card-minecart.png'),
+  helmet:   require('../assets/images/memory-match/card-helmet.png'),
+  tnt:      require('../assets/images/memory-match/card-tnt.png'),
+  ore:      require('../assets/images/memory-match/card-ore.png'),
+  ruby:     require('../assets/images/memory-match/card-ruby.png'),
+  shovel:   require('../assets/images/memory-match/card-shovel.png'),
+  emerald:  require('../assets/images/memory-match/card-emerald.png'),
+  canary:   require('../assets/images/memory-match/card-canary.png'),
+  barrel:   require('../assets/images/memory-match/card-barrel.png'),
+  torch:    require('../assets/images/memory-match/card-torch.png'),
+};
+
+// All 15 symbols ordered from most iconic → expert-only
+export const ALL_SYMBOLS: CardSymbol[] = [
+  // Beginner (1-6)  — levels 1–10
+  'pickaxe', 'goldpan', 'diamond', 'headlamp', 'lantern', 'minecart',
+  // Intermediate (7-8) — levels 11–25
+  'helmet', 'tnt',
+  // Advanced (9-10) — levels 26–50
+  'ore', 'ruby',
+  // Expert (11-12) — levels 51+ base
+  'shovel', 'emerald',
+  // Expert extra (13-15) — levels 51+ extended
+  'canary', 'barrel', 'torch',
 ];
 
 // Scoring constants
@@ -18,7 +44,7 @@ export const PERFECT_GAME_BONUS = 1000;
 
 // Animation durations (ms)
 export const FLIP_DURATION = 300;
-export const MISMATCH_DELAY = 1000; // How long to show mismatched cards before flipping back
+export const MISMATCH_DELAY = 1000;
 export const MATCH_CELEBRATION_DURATION = 500;
 
 /**
@@ -34,7 +60,7 @@ export function getDifficultyConfig(gameLevel: number): GameDifficulty {
       totalPairs: 6,
       maxMoves: 30,
       timeLimit: 90,
-      symbolSet: BASIC_SYMBOLS.slice(0, 6),
+      symbolSet: ALL_SYMBOLS.slice(0, 6),
     };
   } else if (gameLevel <= 25) {
     // Intermediate: 4x4 grid (8 pairs)
@@ -45,7 +71,7 @@ export function getDifficultyConfig(gameLevel: number): GameDifficulty {
       totalPairs: 8,
       maxMoves: 40,
       timeLimit: 75,
-      symbolSet: EXTENDED_SYMBOLS.slice(0, 8),
+      symbolSet: ALL_SYMBOLS.slice(0, 8),
     };
   } else if (gameLevel <= 50) {
     // Advanced: 4x5 grid (10 pairs)
@@ -56,10 +82,10 @@ export function getDifficultyConfig(gameLevel: number): GameDifficulty {
       totalPairs: 10,
       maxMoves: 50,
       timeLimit: 60,
-      symbolSet: EXTENDED_SYMBOLS.slice(0, 10),
+      symbolSet: ALL_SYMBOLS.slice(0, 10),
     };
   } else {
-    // Expert: 5x6 grid (15 pairs)
+    // Expert: 5x6 grid (15 pairs) — uses all 15 symbols
     return {
       level: gameLevel,
       gridRows: 5,
@@ -67,7 +93,7 @@ export function getDifficultyConfig(gameLevel: number): GameDifficulty {
       totalPairs: 15,
       maxMoves: 60,
       timeLimit: 45,
-      symbolSet: EXTENDED_SYMBOLS,
+      symbolSet: ALL_SYMBOLS,
     };
   }
 }
@@ -79,10 +105,10 @@ export function calculateBaseRewards(
   gameLevel: number,
   mineType: 'rock' | 'coal' | 'gold' | 'diamond'
 ): {
-  shards: number;
-  pieces: number;
-  stones: number;
-  diamonds: number;
+  common: number;
+  uncommon: number;
+  rare: number;
+  epic: number;
   tb: number;
   xp: number;
 } {
@@ -96,11 +122,11 @@ export function calculateBaseRewards(
   const mult = mineMultipliers[mineType];
 
   return {
-    shards:   Math.floor(50 * gameLevel * mult),
-    pieces:   Math.floor(5 * gameLevel * mult),
-    stones:   Math.floor(1 * gameLevel * mult),
-    diamonds: Math.floor((gameLevel / 10) * mult),
-    tb: 1, // TB capped at 1 (base win), 2 for perfect game
+    common: Math.floor(50 * gameLevel * mult),
+    uncommon: Math.floor(5 * gameLevel * mult),
+    rare: Math.floor(1 * gameLevel * mult),
+    epic: Math.floor((gameLevel / 10) * mult),
+    tb: Math.floor(5 * gameLevel),
     xp: 100,
   };
 }
@@ -114,38 +140,36 @@ export function calculateRewards(
   won: boolean,
   isPerfect: boolean
 ): {
-  shards: number;
-  pieces: number;
-  stones: number;
-  diamonds: number;
+  common: number;
+  uncommon: number;
+  rare: number;
+  epic: number;
   tb: number;
   xp: number;
 } {
   if (!won) {
-    // Consolation prize — small shards only, no TB
     return {
-      shards:   10,
-      pieces:   0,
-      stones:   0,
-      diamonds: 0,
-      tb: 0,
+      common: 10,
+      uncommon: 0,
+      rare: 0,
+      epic: 0,
+      tb: 1,
       xp: 10,
     };
   }
 
   const baseRewards = calculateBaseRewards(gameLevel, mineType);
 
-  // Perfect game doubles resources; TB capped at 2
   if (isPerfect) {
     return {
-      shards:   baseRewards.shards * 2,
-      pieces:   baseRewards.pieces * 2,
-      stones:   baseRewards.stones * 2,
-      diamonds: baseRewards.diamonds * 2,
-      tb: 2,
+      common: baseRewards.common * 2,
+      uncommon: baseRewards.uncommon * 2,
+      rare: baseRewards.rare * 2,
+      epic: baseRewards.epic * 2,
+      tb: baseRewards.tb * 2,
       xp: 200,
     };
   }
 
-  return { ...baseRewards, tb: 1 };
+  return baseRewards;
 }

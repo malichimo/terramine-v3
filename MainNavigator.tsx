@@ -1,4 +1,4 @@
-// MainNavigator.tsx - UPDATED FOR PHASE 2 PROPERTYDETAILSCREEN
+// MainNavigator.tsx - Phase 3: Map tab wrapped in Stack → PropertyDetail reachable from map
 
 import React, { useState, useRef, useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -6,6 +6,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { NavigationContainer } from '@react-navigation/native';
 import MapScreen from './screens/MapScreen';
 import ProfileScreen from './screens/ProfileScreen';
+import SettingsScreen from './screens/SettingsScreen';
 import PropertyDetailScreen from './screens/PropertyDetailScreen';
 import UpgradeScreen from './screens/UpgradeScreen';
 import MemoryMatchScreen from './screens/games/MemoryMatch/MemoryMatchScreen';
@@ -16,14 +17,81 @@ import { GridSquare } from './utils/GridUtils';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from './contexts/AuthContext';
 import { DatabaseService } from './services/DatabaseService';
+import { ConsentService } from './services/ConsentService';
 import { View, ActivityIndicator } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import OnboardingScreen, { ONBOARDING_SEEN_KEY } from './screens/OnboardingScreen';
+import { soundService } from './services/SoundService';
 import DailyActivityScreen from './screens/DailyActivityScreen';
+import VisitorLogScreen from './screens/VisitorLogScreen';
 
 const Tab = createBottomTabNavigator();
-const Stack = createStackNavigator();
+const MapStack = createStackNavigator();
+const ProfileStack = createStackNavigator();
 const dbService = new DatabaseService();
 
-// ✨ Defined OUTSIDE MainNavigator so React never treats it as a new component type on re-render
+// ─── Map Stack ────────────────────────────────────────────────────────────────
+interface MapStackProps {
+  userId: string;
+  username: string;
+  userTB: number;
+  usdEarnings: number;
+  ownedProperties: GridSquare[];
+  allProperties: GridSquare[];
+  boostState: any;
+  onPropertyPurchase: (property: GridSquare, tbSpent: number) => void;
+  onCheckIn: (...args: any[]) => Promise<void>;
+  onBoostUpdate: (data: any) => void;
+  onEarningsUpdate: (amount: number) => Promise<void>;
+  mapRef: React.RefObject<any>;
+  onPropertyUpdate: () => void;
+}
+
+function MapStackNavigator({
+  userId, username, userTB, usdEarnings,
+  ownedProperties, allProperties, boostState,
+  onPropertyPurchase, onCheckIn, onBoostUpdate, onEarningsUpdate,
+  mapRef, onPropertyUpdate,
+}: MapStackProps) {
+  return (
+    <MapStack.Navigator screenOptions={{ headerShown: false }}>
+      <MapStack.Screen name="MapMain">
+        {(props) => (
+          <MapScreen
+            {...(props as any)}
+            ref={mapRef}
+            userId={userId}
+            username={username}
+            userTB={userTB}
+            usdEarnings={usdEarnings}
+            ownedProperties={ownedProperties}
+            allProperties={allProperties}
+            onPropertyPurchase={onPropertyPurchase}
+            onCheckIn={onCheckIn}
+            initialBoostState={boostState}
+            onBoostUpdate={onBoostUpdate}
+            onEarningsUpdate={onEarningsUpdate}
+            onNavigateToPropertyDetail={(property: GridSquare) =>
+              props.navigation.navigate('PropertyDetail', { property, userId })
+            }
+          />
+        )}
+      </MapStack.Screen>
+      <MapStack.Screen name="PropertyDetail">
+        {(props) => <PropertyDetailScreen {...props} onPropertyUpdate={onPropertyUpdate} />}
+      </MapStack.Screen>
+      <MapStack.Screen name="DailyActivity" component={DailyActivityScreen as any} />
+      <MapStack.Screen name="Upgrade" component={UpgradeScreen as any} />
+      <MapStack.Screen name="MemoryMatch" component={MemoryMatchScreen as any} />
+      <MapStack.Screen name="GoldRush" component={GoldRushGame as any} />
+      <MapStack.Screen name="MinerMaze" component={MinerMazeScreen as any} />
+      <MapStack.Screen name="LaserBlast" component={LaserBlastGame as any} />
+      <MapStack.Screen name="VisitorLog" component={VisitorLogScreen as any} />
+    </MapStack.Navigator>
+  );
+}
+
+// ─── Profile Stack ────────────────────────────────────────────────────────────
 interface ProfileStackProps {
   userTB: number;
   username: string;
@@ -32,49 +100,48 @@ interface ProfileStackProps {
   totalTBEarned: number;
   userId: string;
   onSignOut: () => Promise<void>;
+  onPropertyUpdate: () => void;
+  onUsernameChange: (newUsername: string) => void;
 }
 
 function ProfileStackNavigator({
-  userTB,
-  username,
-  ownedProperties,
-  totalCheckIns,
-  totalTBEarned,
-  userId,
-  onSignOut,
+  userTB, username, ownedProperties,
+  totalCheckIns, totalTBEarned, userId, onSignOut, onPropertyUpdate, onUsernameChange,
 }: ProfileStackProps) {
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="ProfileMain">
+    <ProfileStack.Navigator screenOptions={{ headerShown: false }}>
+      <ProfileStack.Screen name="ProfileMain">
         {(props) => (
           <ProfileScreen
-            {...props as any}
+            {...(props as any)}
             userTB={userTB}
             username={username}
             ownedProperties={ownedProperties}
             totalCheckIns={totalCheckIns}
             totalTBEarned={totalTBEarned}
             onPropertyPress={(property: GridSquare) =>
-              props.navigation.navigate('PropertyDetail', {
-                property,
-                userId,
-              })
+              props.navigation.navigate('PropertyDetail', { property, userId })
             }
             onSignOut={onSignOut}
+            onUsernameChange={onUsernameChange}
           />
         )}
-      </Stack.Screen>
-      <Stack.Screen name="PropertyDetail" component={PropertyDetailScreen as any} />
-      <Stack.Screen name="DailyActivity" component={DailyActivityScreen as any} />
-      <Stack.Screen name="Upgrade" component={UpgradeScreen as any} />
-      <Stack.Screen name="MemoryMatch" component={MemoryMatchScreen as any} />
-      <Stack.Screen name="GoldRush" component={GoldRushGame as any} />
-      <Stack.Screen name="MinerMaze" component={MinerMazeScreen as any} />
-      <Stack.Screen name="LaserBlast" component={LaserBlastGame as any} />
-    </Stack.Navigator>
+      </ProfileStack.Screen>
+      <ProfileStack.Screen name="PropertyDetail">
+        {(props) => <PropertyDetailScreen {...props} onPropertyUpdate={onPropertyUpdate} />}
+      </ProfileStack.Screen>
+      <ProfileStack.Screen name="DailyActivity" component={DailyActivityScreen as any} />
+      <ProfileStack.Screen name="Upgrade" component={UpgradeScreen as any} />
+      <ProfileStack.Screen name="MemoryMatch" component={MemoryMatchScreen as any} />
+      <ProfileStack.Screen name="GoldRush" component={GoldRushGame as any} />
+      <ProfileStack.Screen name="MinerMaze" component={MinerMazeScreen as any} />
+      <ProfileStack.Screen name="LaserBlast" component={LaserBlastGame as any} />
+      <ProfileStack.Screen name="VisitorLog" component={VisitorLogScreen as any} />
+    </ProfileStack.Navigator>
   );
 }
 
+// ─── Main ─────────────────────────────────────────────────────────────────────
 export default function MainNavigator() {
   const { user, signOut } = useAuth();
   const [userTB, setUserTB] = useState(1000);
@@ -84,6 +151,8 @@ export default function MainNavigator() {
   const [totalCheckIns, setTotalCheckIns] = useState(0);
   const [totalTBEarned, setTotalTBEarned] = useState(0);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
+  const [consentReady, setConsentReady] = useState(false);
   const [boostState, setBoostState] = useState({
     freeBoostsRemaining: 4,
     adBoostsRemaining: 12,
@@ -91,14 +160,29 @@ export default function MainNavigator() {
     nextFreeBoostResetAt: null as string | null,
     lastAdBoostRefillAt: new Date().toISOString(),
   });
-  const username = user?.displayName || user?.email?.split('@')[0] || 'User';
+  const [username, setUsername] = useState(
+    user?.displayName || user?.email?.split('@')[0] || 'User'
+  );
   const mapRef = useRef<any>(null);
 
   useEffect(() => {
     if (user) {
       loadUserData();
+      checkOnboarding();
+      soundService.init();
+      // Run UMP consent + MobileAds init. Must complete before any ad is loaded.
+      ConsentService.initialize().then(() => setConsentReady(true));
     }
   }, [user]);
+
+  const checkOnboarding = async () => {
+    try {
+      const seen = await AsyncStorage.getItem(ONBOARDING_SEEN_KEY);
+      setOnboardingDone(seen === 'true');
+    } catch {
+      setOnboardingDone(true); // fail open — don't block the app
+    }
+  };
 
   const loadUserData = async () => {
     if (!user) return;
@@ -117,6 +201,8 @@ export default function MainNavigator() {
       setAllProperties(allProps);
       setTotalCheckIns(userData?.totalCheckIns || 0);
       setTotalTBEarned(userData?.totalTBEarned || 0);
+      // Use saved nickname if available
+      if (userData?.nickname) setUsername(userData.nickname);
 
       const boostData = await dbService.getBoostState(user.uid);
       setBoostState({
@@ -127,11 +213,6 @@ export default function MainNavigator() {
         lastAdBoostRefillAt: boostData.lastAdBoostRefillAt,
       });
 
-      console.log('Loaded from Firestore:', {
-        tb: userData?.tbBalance,
-        ownedCount: properties.length,
-        allPropertiesCount: allProps.length,
-      });
       setDataLoaded(true);
     } catch (error) {
       console.error('Error loading data:', error);
@@ -152,7 +233,10 @@ export default function MainNavigator() {
     }
   };
 
-  const handleCheckIn = async (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) => {
+  const handleCheckIn = async (
+    propertyId: string, tbEarned: number, propertyOwnerId: string,
+    message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string
+  ) => {
     if (!user) return;
     try {
       await dbService.createCheckIn(user.uid, propertyId, propertyOwnerId, message, hasPhoto, photoUri, visitorNickname);
@@ -166,13 +250,7 @@ export default function MainNavigator() {
     }
   };
 
-  const handleBoostUpdate = (newBoostData: {
-    freeBoostsRemaining?: number;
-    adBoostsRemaining?: number;
-    boostExpiresAt: string | null;
-    nextFreeBoostResetAt: string | null;
-    lastAdBoostRefillAt?: string;
-  }) => {
+  const handleBoostUpdate = (newBoostData: any) => {
     setBoostState(prev => ({ ...prev, ...newBoostData }));
   };
 
@@ -187,6 +265,10 @@ export default function MainNavigator() {
     }
   };
 
+  const handlePropertyUpdate = () => {
+    loadUserData(); // Re-fetch properties including updated customNames
+  };
+
   const handleSignOut = async () => {
     try {
       await signOut();
@@ -195,11 +277,19 @@ export default function MainNavigator() {
     }
   };
 
-  if (!dataLoaded) {
+  if (!dataLoaded || onboardingDone === null || !consentReady) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator size="large" color="#2196F3" />
       </View>
+    );
+  }
+
+  if (!onboardingDone) {
+    return (
+      <OnboardingScreen
+        onDone={() => setOnboardingDone(true)}
+      />
     );
   }
 
@@ -213,6 +303,8 @@ export default function MainNavigator() {
               iconName = focused ? 'map' : 'map-outline';
             } else if (route.name === 'Profile') {
               iconName = focused ? 'person' : 'person-outline';
+            } else if (route.name === 'Settings') {
+              iconName = focused ? 'settings' : 'settings-outline';
             }
             return <Ionicons name={iconName} size={size} color={color} />;
           },
@@ -222,21 +314,21 @@ export default function MainNavigator() {
         })}
       >
         <Tab.Screen name="Map">
-          {(props) => (
-            <MapScreen
-              {...props}
-              ref={mapRef}
+          {() => (
+            <MapStackNavigator
               userId={user?.uid || ''}
               username={username}
               userTB={userTB}
               usdEarnings={usdEarnings}
               ownedProperties={ownedProperties}
               allProperties={allProperties}
+              boostState={boostState}
               onPropertyPurchase={handlePropertyPurchase}
               onCheckIn={handleCheckIn}
-              initialBoostState={boostState}
               onBoostUpdate={handleBoostUpdate}
               onEarningsUpdate={handleEarningsUpdate}
+              mapRef={mapRef}
+              onPropertyUpdate={handlePropertyUpdate}
             />
           )}
         </Tab.Screen>
@@ -249,6 +341,15 @@ export default function MainNavigator() {
               totalCheckIns={totalCheckIns}
               totalTBEarned={totalTBEarned}
               userId={user?.uid || ''}
+              onSignOut={handleSignOut}
+              onPropertyUpdate={handlePropertyUpdate}
+              onUsernameChange={setUsername}
+            />
+          )}
+        </Tab.Screen>
+        <Tab.Screen name="Settings">
+          {() => (
+            <SettingsScreen
               onSignOut={handleSignOut}
             />
           )}

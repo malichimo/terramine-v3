@@ -18,7 +18,8 @@ import {
 import { useAuth } from '../../../contexts/AuthContext';
 import { dbServicePhase2 } from '../../../services/DatabaseServicePhase2';
 import { AdMobService } from '../../../services/AdMobService';
-import type { GameReward } from '../../../services/DatabaseServicePhase2';
+import { soundService } from '../../../services/SoundService';
+import type { GameReward } from '../../../types/PropertyTypes';
 import {
   Cell,
   PuzzleConfig,
@@ -60,7 +61,7 @@ const CAVE_FLOOR        = require('../../../assets/images/diamond-mine/cave-floo
 const BACKGROUND        = require('../../../assets/images/diamond-mine/diamond-cave-bg.png');
 
 // ─── Types & constants ────────────────────────────────────────────────────────
-type GamePhase = 'puzzle' | 'firing' | 'result' | 'celebrating' | 'gameover';
+type GamePhase = 'puzzle' | 'firing' | 'celebrating' | 'gameover';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const HEADER_H  = 80;
@@ -78,7 +79,6 @@ interface BeamSegment {
   width: number;
   height: number;
   color: string;
-  isDot?: boolean;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -106,6 +106,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
   const [reward, setReward]       = useState<GameReward | null>(null);
   const [leveledUp, setLeveledUp] = useState(false);
   const [newLevel, setNewLevel]   = useState(gameLevel);
+  const [adLevelLoading, setAdLevelLoading] = useState(false);
   const [adLoading, setAdLoading] = useState(false);
   const [showAdOffer, setShowAdOffer] = useState(false);
 
@@ -195,6 +196,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
 
     const newGrid = rotateMirror(grid, row, col);
     setGrid(newGrid);
+    soundService.play('rotate');
 
     tapsUsedRef.current += 1;
     setTapsUsed(tapsUsedRef.current);
@@ -206,6 +208,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
 
     clearInterval(timerRef.current!);
     setPhase('firing');
+    soundService.play('laser');
 
     const p: PuzzleConfig = { ...puzzleRef.current, grid };
     const fireResult = fireLasers(p);
@@ -230,96 +233,135 @@ export default function LaserBlastGame({ route, navigation }: any) {
       setGrid(updatedGrid);
 
       if (fireResult.allHit) {
+        soundService.play('explosion');
         // Win!
         setTimeout(() => handleWin(), 600);
       } else {
-        // Miss — keep beams visible so player can see where lasers went
+        // Some targets hit — still play explosion for partial hits
+        const anyHit = fireResult.results.some(r => r.hit);
+        if (anyHit) soundService.play('explosion');
+        // Miss — fade beams then check lives
         setTimeout(() => {
-          const newLives = livesRef.current - 1;
-          livesRef.current = newLives;
-          setLivesLeft(newLives);
-          setPhase('result');
-          if (newLives <= 0) {
-            setShowAdOffer(true);
-          }
-          // else: stay in 'result' phase — player taps Retry
+          Animated.timing(beamOpacity, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: true,
+          }).start(() => {
+            const newLives = livesRef.current - 1;
+            livesRef.current = newLives;
+            setLivesLeft(newLives);
+
+            if (newLives <= 0) {
+              setShowAdOffer(true);
+            } else {
+              // Reset grid hit states, resume puzzle
+              const resetGrid = cloneGrid(grid).map(row =>
+                row.map(cell => ({ ...cell, isHit: false }))
+              );
+              setGrid(resetGrid);
+              setBeamSegs([]);
+              setPhase('puzzle');
+              // Restart timer with remaining time
+              timeLeftRef.current = Math.max(1, timeLeftRef.current);
+            }
+          });
         }, 800);
       }
     });
   }, [phase, grid]);
 
   // ── Build beam segment rects from laser results ───────────────────────────
-  // Groups consecutive same-direction cells into single rectangles.
-  // At a mirror bounce, ends the run at cell center, drops a corner dot,
-  // then starts a new run in the new direction from that same center.
   function buildBeamSegments(results: LaserResult[]): BeamSegment[] {
-    const BEAM_W = Math.max(4, TILE_SIZE * 0.15);
+    const BEAM_W = Math.max(5, TILE_SIZE * 0.18);
     const segs: BeamSegment[] = [];
 
     for (const result of results) {
-      const color = LASER_COLOR_HEX[result.color];
-      const cells = result.segments;
-      if (cells.length === 0) continue;
+      const hexColor = LASER_COLOR_HEX[result.color];
 
-      // Start point = entry edge of first cell
-      let runStart = cellEdgePt(cells[0].col, cells[0].row, cells[0].entryDir, true);
+      for (const seg of result.segments) {
+        // Grid-relative center of this cell
+        const cx = seg.col * TILE_SIZE + TILE_SIZE / 2;
+        const cy = seg.row * TILE_SIZE + TILE_SIZE / 2;
 
-      for (let i = 0; i < cells.length; i++) {
-        const cell = cells[i];
-        const cx = cell.col * TILE_SIZE + TILE_SIZE / 2;
-        const cy = cell.row * TILE_SIZE + TILE_SIZE / 2;
-        const isTurn = cell.exitDir && cell.exitDir !== cell.entryDir;
-        const isLast = i === cells.length - 1;
+        // The laser enters the cell from the opposite side of its travel direction
+        const entryEdge = edgePoint(cx, cy, opposite(seg.entryDir), TILE_SIZE);
 
-        if (isTurn) {
-          // End run at mirror center, add corner dot, start new run
-          segs.push(makeBeamRect(runStart.x, runStart.y, cx, cy, BEAM_W, color));
-          segs.push({ x: cx - BEAM_W / 2, y: cy - BEAM_W / 2, width: BEAM_W, height: BEAM_W, color, isDot: true });
-          runStart = { x: cx, y: cy };
-        } else if (isLast) {
-          const endPt = cell.exitDir
-            ? cellEdgePt(cell.col, cell.row, cell.exitDir, false)
-            : { x: cx, y: cy };
-          segs.push(makeBeamRect(runStart.x, runStart.y, endPt.x, endPt.y, BEAM_W, color));
+        if (!seg.exitDir) {
+          // Terminal cell (coal hit): entry edge → center
+          segs.push(makeSegment(entryEdge.x, entryEdge.y, cx, cy, BEAM_W, hexColor));
+        } else if (seg.entryDir === seg.exitDir) {
+          // Straight pass-through: entry edge → exit edge as a single aligned segment
+          const exitEdge = edgePoint(cx, cy, seg.exitDir, TILE_SIZE);
+          segs.push(makeSegment(entryEdge.x, entryEdge.y, exitEdge.x, exitEdge.y, BEAM_W, hexColor));
+        } else {
+          // Mirror cell — direction changes: split into two perpendicular segments
+          // Segment 1: entry edge → cell center (incoming direction)
+          // Segment 2: cell center → exit edge (outgoing direction)
+          const exitEdge = edgePoint(cx, cy, seg.exitDir, TILE_SIZE);
+          segs.push(makeSegment(entryEdge.x, entryEdge.y, cx, cy, BEAM_W, hexColor));
+          segs.push(makeSegment(cx, cy, exitEdge.x, exitEdge.y, BEAM_W, hexColor));
         }
-        // else: straight continuation — extend the run on next iteration
       }
     }
     return segs;
   }
 
-  /** Pixel coordinate of a cell's entry or exit edge center */
-  function cellEdgePt(col: number, row: number, dir: string, isEntry: boolean): { x: number; y: number } {
-    const cx = col * TILE_SIZE + TILE_SIZE / 2;
-    const cy = row * TILE_SIZE + TILE_SIZE / 2;
-    const h = TILE_SIZE / 2;
+  /** Returns the point on the cell edge in a given direction from center */
+  function edgePoint(cx: number, cy: number, dir: string, size: number): { x: number; y: number } {
+    const half = size / 2;
     switch (dir) {
-      case 'right': return { x: isEntry ? cx - h : cx + h, y: cy };
-      case 'left':  return { x: isEntry ? cx + h : cx - h, y: cy };
-      case 'down':  return { x: cx, y: isEntry ? cy - h : cy + h };
-      case 'up':    return { x: cx, y: isEntry ? cy + h : cy - h };
+      case 'right': return { x: cx + half, y: cy };
+      case 'left':  return { x: cx - half, y: cy };
+      case 'down':  return { x: cx, y: cy + half };
+      case 'up':    return { x: cx, y: cy - half };
       default:      return { x: cx, y: cy };
     }
   }
 
-  /** Axis-aligned rectangle between two points */
-  function makeBeamRect(x1: number, y1: number, x2: number, y2: number, w: number, color: string): BeamSegment {
-    const dx = x2 - x1, dy = y2 - y1;
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      return { x: Math.min(x1, x2), y: y1 - w / 2, width: Math.abs(dx) || 1, height: w, color };
+  /** Flips a direction to its opposite */
+  function opposite(dir: string): string {
+    switch (dir) {
+      case 'right': return 'left';
+      case 'left':  return 'right';
+      case 'down':  return 'up';
+      case 'up':    return 'down';
+      default:      return dir;
+    }
+  }
+
+  /** Create a rect segment between two points */
+  function makeSegment(
+    x1: number, y1: number,
+    x2: number, y2: number,
+    beamW: number,
+    color: string,
+  ): BeamSegment {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const isHoriz = Math.abs(dx) >= Math.abs(dy);
+
+    if (isHoriz) {
+      const left = Math.min(x1, x2);
+      return { x: left, y: y1 - beamW / 2, width: Math.abs(dx), height: beamW, color };
     } else {
-      return { x: x1 - w / 2, y: Math.min(y1, y2), width: w, height: Math.abs(dy) || 1, color };
+      const top = Math.min(y1, y2);
+      return { x: x1 - beamW / 2, y: top, width: beamW, height: Math.abs(dy), color };
     }
   }
 
   // ── Win ────────────────────────────────────────────────────────────────────
   function handleWin() {
+    soundService.play('win');
     setPhase('celebrating');
 
     Animated.parallel([
       Animated.spring(celebrateScale, { toValue: 1, friction: 4, useNativeDriver: true }),
       Animated.timing(diamondSparkleOp, { toValue: 1, duration: 400, useNativeDriver: true }),
-    ]).start(); // diamondSparkleOp stays at 1 until Play Again / Exit
+    ]).start(() => {
+      setTimeout(() =>
+        Animated.timing(diamondSparkleOp, { toValue: 0, duration: 800, useNativeDriver: true }).start()
+      , 1200);
+    });
 
     const finalScore = calculateScore({
       gameLevel,
@@ -339,6 +381,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
   // ── Timeout ────────────────────────────────────────────────────────────────
   function handleTimeout() {
     if (phase !== 'puzzle') return;
+    soundService.play('lose');
     setPhase('gameover');
     saveResult(false, 0, tapsUsedRef.current, 0);
   }
@@ -360,6 +403,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
       if (updated && updated.gameLevel > levelBefore) {
         setLeveledUp(true);
         setNewLevel(updated.gameLevel);
+        activeLevelRef.current = updated.gameLevel;
       }
     } catch (e) {
       console.error('Error saving game result:', e);
@@ -398,6 +442,44 @@ export default function LaserBlastGame({ route, navigation }: any) {
       setShowAdOffer(false);
       setPhase('gameover');
       saveResult(false, 0, tapsUsedRef.current, 0);
+    }
+  }
+
+  // ── Play Next Level (after level-up ad) ───────────────────────────────────
+  async function handlePlayNextLevelAd() {
+    if (!adService.current) return;
+    setAdLevelLoading(true);
+    try {
+      await adService.current.showAd(
+        () => {
+          setAdLevelLoading(false);
+          setLeveledUp(false);
+          const lvl  = activeLevelRef.current;
+          const diff = getLaserDifficulty(lvl);
+          const p    = generatePuzzle(lvl);
+          if (timerRef.current) clearInterval(timerRef.current);
+          resultSaved.current     = false;
+          livesRef.current        = MAX_LIVES;
+          tapsUsedRef.current     = 0;
+          fireAttemptsRef.current = 0;
+          timeLeftRef.current     = diff.timeLimit;
+          beamOpacity.setValue(0);
+          celebrateScale.setValue(0);
+          diamondSparkleOp.setValue(0);
+          setGrid(p.grid);
+          setBeamSegs([]);
+          setPhase('puzzle');
+          setTimeLeft(diff.timeLimit);
+          setTapsUsed(0);
+          setFireAttempts(0);
+          setLivesLeft(MAX_LIVES);
+          setScore(0);
+          setShowAdOffer(false);
+        },
+        () => { setAdLevelLoading(false); }
+      );
+    } catch {
+      setAdLevelLoading(false);
     }
   }
 
@@ -521,11 +603,6 @@ export default function LaserBlastGame({ route, navigation }: any) {
                 break;
             }
 
-            // Flip miner to face the grid — sprite faces right by default
-            if (miner.fireDirection === 'left' || miner.fireDirection === 'up') {
-              minerStyle.transform = [{ scaleX: -1 }];
-            }
-
             return (
               <Image
                 key={`miner-${idx}`}
@@ -550,23 +627,16 @@ export default function LaserBlastGame({ route, navigation }: any) {
                 const k = `${r},${c}`;
                 const isInteractive = cell.type === 'mirror-/' || cell.type === 'mirror-\\';
 
-                // Coal: show colored target image always; diamond sparkle on hit
+                // Coal always shows its assigned miner color — COAL_HIT is the default state
                 const coalMinerColor: LaserColor | null = (() => {
                   if (cell.type !== 'coal' || cell.coalIndex === undefined) return null;
                   return p.miners[cell.coalIndex]?.color ?? null;
                 })();
 
-                const coalIsHit: boolean = (() => {
-                  if (cell.type !== 'coal' || cell.coalIndex === undefined) return false;
-                  return hitResults.find(res => res.minerIndex === cell.coalIndex)?.hitTarget ?? false;
-                })();
-
                 const cellImg = (() => {
                   switch (cell.type) {
                     case 'obstacle':  return ROCK_OBSTACLE;
-                    case 'coal':
-                      if (coalIsHit) return DIAMOND_SPARKLE;
-                      return coalMinerColor ? COAL_HIT[coalMinerColor] : COAL_LUMP;
+                    case 'coal':      return coalMinerColor ? COAL_HIT[coalMinerColor] : COAL_LUMP;
                     case 'mirror-/':  return MIRROR_SLASH;
                     case 'mirror-\\': return MIRROR_BACKSLASH;
                     default:          return null;
@@ -588,14 +658,20 @@ export default function LaserBlastGame({ route, navigation }: any) {
                     {/* Cave floor base */}
                     <Image source={CAVE_FLOOR} style={styles.tileImg} />
 
-                    {/* Cell content image */}
-                    {cellImg && (
+                    {/* Cell content image — swap coal for diamond sparkle on win */}
+                    {cell.type === 'coal' && phase === 'celebrating' ? (
+                      <Image
+                        source={DIAMOND_SPARKLE}
+                        style={styles.tileImg}
+                        resizeMode="contain"
+                      />
+                    ) : cellImg ? (
                       <Image
                         source={cellImg}
                         style={styles.tileImg}
                         resizeMode="contain"
                       />
-                    )}
+                    ) : null}
 
                     {/* Mirror tap indicator ring */}
                     {isInteractive && phase === 'puzzle' && (
@@ -606,26 +682,6 @@ export default function LaserBlastGame({ route, navigation }: any) {
                       }]} />
                     )}
 
-                    {/* Coal color glow — subtle halo matching target color */}
-                    {cell.type === 'coal' && coalMinerColor && !coalIsHit && (
-                      <View style={{
-                        position: 'absolute', top: 0, left: 0,
-                        width: TILE_SIZE, height: TILE_SIZE,
-                        backgroundColor: COAL_GLOW_HEX[coalMinerColor] + '33',
-                        borderRadius: TILE_SIZE / 4,
-                      }} />
-                    )}
-
-                    {/* Diamond glow aura on hit */}
-                    {cell.type === 'coal' && coalIsHit && (
-                      <Animated.View style={{
-                        position: 'absolute', top: 0, left: 0,
-                        width: TILE_SIZE, height: TILE_SIZE,
-                        backgroundColor: '#B9F2FF44',
-                        borderRadius: TILE_SIZE / 4,
-                        opacity: diamondSparkleOp,
-                      }} />
-                    )}
                   </TouchableOpacity>
                 );
               })
@@ -636,37 +692,20 @@ export default function LaserBlastGame({ route, navigation }: any) {
               pointerEvents="none"
               style={[StyleSheet.absoluteFillObject, { opacity: beamOpacity, zIndex: 30 }]}
             >
-              {beamSegs.map((seg, i) => {
-                if (seg.isDot) {
-                  return (
-                    <View key={i} style={{
-                      position: 'absolute', left: seg.x, top: seg.y,
-                      width: seg.width, height: seg.height,
-                      backgroundColor: seg.color, borderRadius: seg.width / 2,
-                      opacity: 0.95, shadowColor: seg.color,
-                      shadowOpacity: 1, shadowRadius: 6, elevation: 8,
-                    }} />
-                  );
-                }
-                const isHoriz = seg.width > seg.height;
-                const coreSize = isHoriz
-                  ? { width: seg.width, height: Math.max(2, seg.height * 0.3), top: seg.height * 0.35, left: 0 }
-                  : { height: seg.height, width: Math.max(2, seg.width * 0.3), left: seg.width * 0.35, top: 0 };
-                return (
-                  <View key={i} style={{
-                    position: 'absolute', left: seg.x, top: seg.y,
-                    width: seg.width, height: seg.height,
-                    backgroundColor: seg.color, opacity: 0.8,
-                    borderRadius: Math.min(seg.width, seg.height) / 2,
-                    shadowColor: seg.color, shadowOpacity: 1, shadowRadius: 8, elevation: 6,
-                  }}>
-                    <View style={{
-                      position: 'absolute', backgroundColor: 'rgba(255,255,255,0.85)',
-                      borderRadius: 4, ...coreSize,
-                    }} />
-                  </View>
-                );
-              })}
+              {beamSegs.map((seg, i) => (
+                <View key={i} style={{
+                  position:        'absolute',
+                  left:            seg.x,
+                  top:             seg.y,
+                  width:           seg.width,
+                  height:          seg.height,
+                  backgroundColor: seg.color,
+                  shadowColor:     seg.color,
+                  shadowOpacity:   0.9,
+                  shadowRadius:    6,
+                  elevation:       6,
+                }} />
+              ))}
             </Animated.View>
 
           </View>{/* end gridBox */}
@@ -691,35 +730,18 @@ export default function LaserBlastGame({ route, navigation }: any) {
           <Text style={styles.hint}>⚡ Lasers firing…</Text>
         )}
 
-        {phase === 'result' && (
-          <View style={styles.resultPanel}>
-            <Text style={styles.loseTitle}>💥 Missed! Adjust your mirrors and try again.</Text>
-            <View style={styles.btnRow}>
-              <TouchableOpacity
-                style={styles.fireBtn}
-                onPress={() => {
-                  const resetGrid = grid.map(row =>
-                    row.map(cell => ({ ...cell, isHit: false }))
-                  );
-                  beamOpacity.setValue(0);
-                  setGrid(resetGrid);
-                  setBeamSegs([]);
-                  setHitResults([]);
-                  setPhase('puzzle');
-                  timeLeftRef.current = Math.max(1, timeLeftRef.current);
-                }}
-              >
-                <Text style={styles.fireBtnTxt}>🔄 Retry</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
         {phase === 'celebrating' && (
           <View style={styles.resultPanel}>
             {leveledUp && (
               <View style={styles.levelUpBanner}>
                 <Text style={styles.levelUpTxt}>⬆️ LEVEL UP! Now Level {newLevel}</Text>
+                {adLevelLoading ? (
+                  <Text style={[styles.levelUpTxt, { marginTop: 6 }]}>⏳ Loading ad...</Text>
+                ) : (
+                  <TouchableOpacity style={styles.levelUpAdBtn} onPress={handlePlayNextLevelAd}>
+                    <Text style={styles.levelUpAdTxt}>📺 Watch Ad → Play Level {newLevel}</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
             <Text style={styles.winTitle}>💎 All Targets Hit!</Text>
@@ -736,28 +758,22 @@ export default function LaserBlastGame({ route, navigation }: any) {
                   <Text style={styles.rewardVal}>+{reward.tb}</Text>
                   <Text style={styles.rewardLbl}>TB</Text>
                 </View>
-                {reward.shards > 0 && (
+                {reward.common > 0 && (
                   <View style={styles.rewardItem}>
-                    <Text style={styles.rewardVal}>+{reward.shards}</Text>
-                    <Text style={styles.rewardLbl}>Shards</Text>
+                    <Text style={styles.rewardVal}>+{reward.common}</Text>
+                    <Text style={styles.rewardLbl}>Common</Text>
                   </View>
                 )}
-                {reward.pieces > 0 && (
+                {reward.uncommon > 0 && (
                   <View style={styles.rewardItem}>
-                    <Text style={styles.rewardVal}>+{reward.pieces}</Text>
-                    <Text style={styles.rewardLbl}>Pieces</Text>
+                    <Text style={styles.rewardVal}>+{reward.uncommon}</Text>
+                    <Text style={styles.rewardLbl}>Uncommon</Text>
                   </View>
                 )}
-                {reward.stones > 0 && (
+                {reward.rare > 0 && (
                   <View style={styles.rewardItem}>
-                    <Text style={styles.rewardVal}>+{reward.stones}</Text>
-                    <Text style={styles.rewardLbl}>Stones</Text>
-                  </View>
-                )}
-                {reward.diamonds > 0 && (
-                  <View style={styles.rewardItem}>
-                    <Text style={styles.rewardVal}>+{reward.diamonds}</Text>
-                    <Text style={styles.rewardLbl}>Diamonds</Text>
+                    <Text style={styles.rewardVal}>+{reward.rare}</Text>
+                    <Text style={styles.rewardLbl}>Rare</Text>
                   </View>
                 )}
               </View>

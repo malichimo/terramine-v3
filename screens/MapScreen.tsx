@@ -4,6 +4,7 @@ import MapView, { Polygon, PROVIDER_GOOGLE, Marker } from 'react-native-maps';
 import * as ImagePicker from 'expo-image-picker';
 import { LocationService, Coordinates } from '../services/LocationService';
 import { DatabaseService, BoostState } from '../services/DatabaseService';
+import { soundService } from '../services/SoundService';
 import { generateGridSquare, getVisibleGridSquares, isWithinGridSquare, isAdjacentToUser, GridSquare, gridToLatLng } from '../utils/GridUtils';
 import BoostModal from '../components/BoostModal';
 
@@ -33,6 +34,7 @@ interface MapScreenProps {
   onBoostUpdate: (boostData: any) => void;
   onEarningsUpdate?: (usdAmount: number) => Promise<void>;
   usdEarnings?: number;
+  onNavigateToPropertyDetail?: (property: GridSquare) => void;
 }
 
 const MapScreen = React.forwardRef<any, MapScreenProps>(({ 
@@ -47,6 +49,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   onBoostUpdate,
   onEarningsUpdate,
   usdEarnings = 0,
+  onNavigateToPropertyDetail,
 }, ref) => {
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
   const [gridSquares, setGridSquares] = useState<Map<string, GridSquare>>(new Map());
@@ -76,6 +79,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const dbService = useRef(new DatabaseService()).current;
   const earningsTimerRef = useRef<NodeJS.Timeout | null>(null);
   const earningsStartTime = useRef<Date>(new Date());
+  const lastSavedEarnings = useRef<number>(0); // Track what was last saved so we only increment Firebase by the delta
+  const hasCalculatedOffline = useRef<boolean>(false); // Guard: offline earnings must only fire once per session
 
   // Expose methods to parent
   useImperativeHandle(ref, () => ({
@@ -101,10 +106,13 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           earningsTimerRef.current = null;
         }
         
-        // Save any accumulated earnings
-        if (currentEarnings > 0) {
-          console.log(`💰 Saving $${currentEarnings.toFixed(8)} USD earnings`);
-          await saveEarningsToFirebase(currentEarnings);
+        // Compute final earnings fresh (currentEarnings state may be stale in closure)
+        const now = new Date();
+        const elapsedSeconds = (now.getTime() - earningsStartTime.current.getTime()) / 1000;
+        const finalEarnings = calculateEarnings() * (elapsedSeconds / 60);
+        if (finalEarnings > 0) {
+          console.log(`💰 Saving $${finalEarnings.toFixed(8)} USD earnings`);
+          await saveEarningsToFirebase(finalEarnings);
         }
         
         // Save last active time
@@ -201,36 +209,44 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     // The boost handlers will update state directly
   }, [userId]);
 
-  // Earnings update timer - updates every 100ms
+  // Earnings update timer - updates display every second, saves to Firebase every minute
   useEffect(() => {
-    if (ownedProperties.length > 0) {
-      let lastSaveTime = Date.now();
-      
-      earningsTimerRef.current = setInterval(() => {
-        const now = new Date();
-        const elapsedSeconds = (now.getTime() - earningsStartTime.current.getTime()) / 1000;
-        const newEarnings = calculateEarnings() * (elapsedSeconds / 60);
-        
-        setCurrentEarnings(newEarnings);
-        
-        // Save to Firebase every minute
-        const timeSinceLastSave = Date.now() - lastSaveTime;
-        if (timeSinceLastSave >= 60000) {
-          saveEarningsToFirebase(newEarnings);
-          lastSaveTime = Date.now();
-        }
-      }, 100);
+    if (ownedProperties.length === 0) return;
 
-      return () => {
-        if (earningsTimerRef.current) {
-          clearInterval(earningsTimerRef.current);
-          if (currentEarnings > 0) {
-            saveEarningsToFirebase(currentEarnings);
-          }
-        }
-      };
-    }
-  }, [ownedProperties, currentEarnings, boostState.isBoostActive]);
+    // Use a ref to track cumulative earnings inside the interval
+    // so we never read stale state and never trigger re-renders as a side-effect
+    const lastSaveTimeRef = { value: Date.now() };
+
+    earningsTimerRef.current = setInterval(() => {
+      if (!userId) return; // Don't save if signed out
+
+      const now = new Date();
+      const elapsedSeconds = (now.getTime() - earningsStartTime.current.getTime()) / 1000;
+      const newEarnings = calculateEarnings() * (elapsedSeconds / 60);
+
+      // Update display (this does NOT re-trigger this useEffect because
+      // currentEarnings is no longer in the dependency array)
+      setCurrentEarnings(newEarnings);
+
+      // Save to Firebase every minute
+      const timeSinceLastSave = Date.now() - lastSaveTimeRef.value;
+      if (timeSinceLastSave >= 60000) {
+        saveEarningsToFirebase(newEarnings);
+        saveLastActiveTime();
+        lastSaveTimeRef.value = Date.now();
+      }
+    }, 1000); // 1-second tick is plenty for display; 100ms was wasteful
+
+    return () => {
+      if (earningsTimerRef.current) {
+        clearInterval(earningsTimerRef.current);
+        earningsTimerRef.current = null;
+        // Don't save here — saveBeforeSignOut() handles final save explicitly
+        // Saving in cleanup caused double-saves on every re-mount
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownedProperties.length, boostState.isBoostActive]); // NOT currentEarnings — that caused re-mount every tick
 
   const calculateEarnings = (): number => {
     const rentRates = {
@@ -253,11 +269,14 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     if (earnings <= 0) return;
     
     try {
-      console.log(`Saving $${earnings.toFixed(8)} USD earnings to Firebase`);
+      const delta = earnings - lastSavedEarnings.current;
+      if (delta <= 0) return; // Nothing new to save
+      
+      console.log(`Saving $${delta.toFixed(8)} USD earnings delta to Firebase (total session: $${earnings.toFixed(8)})`);
       
       if (onEarningsUpdate) {
-        await onEarningsUpdate(earnings);
-        earningsStartTime.current = new Date();
+        await onEarningsUpdate(delta);
+        lastSavedEarnings.current = earnings; // Record what we just saved up to
       }
     } catch (error) {
       console.error('Error saving earnings to Firebase:', error);
@@ -292,12 +311,13 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     };
   }, []);
 
-  // Calculate and apply offline earnings when component mounts
+  // Calculate and apply offline earnings — fires once when properties first load
   useEffect(() => {
-    if (ownedProperties.length > 0 && initialBoostState) {
+    if (ownedProperties.length > 0 && initialBoostState && !hasCalculatedOffline.current) {
+      hasCalculatedOffline.current = true;
       calculateOfflineEarnings();
     }
-  }, [ownedProperties.length]); // Only run once when properties load
+  }, [ownedProperties.length]);
 
   const calculateOfflineEarnings = async () => {
     try {
@@ -308,6 +328,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       if (!lastActiveAt) {
         // First time login or no previous session, start fresh
         earningsStartTime.current = new Date();
+        lastSavedEarnings.current = 0;
         return;
       }
 
@@ -317,10 +338,17 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       if (offlineSeconds < 60) {
         // Less than a minute offline, just continue
         earningsStartTime.current = new Date();
+        lastSavedEarnings.current = 0;
         return;
       }
 
-      console.log(`User was offline for ${(offlineSeconds / 60).toFixed(1)} minutes`);
+      // Cap offline earnings at 24 hours to prevent runaway accumulation
+      const MAX_OFFLINE_SECONDS = 24 * 60 * 60;
+      const cappedSeconds = Math.min(offlineSeconds, MAX_OFFLINE_SECONDS);
+      if (offlineSeconds > MAX_OFFLINE_SECONDS) {
+        console.log(`Offline time capped from ${(offlineSeconds/3600).toFixed(1)}h to 24h for earnings`);
+      }
+      console.log(`User was offline for ${(offlineSeconds / 60).toFixed(1)} minutes (earning for ${(cappedSeconds/60).toFixed(1)} min)`);
 
       // Calculate base earnings rate
       const rentRates = {
@@ -335,19 +363,19 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         return sum + rate;
       }, 0);
 
-      // Calculate how much time was boosted during offline period
+      // Calculate how much time was boosted during offline period (using capped time)
       let boostedSeconds = 0;
-      let unboostedSeconds = offlineSeconds;
+      let unboostedSeconds = cappedSeconds;
 
       if (initialBoostState.boostExpiresAt) {
         const boostExpiry = new Date(initialBoostState.boostExpiresAt);
         
         // If boost was active during offline time
         if (boostExpiry > lastActiveAt) {
-          // Calculate how much of the offline time had boost active
           const boostActiveUntil = boostExpiry < now ? boostExpiry : now;
-          boostedSeconds = Math.floor((boostActiveUntil.getTime() - lastActiveAt.getTime()) / 1000);
-          unboostedSeconds = offlineSeconds - boostedSeconds;
+          const rawBoostedSeconds = Math.floor((boostActiveUntil.getTime() - lastActiveAt.getTime()) / 1000);
+          boostedSeconds = Math.min(rawBoostedSeconds, cappedSeconds);
+          unboostedSeconds = cappedSeconds - boostedSeconds;
         }
       }
 
@@ -355,6 +383,10 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       const boostedEarnings = totalRentPerSecond * (boostedSeconds / 60) * 60 * 2; // per minute * minutes * 2x
       const unboostedEarnings = totalRentPerSecond * (unboostedSeconds / 60) * 60; // per minute * minutes
       const totalOfflineEarnings = boostedEarnings + unboostedEarnings;
+
+      // Update lastActiveAt NOW before saving earnings
+      // This prevents any re-fire of calculateOfflineEarnings from using the same old timestamp
+      await saveLastActiveTime();
 
       if (totalOfflineEarnings > 0) {
         console.log(`Offline earnings calculated:`, {
@@ -372,6 +404,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
 
       // Start fresh timer from now
       earningsStartTime.current = new Date();
+      lastSavedEarnings.current = 0; // Reset delta tracking for new session
     } catch (error) {
       console.error('Error calculating offline earnings:', error);
       earningsStartTime.current = new Date();
@@ -382,13 +415,13 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     if (userLocation) {
       loadNearbyProperties(userLocation);
     }
-  }, [ownedProperties]);
+  }, [ownedProperties.length]);
 
   useEffect(() => {
-    if (userLocation && allProperties.length >= 0) {
+    if (userLocation && allProperties.length > 0) {
       loadNearbyProperties(userLocation);
     }
-  }, [allProperties]);
+  }, [allProperties.length]);
 
   // Auto-zoom to user location on first load
   useEffect(() => {
@@ -441,7 +474,10 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   };
 
   const handleSquarePress = (square: GridSquare) => {
-    setSelectedSquare(square);
+    // If this is one of the user's own properties, use the enriched version
+    // from ownedProperties which includes customName
+    const enriched = ownedProperties.find(p => p.id === square.id);
+    setSelectedSquare(enriched || square);
     setShowCheckInModal(false);
   };
 
@@ -610,7 +646,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     });
     
     setSelectedSquare(updatedSquare);
-    
+    soundService.play('purchase');
     Alert.alert('Success!', `You purchased a ${mineType} mine!`);
   };
 
@@ -659,6 +695,15 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     if (rand < 90) return 'coal';
     if (rand < 99) return 'gold';
     return 'diamond';
+  };
+
+  // Smart earnings display: show enough precision to be meaningful
+  const formatEarnings = (amount: number): string => {
+    if (amount >= 100)   return `$${amount.toFixed(2)}`;
+    if (amount >= 1)     return `$${amount.toFixed(2)}`;
+    if (amount >= 0.01)  return `$${amount.toFixed(4)}`;
+    if (amount >= 0.001) return `$${amount.toFixed(5)}`;
+    return `$${amount.toFixed(6)}`;
   };
 
   const getMineColor = (mineType?: string): string => {
@@ -752,7 +797,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       </MapView>
 
       {/* Welcome Badge */}
-      <View style={styles.welcomeBadge}>
+      <View style={styles.welcomeBadge} pointerEvents="none">
         <Text style={styles.welcomeText}>Welcome, {username}!</Text>
       </View>
 
@@ -760,7 +805,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       <View style={styles.earningsDisplay}>
         <View style={styles.earningsInner}>
           <Text style={styles.earningsText}>
-            ${(usdEarnings + currentEarnings).toFixed(8)} 📈
+            ${(usdEarnings + currentEarnings).toFixed(6)} 📈
           </Text>
         </View>
       </View>
@@ -796,13 +841,24 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       {selectedSquare && (
         <View style={styles.infoPanel}>
           <Text style={styles.infoTitle}>
-            {selectedSquare.mineType?.toUpperCase() || 'UNOWNED'} MINE
+            {selectedSquare.customName || (selectedSquare.mineType?.toUpperCase() || 'UNOWNED') + ' MINE'}
           </Text>
           {selectedSquare.isOwned ? (
             <View>
               <Text style={styles.usernameText}>
                 Owner: {selectedSquare.ownerId === userId ? 'You' : selectedSquare.ownerId}
               </Text>
+              {selectedSquare.ownerId === userId && (
+                <TouchableOpacity
+                  style={styles.manageButton}
+                  onPress={() => {
+                    setSelectedSquare(null);
+                    onNavigateToPropertyDetail?.(selectedSquare);
+                  }}
+                >
+                  <Text style={styles.buttonText}>⛏️ Manage Property</Text>
+                </TouchableOpacity>
+              )}
               {selectedSquare.ownerId !== userId && (
                 <>
                   <Text style={styles.infoText}>
@@ -956,29 +1012,23 @@ const styles = StyleSheet.create({
   },
   welcomeBadge: {
     position: 'absolute',
-    top: 250,
-    left: 35,
-    backgroundColor: 'white',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 25,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    bottom: 90,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    pointerEvents: 'none',
   },
   welcomeText: {
-    fontSize: 16,
+    fontSize: 22,
     fontWeight: 'bold',
     color: '#2196F3',
   },
   earningsDisplay: {
     position: 'absolute',
     top: 85,
-    left: 0,
+    left: 16,
     right: 0,
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
   earningsInner: {
     backgroundColor: '#4CAF50',
@@ -1031,8 +1081,8 @@ const styles = StyleSheet.create({
   },
   tbDisplay: {
     position: 'absolute',
-    top: 250,
-    right: 35,
+    top: 85,
+    right: 16,
     backgroundColor: '#4CAF50',
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -1077,6 +1127,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     marginBottom: 10,
+  },
+  manageButton: {
+    backgroundColor: '#92400E',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 10,
+    marginBottom: 4,
   },
   purchaseButton: {
     backgroundColor: '#4CAF50',

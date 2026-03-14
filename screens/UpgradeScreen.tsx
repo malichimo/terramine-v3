@@ -14,6 +14,7 @@ import {
   Alert,
   Platform,
   StatusBar,
+  Image,
 } from 'react-native';
 import { GridSquare } from '../utils/GridUtils';
 import { PropertyDetails, ResourcePool } from '../types/PropertyTypes';
@@ -30,6 +31,15 @@ interface UpgradeScreenProps {
   };
   navigation: any;
 }
+
+
+// ── Resource images ──────────────────────────────────────────────────────────
+const RESOURCE_IMAGES: Record<string, Record<string, any>> = {
+  rock:    { common: require('../assets/images/resources/rock/rock-common.png'),    uncommon: require('../assets/images/resources/rock/rock-uncommon.png'),    rare: require('../assets/images/resources/rock/rock-rare.png'),    epic: require('../assets/images/resources/rock/rock-epic.png') },
+  coal:    { common: require('../assets/images/resources/coal/coal-common.png'),    uncommon: require('../assets/images/resources/coal/coal-uncommon.png'),    rare: require('../assets/images/resources/coal/coal-rare.png'),    epic: require('../assets/images/resources/coal/coal-epic.png') },
+  gold:    { common: require('../assets/images/resources/gold/gold-common.png'),    uncommon: require('../assets/images/resources/gold/gold-uncommon.png'),    rare: require('../assets/images/resources/gold/gold-rare.png'),    epic: require('../assets/images/resources/gold/gold-epic.png') },
+  diamond: { common: require('../assets/images/resources/diamond/diamond-common.png'), uncommon: require('../assets/images/resources/diamond/diamond-uncommon.png'), rare: require('../assets/images/resources/diamond/diamond-rare.png'), epic: require('../assets/images/resources/diamond/diamond-epic.png') },
+};
 
 export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps) {
   const { property, propertyDetails } = route.params;
@@ -91,17 +101,19 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
     }
   };
 
-  const currentLevel = propertyDetails.productionLevel;
+  // Guard: productionLevel may be undefined on newly-initialized Firestore docs
+  const currentLevel = propertyDetails?.productionLevel ?? 1;
   const currentBonus = dbServicePhase2.getProductionBonus(currentLevel);
   const nextLevel = currentLevel + 1;
   const nextBonus = dbServicePhase2.getProductionBonus(nextLevel);
   const upgradeCost = dbServicePhase2.getUpgradeCost(currentLevel);
   
   const canAfford = 
-    userResources.common >= upgradeCost.common &&
-    userResources.uncommon >= upgradeCost.uncommon &&
-    userResources.rare >= upgradeCost.rare &&
-    userResources.epic >= upgradeCost.epic;
+    (upgradeCost.common  ?? 0) > 0 &&
+    userResources.common >= (upgradeCost.common ?? 0) &&
+    userResources.uncommon >= (upgradeCost.uncommon ?? 0) &&
+    userResources.rare >= (upgradeCost.rare ?? 0) &&
+    userResources.epic >= (upgradeCost.epic ?? 0);
 
   const canUpgrade = canAfford && adWatched;
   const isMaxLevel = currentLevel >= 100;
@@ -132,7 +144,7 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
 
     Alert.alert(
       'Confirm Upgrade',
-      `Upgrade to Level ${nextLevel} (+${nextBonus}% production)?\n\nThis will cost:\n• ${upgradeCost.common.toLocaleString()} ${getResourceNames().common}\n• ${upgradeCost.uncommon.toLocaleString()} ${getResourceNames().uncommon}\n• ${upgradeCost.rare.toLocaleString()} ${getResourceNames().rare}\n• ${upgradeCost.epic.toLocaleString()} ${getResourceNames().epic}`,
+      `Upgrade to Level ${nextLevel} (+${nextBonus}% production)?\n\nThis will cost:\n• ${formatNumber(upgradeCost.common)} ${getResourceNames().common}\n• ${formatNumber(upgradeCost.uncommon)} ${getResourceNames().uncommon}\n• ${formatNumber(upgradeCost.rare)} ${getResourceNames().rare}\n• ${formatNumber(upgradeCost.epic)} ${getResourceNames().epic}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -154,10 +166,7 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
                   {
                     text: 'OK',
                     onPress: () => {
-                      navigation.navigate('PropertyDetail', {
-                        property: property,
-                        refresh: true,
-                      });
+                      navigation.goBack();
                     },
                   },
                 ]
@@ -174,7 +183,8 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
     );
   };
 
-  const formatNumber = (num: number): string => {
+  const formatNumber = (num: number | undefined): string => {
+    if (num === undefined || num === null || isNaN(num)) return '0';
     if (num >= 1000000) {
       return (num / 1000000).toFixed(1) + 'M';
     } else if (num >= 1000) {
@@ -280,7 +290,7 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
           
           <View style={styles.resourceCard}>
             <View style={styles.resourceRow}>
-              <Text style={styles.resourceIcon}>⬜</Text>
+              <Image source={RESOURCE_IMAGES[property.mineType]['common']} style={styles.resourceIcon} />
               <View style={styles.resourceInfo}>
                 <Text style={styles.resourceName}>{resourceNames.common}</Text>
                 <Text style={styles.resourceAmount}>
@@ -300,7 +310,7 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
 
           <View style={styles.resourceCard}>
             <View style={styles.resourceRow}>
-              <Text style={styles.resourceIcon}>🟩</Text>
+              <Image source={RESOURCE_IMAGES[property.mineType]['uncommon']} style={styles.resourceIcon} />
               <View style={styles.resourceInfo}>
                 <Text style={styles.resourceName}>{resourceNames.uncommon}</Text>
                 <Text style={styles.resourceAmount}>
@@ -320,7 +330,7 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
 
           <View style={styles.resourceCard}>
             <View style={styles.resourceRow}>
-              <Text style={styles.resourceIcon}>🟦</Text>
+              <Image source={RESOURCE_IMAGES[property.mineType]['rare']} style={styles.resourceIcon} />
               <View style={styles.resourceInfo}>
                 <Text style={styles.resourceName}>{resourceNames.rare}</Text>
                 <Text style={styles.resourceAmount}>
@@ -340,7 +350,7 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
 
           <View style={styles.resourceCard}>
             <View style={styles.resourceRow}>
-              <Text style={styles.resourceIcon}>🟪</Text>
+              <Image source={RESOURCE_IMAGES[property.mineType]['epic']} style={styles.resourceIcon} />
               <View style={styles.resourceInfo}>
                 <Text style={styles.resourceName}>{resourceNames.epic}</Text>
                 <Text style={styles.resourceAmount}>
@@ -528,7 +538,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   resourceIcon: {
-    fontSize: 32,
+    width: 48,
+    height: 48,
     marginRight: 12,
   },
   resourceInfo: {

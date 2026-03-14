@@ -13,14 +13,15 @@ import {
   Platform,
   StatusBar,
 } from 'react-native';
-import { GridSquare } from '../../../utils/GridUtils';
+import { soundService } from '../../../services/SoundService';
+
 import { PropertyDetails } from '../../../types/PropertyTypes';
 import { useAuth } from '../../../contexts/AuthContext';
 import { dbServicePhase2 } from '../../../services/DatabaseServicePhase2';
 import { AdMobService } from '../../../services/AdMobService';
 import { GameState } from '../../../types/MemoryMatchTypes';
 import { initializeGame, tickTimer, checkGameOver, getGameResult } from '../../../utils/MemoryMatchEngine';
-import { calculateRewards, getDifficultyConfig } from '../../../utils/MemoryMatchConstants';
+import { getDifficultyConfig } from '../../../utils/MemoryMatchConstants';
 import MemoryMatchBoard from './MemoryMatchBoard';
 
 interface MemoryMatchScreenProps {
@@ -40,14 +41,19 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isGameStarted, setIsGameStarted] = useState(false);
   const [isSavingResult, setIsSavingResult] = useState(false);
-  const [showWinAd, setShowWinAd] = useState(false);
-  const [hasWatchedWinAd, setHasWatchedWinAd] = useState(false);
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const adService = useRef(new AdMobService()).current;
+  const [leveledUp, setLeveledUp] = useState(false);
+  const [newLevel, setNewLevel] = useState(1);
+  const [adLevelLoading, setAdLevelLoading] = useState(false);
+  const levelBeforeRef = useRef(propertyDetails.gameLevel);
+  // Used to trigger level-up alert after win alert is fully dismissed
+  const [pendingLevelUp, setPendingLevelUp] = useState<number | null>(null);
 
   // Initialize game
   useEffect(() => {
+    soundService.init();
     const initialState = initializeGame(propertyDetails.gameLevel);
     setGameState(initialState);
   }, []);
@@ -92,133 +98,77 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
     }
   }, [gameState?.isGameOver]);
 
+  // Show level-up alert after the win alert has been fully dismissed
+  useEffect(() => {
+    if (pendingLevelUp === null) return;
+    const level = pendingLevelUp;
+    // Small delay ensures the previous alert is fully gone on Android
+    const t = setTimeout(() => {
+      Alert.alert(
+        `⬆️ LEVEL UP! Now Level ${level}`,
+        'Watch a short ad to jump straight to the new level!',
+        [
+          {
+            text: '📺 Watch Ad',
+            onPress: () => handlePlayNextLevel(),
+          },
+          {
+            text: 'Same Level',
+            onPress: () => {
+              const initialState = initializeGame(propertyDetails.gameLevel);
+              setGameState(initialState);
+              setIsGameStarted(false);
+            },
+          },
+          {
+            text: 'Leave',
+            style: 'cancel',
+            onPress: () => navigation.goBack(),
+          },
+        ]
+      );
+      setPendingLevelUp(null);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [pendingLevelUp]);
+
   const handleGameOver = async () => {
     if (!gameState || !user) return;
     
     const result = getGameResult(gameState);
 
-    // If WON - show win ad before rewards
     if (result.won) {
-      setShowWinAd(true);
-      
-      Alert.alert(
-        result.isPerfect ? '🌟 PERFECT GAME!' : '🎉 Victory!',
-        `You matched all pairs!\n\n` +
-          `Score: ${result.score.toLocaleString()}\n` +
-          `Moves: ${result.movesUsed}\n` +
-          `Time Left: ${result.timeRemaining}s\n` +
-          (result.isPerfect ? `\n🌟 No wrong guesses - PERFECT!\n` : '') +
-          `\n📺 Watch an ad to collect your rewards!`,
-        [
-          {
-            text: '📺 Watch Ad',
-            onPress: () => handleWatchWinAd(result),
-          },
-        ],
-        { cancelable: false }
-      );
+      soundService.play('win');
+      await saveGameResult(result);
       return;
     }
 
-    // If LOST - check if can continue
+    // LOST — offer continue via ad, or show lose result
     const ranOutOfTime = gameState.timeRemaining <= 0;
     const ranOutOfMoves = gameState.movesUsed >= gameState.maxMoves;
 
     if (ranOutOfTime) {
-      // Offer more time via ad
       Alert.alert(
         '⏱️ Time Expired!',
         `Out of time! Watch an ad to get 30 more seconds?`,
         [
           { text: 'Give Up', style: 'cancel', onPress: () => showLoseResult(result) },
-          {
-            text: '📺 Watch Ad (+30s)',
-            onPress: () => handleWatchTimeAd(),
-          },
+          { text: '📺 Watch Ad (+30s)', onPress: () => handleWatchTimeAd() },
         ]
       );
     } else if (ranOutOfMoves) {
-      // Offer more moves via ad
       const difficulty = getDifficultyConfig(propertyDetails.gameLevel);
-      const bonusMoves = Math.ceil(difficulty.maxMoves * 0.1); // 10% of original
-      
+      const bonusMoves = Math.ceil(difficulty.maxMoves * 0.1);
       Alert.alert(
         '🎯 Out of Moves!',
         `No moves left! Watch an ad to get ${bonusMoves} more moves?`,
         [
           { text: 'Give Up', style: 'cancel', onPress: () => showLoseResult(result) },
-          {
-            text: `📺 Watch Ad (+${bonusMoves} moves)`,
-            onPress: () => handleWatchMovesAd(bonusMoves),
-          },
+          { text: `📺 Watch Ad (+${bonusMoves} moves)`, onPress: () => handleWatchMovesAd(bonusMoves) },
         ]
       );
     } else {
-      // Unknown reason, just show lose result
       showLoseResult(result);
-    }
-  };
-
-  const handleWatchWinAd = async (result: any) => {
-    try {
-      const success = await adService.showAd(
-        () => {
-          // Ad watched successfully
-          setHasWatchedWinAd(true);
-          setShowWinAd(false);
-          
-          // Show rewards and collect
-          const rewards = calculateRewards(
-            propertyDetails.gameLevel,
-            property.mineType as any,
-            result.won,
-            result.isPerfect
-          );
-          
-          Alert.alert(
-            'Rewards Unlocked! 🎁',
-            `Rewards:\n` +
-              `💰 ${rewards.tb} TB\n` +
-              `⭐ ${rewards.xp} XP\n` +
-              `🪨 ${rewards.shards} Shards\n` +
-              (rewards.pieces > 0 ? `💚 ${rewards.pieces} Pieces\n` : '') +
-              (rewards.stones > 0 ? `🔷 ${rewards.stones} Stones\n` : '') +
-              (rewards.diamonds > 0 ? `💎 ${rewards.diamonds} Diamonds` : ''),
-            [
-              {
-                text: 'Collect',
-                onPress: () => saveGameResult(result, rewards),
-              },
-            ],
-            { cancelable: false }
-          );
-        },
-        () => {
-          // Ad closed (whether watched or not)
-          console.log('Win ad closed');
-        }
-      );
-
-      if (!success) {
-        Alert.alert('Ad Not Ready', 'Ad failed to load. Collecting rewards anyway.');
-        const rewards = calculateRewards(
-          propertyDetails.gameLevel,
-          property.mineType as any,
-          result.won,
-          result.isPerfect
-        );
-        saveGameResult(result, rewards);
-      }
-    } catch (error) {
-      console.error('Error showing win ad:', error);
-      Alert.alert('Error', 'Failed to show ad. Collecting rewards anyway.');
-      const rewards = calculateRewards(
-        propertyDetails.gameLevel,
-        property.mineType as any,
-        result.won,
-        result.isPerfect
-      );
-      saveGameResult(result, rewards);
     }
   };
 
@@ -285,41 +235,41 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
   };
 
   const showLoseResult = (result: any) => {
-    const rewards = calculateRewards(
-      propertyDetails.gameLevel,
-      property.mineType as any,
-      result.won,
-      result.isPerfect
-    );
-
+    soundService.play('lose');
     Alert.alert(
       '💔 Game Over',
       `Better luck next time!\n\n` +
         `Matched: ${result.matchedPairs}/${gameState!.totalPairs} pairs\n\n` +
-        `Consolation prize:\n` +
-        `⭐ ${rewards.xp} XP\n` +
-        `🪨 ${rewards.shards} Shards`,
+        `You earned 10 XP for trying!`,
       [
         {
-          text: 'Collect',
-          onPress: () => saveGameResult(result, rewards),
+          text: '🔄 Play Again',
+          onPress: () => {
+            saveGameResult(result);
+            // Reset game state for a fresh round
+            const initialState = initializeGame(propertyDetails.gameLevel);
+            setGameState(initialState);
+            setIsGameStarted(false);
+          },
+        },
+        {
+          text: 'Leave',
+          style: 'cancel',
+          onPress: () => saveGameResult(result),
         },
       ],
       { cancelable: false }
     );
   };
 
-  const saveGameResult = async (
-    result: any,
-    rewards: any
-  ) => {
+  const saveGameResult = async (result: any) => {
     if (!user) return;
     
     try {
       setIsSavingResult(true);
       
-      // Record game result and get XP/level up info
-      await dbServicePhase2.recordGameResult(
+      const levelBefore = levelBeforeRef.current;
+      const reward = await dbServicePhase2.recordGameResult(
         user.uid,
         property.id,
         property.mineType as any,
@@ -329,30 +279,81 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
         result.timeRemaining,
         result.movesUsed
       );
-      
-      // Add TB to user balance (handled separately from resources)
-      // You'll need to add this to DatabaseService
-      
-      Alert.alert(
-        'Success!',
-        `Rewards collected!\n\nReturn to your property to see updated stats.`,
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              navigation.navigate('PropertyDetail', {
-                property: property,
-                refresh: Date.now(),
-              });
+
+      // Check for level-up
+      const updated = await dbServicePhase2.getPropertyDetails(property.id);
+      const didLevelUp = updated && result.won && updated.gameLevel > levelBefore;
+      if (didLevelUp) {
+        setLeveledUp(true);
+        setNewLevel(updated!.gameLevel);
+      }
+
+      if (result.won) {
+        const resNames = getResourceNames();
+        const resSummary = reward
+          ? [
+              `💰 ${reward.tb} TB`,
+              `⭐ ${reward.propertyXP} XP`,
+              reward.common   > 0 ? `🪨 ${reward.common} ${resNames.common}`     : null,
+              reward.uncommon > 0 ? `🔹 ${reward.uncommon} ${resNames.uncommon}` : null,
+              reward.rare     > 0 ? `💜 ${reward.rare} ${resNames.rare}`         : null,
+              reward.epic     > 0 ? `✨ ${reward.epic} ${resNames.epic}`         : null,
+            ].filter(Boolean).join('\n')
+          : '💰 Rewards collected!';
+
+        Alert.alert(
+          result.isPerfect ? '🌟 PERFECT GAME!' : '🎉 Victory!',
+          `You matched all pairs!\n\nScore: ${result.score.toLocaleString()}\nMoves: ${result.movesUsed}\nTime Left: ${result.timeRemaining}s\n\n${resSummary}`,
+          [
+            {
+              text: '🔄 Play Again',
+              onPress: () => {
+                if (didLevelUp) {
+                  // Trigger level-up alert via useEffect after this alert clears
+                  setPendingLevelUp(updated!.gameLevel);
+                } else {
+                  const initialState = initializeGame(propertyDetails.gameLevel);
+                  setGameState(initialState);
+                  setIsGameStarted(false);
+                }
+              },
             },
-          },
-        ]
-      );
+            {
+              text: 'Leave',
+              onPress: () => {
+                if (didLevelUp) {
+                  setPendingLevelUp(updated!.gameLevel);
+                } else {
+                  navigation.goBack();
+                }
+              },
+            },
+          ],
+          { cancelable: false }
+        );
+      }
     } catch (error) {
       console.error('Error saving game result:', error);
       Alert.alert('Error', 'Failed to save game result');
     } finally {
       setIsSavingResult(false);
+    }
+  };
+
+  const handlePlayNextLevel = async () => {
+    setAdLevelLoading(true);
+    try {
+      const success = await adService.showAd(
+        async () => {
+          const updated = await dbServicePhase2.getPropertyDetails(property.id);
+          setAdLevelLoading(false);
+          navigation.replace('MemoryMatch', { property, propertyDetails: updated ?? propertyDetails });
+        },
+        () => { setAdLevelLoading(false); }
+      );
+      if (!success) setAdLevelLoading(false);
+    } catch {
+      setAdLevelLoading(false);
     }
   };
 
@@ -366,10 +367,7 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
           text: 'Quit',
           style: 'destructive',
           onPress: () => {
-            navigation.navigate('PropertyDetail', {
-              property: property,
-              refresh: Date.now(),
-            });
+            navigation.goBack();
           },
         },
       ]
@@ -383,6 +381,16 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
       case 'gold': return '🟡';
       case 'diamond': return '💎';
       default: return '⬜';
+    }
+  };
+
+  const getResourceNames = () => {
+    switch (property.mineType) {
+      case 'rock':    return { common: 'Gravel', uncommon: 'Slate', rare: 'Granite', epic: 'Marble' };
+      case 'coal':    return { common: 'Lignite', uncommon: 'Soft Coal', rare: 'Anthracite', epic: 'Diamond Coal' };
+      case 'gold':    return { common: 'Gold Dust', uncommon: 'Gold Flakes', rare: 'Gold Nuggets', epic: 'Gold Bars' };
+      case 'diamond': return { common: 'Diamond Shards', uncommon: 'Diamond Pieces', rare: 'Diamond Stones', epic: 'Diamonds' };
+      default:        return { common: 'Common', uncommon: 'Uncommon', rare: 'Rare', epic: 'Epic' };
     }
   };
 

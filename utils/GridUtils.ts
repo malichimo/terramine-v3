@@ -21,6 +21,7 @@ export interface GridSquare {
   isOwned: boolean;
   ownerId?: string;
   ownerNickname?: string;
+  customName?: string;
 }
 
 /**
