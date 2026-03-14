@@ -21,6 +21,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { dbServicePhase2 } from '../../services/DatabaseServicePhase2';
 import { DatabaseService } from '../../services/DatabaseService';
 import { AdMobService } from '../../services/AdMobService';
+import { soundService } from '../../services/SoundService';
 
 const { width, height } = Dimensions.get('window');
 
@@ -34,8 +35,17 @@ interface RewardTier {
   tier: 'common' | 'uncommon' | 'rare' | 'epic';
   amount: number;
   displayName: string;
-  emoji: string;
+  image: any;
 }
+
+
+// ── Resource images ─────────────────────────────────────────────────────────
+const RESOURCE_IMAGES = {
+  common:   require('../../assets/images/resources/gold/gold-common.png'),
+  uncommon: require('../../assets/images/resources/gold/gold-uncommon.png'),
+  rare:     require('../../assets/images/resources/gold/gold-rare.png'),
+  epic:     require('../../assets/images/resources/gold/gold-epic.png'),
+};
 
 export default function SluiceBoxActivity({
   property,
@@ -122,7 +132,8 @@ export default function SluiceBoxActivity({
 
   const startPanning = () => {
     if (isRunning || !user || attemptsRemaining <= 0) return;
-    
+    soundService.play('machine_start');
+    setTimeout(() => soundService.play('water_flow'), 400);
     setIsRunning(true);
 
     // Sluice box animation: shovel dumps dirt → water washes → gold appears
@@ -211,28 +222,28 @@ export default function SluiceBoxActivity({
         tier: 'common',
         amount: Math.floor(600 + Math.random() * 600), // 600-1200 (2x rock)
         displayName: 'Gold Dust',
-        emoji: '✨',
+        image: RESOURCE_IMAGES.common,
       };
     } else if (roll < 85) {
       reward = {
         tier: 'uncommon',
         amount: Math.floor(60 + Math.random() * 60), // 60-120
         displayName: 'Gold Flakes',
-        emoji: '🟡',
+        image: RESOURCE_IMAGES.uncommon,
       };
     } else if (roll < 97) {
       reward = {
         tier: 'rare',
         amount: Math.floor(6 + Math.random() * 14), // 6-20
         displayName: 'Gold Nuggets',
-        emoji: '🟠',
+        image: RESOURCE_IMAGES.rare,
       };
     } else {
       reward = {
         tier: 'epic',
         amount: Math.floor(1 + Math.random() * 3), // 1-4
         displayName: 'Gold Bars',
-        emoji: '🟨',
+        image: RESOURCE_IMAGES.epic,
       };
     }
 
@@ -289,6 +300,8 @@ export default function SluiceBoxActivity({
 
       setRewardTier(reward);
       setTbBonus(tbBonusAmount);
+      soundService.stop('water_flow');
+      soundService.play('reward');
       setShowRewards(true);
       
       if (isBaseAttempt) {
@@ -312,10 +325,7 @@ export default function SluiceBoxActivity({
   };
 
   const handleFinish = () => {
-    navigation.navigate('PropertyDetail', {
-      property: property,
-      refresh: true,
-    });
+    navigation.goBack();
   };
 
   const handleBack = () => {
@@ -475,7 +485,7 @@ export default function SluiceBoxActivity({
 
           <View style={styles.rewardsList}>
             <View style={styles.mainReward}>
-              <Text style={styles.rewardEmoji}>{rewardTier.emoji}</Text>
+              <Image source={rewardTier.image} style={styles.rewardEmoji} />
               <Text style={styles.rewardAmount}>{rewardTier.amount}</Text>
               <Text style={styles.rewardName}>
                 {rewardTier.displayName} ({rewardTier.tier.toUpperCase()})
@@ -723,7 +733,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   rewardEmoji: {
-    fontSize: 64,
+    width: 80,
+    height: 80,
     marginBottom: 10,
   },
   rewardAmount: {

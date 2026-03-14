@@ -21,6 +21,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { dbServicePhase2 } from '../../services/DatabaseServicePhase2';
 import { DatabaseService } from '../../services/DatabaseService';
 import { AdMobService } from '../../services/AdMobService';
+import { soundService } from '../../services/SoundService';
 
 const { width, height } = Dimensions.get('window');
 
@@ -34,11 +35,27 @@ interface RewardTier {
   tier: 'common' | 'uncommon' | 'rare' | 'epic';
   amount: number;
   displayName: string;
-  emoji: string;
+  image: any;
 }
 
-// Slot symbols (using emojis for now)
-const SYMBOLS = ['💎', '🟨', '🟠', '🪨', '⚫'];
+// Slot symbols — use mine resource images
+const SYMBOLS = ['diamond', 'gold', 'rock', 'coal', 'rock'];
+
+const SYMBOL_IMAGES: Record<string, any> = {
+  diamond: require('../../assets/images/resources/diamond/diamond-common.png'),
+  gold:    require('../../assets/images/resources/gold/gold-common.png'),
+  rock:    require('../../assets/images/resources/rock/rock-common.png'),
+  coal:    require('../../assets/images/resources/coal/coal-common.png'),
+};
+
+
+// ── Resource images ─────────────────────────────────────────────────────────
+const RESOURCE_IMAGES = {
+  common:   require('../../assets/images/resources/diamond/diamond-common.png'),
+  uncommon: require('../../assets/images/resources/diamond/diamond-uncommon.png'),
+  rare:     require('../../assets/images/resources/diamond/diamond-rare.png'),
+  epic:     require('../../assets/images/resources/diamond/diamond-epic.png'),
+};
 
 export default function SlotMachineActivity({
   property,
@@ -55,9 +72,9 @@ export default function SlotMachineActivity({
   const [usedBaseAttempt, setUsedBaseAttempt] = useState(false);
   
   // Reel symbols
-  const [reel1, setReel1] = useState('💎');
-  const [reel2, setReel2] = useState('🟨');
-  const [reel3, setReel3] = useState('🟠');
+  const [reel1, setReel1] = useState('diamond');
+  const [reel2, setReel2] = useState('gold');
+  const [reel3, setReel3] = useState('rock');
 
   // Animation values
   const leverRotation = useRef(new Animated.Value(0)).current;
@@ -130,7 +147,8 @@ export default function SlotMachineActivity({
 
   const pullLever = () => {
     if (isRunning || !user || attemptsRemaining <= 0) return;
-    
+    soundService.play('machine_start');
+    setTimeout(() => soundService.play('reel_spin'), 400);
     setIsRunning(true);
 
     // Lever pull and reel spin animation
@@ -225,26 +243,26 @@ export default function SlotMachineActivity({
     
     // Triple match (JACKPOT)
     if (allMatch) {
-      if (symbol1 === '💎') {
+      if (symbol1 === 'diamond') {
         reward = {
           tier: 'epic',
           amount: Math.floor(1 + Math.random() * 5), // 1-6 (3x normal epic)
           displayName: 'Diamonds',
-          emoji: '💎',
+          image: RESOURCE_IMAGES.epic,
         };
-      } else if (symbol1 === '🟨') {
+      } else if (symbol1 === 'gold') {
         reward = {
           tier: 'rare',
           amount: Math.floor(9 + Math.random() * 21), // 9-30 (3x normal rare)
           displayName: 'Diamond Stones',
-          emoji: '🟨',
+          image: RESOURCE_IMAGES.rare,
         };
       } else {
         reward = {
           tier: 'uncommon',
           amount: Math.floor(90 + Math.random() * 90), // 90-180 (3x normal)
           displayName: 'Diamond Pieces',
-          emoji: '🟠',
+          image: RESOURCE_IMAGES.uncommon,
         };
       }
     }
@@ -254,7 +272,7 @@ export default function SlotMachineActivity({
         tier: 'uncommon',
         amount: Math.floor(90 + Math.random() * 90), // 90-180
         displayName: 'Diamond Pieces',
-        emoji: '🟠',
+        image: RESOURCE_IMAGES.uncommon,
       };
     }
     // No match (consolation)
@@ -263,7 +281,7 @@ export default function SlotMachineActivity({
         tier: 'common',
         amount: Math.floor(900 + Math.random() * 900), // 900-1800 (3x rock)
         displayName: 'Diamond Shards',
-        emoji: '⬜',
+        image: RESOURCE_IMAGES.common,
       };
     }
 
@@ -320,6 +338,8 @@ export default function SlotMachineActivity({
 
       setRewardTier(reward);
       setTbBonus(tbBonusAmount);
+      soundService.stop('reel_spin');
+      soundService.play('reward');
       setShowRewards(true);
       
       if (isBaseAttempt) {
@@ -340,16 +360,13 @@ export default function SlotMachineActivity({
     reel2Spin.setValue(0);
     reel3Spin.setValue(0);
     winFlash.setValue(0);
-    setReel1('💎');
-    setReel2('🟨');
-    setReel3('🟠');
+    setReel1('diamond');
+    setReel2('gold');
+    setReel3('rock');
   };
 
   const handleFinish = () => {
-    navigation.navigate('PropertyDetail', {
-      property: property,
-      refresh: true,
-    });
+    navigation.goBack();
   };
 
   const handleBack = () => {
@@ -393,7 +410,7 @@ export default function SlotMachineActivity({
               outputRange: [1, 0.3, 1],
             }),
           }]}>
-            <Text style={styles.reelSymbol}>{reel1}</Text>
+            <Image source={SYMBOL_IMAGES[reel1]} style={styles.reelSymbol} />
           </Animated.View>
           
           <Animated.View style={[styles.reel, {
@@ -402,7 +419,7 @@ export default function SlotMachineActivity({
               outputRange: [1, 0.3, 1],
             }),
           }]}>
-            <Text style={styles.reelSymbol}>{reel2}</Text>
+            <Image source={SYMBOL_IMAGES[reel2]} style={styles.reelSymbol} />
           </Animated.View>
           
           <Animated.View style={[styles.reel, {
@@ -411,7 +428,7 @@ export default function SlotMachineActivity({
               outputRange: [1, 0.3, 1],
             }),
           }]}>
-            <Text style={styles.reelSymbol}>{reel3}</Text>
+            <Image source={SYMBOL_IMAGES[reel3]} style={styles.reelSymbol} />
           </Animated.View>
         </View>
 
@@ -514,8 +531,12 @@ export default function SlotMachineActivity({
 
           <View style={styles.rewardsList}>
             <View style={styles.mainReward}>
-              <Text style={styles.reelResult}>{reel1} {reel2} {reel3}</Text>
-              <Text style={styles.rewardEmoji}>{rewardTier.emoji}</Text>
+              <View style={styles.reelResultIcons}>
+                <Image source={SYMBOL_IMAGES[reel1]} style={styles.reelResultIcon} />
+                <Image source={SYMBOL_IMAGES[reel2]} style={styles.reelResultIcon} />
+                <Image source={SYMBOL_IMAGES[reel3]} style={styles.reelResultIcon} />
+              </View>
+              <Image source={rewardTier.image} style={styles.rewardEmoji} />
               <Text style={styles.rewardAmount}>{rewardTier.amount}</Text>
               <Text style={styles.rewardName}>
                 {rewardTier.displayName} ({rewardTier.tier.toUpperCase()})
@@ -621,7 +642,8 @@ const styles = StyleSheet.create({
     borderRadius: 5,
   },
   reelSymbol: {
-    fontSize: 48,
+    width: 50,
+    height: 50,
   },
   winFlash: {
     position: 'absolute',
@@ -765,12 +787,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f5f5',
     borderRadius: 10,
   },
-  reelResult: {
-    fontSize: 40,
+  reelResultIcons: {
+    flexDirection: 'row',
+    gap: 10,
     marginBottom: 15,
+    justifyContent: 'center',
+  },
+  reelResultIcon: {
+    width: 44,
+    height: 44,
   },
   rewardEmoji: {
-    fontSize: 64,
+    width: 80,
+    height: 80,
     marginBottom: 10,
   },
   rewardAmount: {

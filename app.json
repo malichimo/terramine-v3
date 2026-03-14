@@ -14,9 +14,20 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
+      "bundleIdentifier": "com.terramine.app",
       "supportsTablet": true,
       "config": {
         "googleMobileAdsAppId": "ca-app-pub-4502698429383902~3587962923"
+      },
+      "infoPlist": {
+        "SKAdNetworkItems": [
+          {
+            "SKAdNetworkIdentifier": "v9wttpbfk9.skadnetwork"
+          },
+          {
+            "SKAdNetworkIdentifier": "n38lu8286q.skadnetwork"
+          }
+        ]
       }
     },
     "android": {
@@ -26,8 +37,10 @@
       },
       "package": "com.terramine.app",
       "permissions": [
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.INTERNET"
       ],
       "config": {
         "googleMaps": {
@@ -55,7 +68,31 @@
           "iosAppId": "ca-app-pub-4502698429383902~3587962923"
         }
       ],
-      "./app.plugin.js"
-    ]
+      "./app.plugin.js",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.183143680304-if4fq2o2n7h0sqodvlejre0a1hagk8ui"
+        }
+      ],
+      [
+        "react-native-fbsdk-next",
+        {
+          "appID": "4316187701926408",
+          "clientToken": "48c16df70c0e677b3f0a525edc715096",
+          "displayName": "TerraMine",
+          "scheme": "fb4316187701926408",
+          "advertiserIDCollectionEnabled": false,
+          "autoLogAppEventsEnabled": false,
+          "isAutoInitEnabled": true,
+          "iosUserTrackingUsageDescription": "TerraMine uses Facebook login to identify you and save your game progress."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7137937a-c2a0-4f44-82fb-66ae790710a1"
+      }
+    }
   }
 }

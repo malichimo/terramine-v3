@@ -20,6 +20,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { dbServicePhase2 } from '../../services/DatabaseServicePhase2';
 import { DatabaseService } from '../../services/DatabaseService';
 import { AdMobService } from '../../services/AdMobService';
+import { soundService } from '../../services/SoundService';
 
 const { width, height } = Dimensions.get('window');
 
@@ -33,8 +34,17 @@ interface RewardTier {
   tier: 'common' | 'uncommon' | 'rare' | 'epic';
   amount: number;
   displayName: string;
-  emoji: string;
+  image: any;
 }
+
+
+// ── Resource images ─────────────────────────────────────────────────────────
+const RESOURCE_IMAGES = {
+  common:   require('../../assets/images/resources/coal/coal-common.png'),
+  uncommon: require('../../assets/images/resources/coal/coal-uncommon.png'),
+  rare:     require('../../assets/images/resources/coal/coal-rare.png'),
+  epic:     require('../../assets/images/resources/coal/coal-epic.png'),
+};
 
 export default function CoalPileActivity({
   property,
@@ -120,7 +130,8 @@ export default function CoalPileActivity({
 
   const startMining = () => {
     if (isRunning || !user || attemptsRemaining <= 0) return;
-    
+    soundService.play('pickaxe');
+    setTimeout(() => soundService.play('pickaxe'), 400);
     setIsRunning(true);
 
     // Pickaxe swing animation (3 swings)
@@ -230,28 +241,28 @@ export default function CoalPileActivity({
         tier: 'common',
         amount: Math.floor(450 + Math.random() * 450),
         displayName: 'Lignite',
-        emoji: '⚫',
+        image: RESOURCE_IMAGES.common,
       };
     } else if (roll < 85) {
       reward = {
         tier: 'uncommon',
         amount: Math.floor(45 + Math.random() * 45),
         displayName: 'Soft Coal',
-        emoji: '🟤',
+        image: RESOURCE_IMAGES.uncommon,
       };
     } else if (roll < 97) {
       reward = {
         tier: 'rare',
         amount: Math.floor(5 + Math.random() * 10),
         displayName: 'Anthracite',
-        emoji: '⬛',
+        image: RESOURCE_IMAGES.rare,
       };
     } else {
       reward = {
         tier: 'epic',
         amount: Math.floor(1 + Math.random() * 2),
         displayName: 'Diamond',
-        emoji: '💎',
+        image: RESOURCE_IMAGES.epic,
       };
     }
 
@@ -307,6 +318,8 @@ export default function CoalPileActivity({
 
       setRewardTier(reward);
       setTbBonus(tbBonusAmount);
+      soundService.stop('pickaxe');
+      soundService.play('reward');
       setShowRewards(true);
       
       if (isBaseAttempt) {
@@ -329,10 +342,7 @@ export default function CoalPileActivity({
   };
 
   const handleFinish = () => {
-    navigation.navigate('PropertyDetail', {
-      property: property,
-      refresh: true,
-    });
+    navigation.goBack();
   };
 
   const handleBack = () => {
@@ -401,7 +411,12 @@ export default function CoalPileActivity({
               { opacity: rewardOpacity },
             ]}
           >
-            <Text style={styles.flyingRewardText}>💰 ⚫ 💰</Text>
+            <View style={styles.flyingRewardIcons}>
+              <Image source={require('../../assets/images/resources/rock/rock-common.png')}    style={styles.flyingRewardIcon} />
+              <Image source={require('../../assets/images/resources/coal/coal-common.png')}    style={styles.flyingRewardIcon} />
+              <Image source={require('../../assets/images/resources/gold/gold-common.png')}    style={styles.flyingRewardIcon} />
+              <Image source={require('../../assets/images/resources/diamond/diamond-common.png')} style={styles.flyingRewardIcon} />
+            </View>
           </Animated.View>
         )}
       </View>
@@ -475,7 +490,7 @@ export default function CoalPileActivity({
 
           <View style={styles.rewardsList}>
             <View style={styles.mainReward}>
-              <Text style={styles.rewardEmoji}>{rewardTier.emoji}</Text>
+              <Image source={rewardTier.image} style={styles.rewardEmoji} />
               <Text style={styles.rewardAmount}>{rewardTier.amount}</Text>
               <Text style={styles.rewardName}>
                 {rewardTier.displayName} ({rewardTier.tier.toUpperCase()})
@@ -576,8 +591,14 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: '35%',
   },
-  flyingRewardText: {
-    fontSize: 40,
+  flyingRewardIcons: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  flyingRewardIcon: {
+    width: 40,
+    height: 40,
   },
   instructionsContainer: {
     padding: 20,
@@ -706,7 +727,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   rewardEmoji: {
-    fontSize: 64,
+    width: 80,
+    height: 80,
     marginBottom: 10,
   },
   rewardAmount: {
