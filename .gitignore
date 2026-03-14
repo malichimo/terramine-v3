@@ -79,3 +79,4 @@ out/
 "firebaseConfig.ts" 
 "Checkpoints/" 
 "Checkpoints/" 
+"Checkpoints/*.zip" 
