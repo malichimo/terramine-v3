@@ -130,9 +130,9 @@ export default function CoalPileActivity({
 
   const startMining = () => {
     if (isRunning || !user || attemptsRemaining <= 0) return;
-    soundService.play('pickaxe');
-    setTimeout(() => soundService.play('pickaxe'), 400);
+    
     setIsRunning(true);
+    soundService.play('pickaxe');
 
     // Pickaxe swing animation (3 swings)
     Animated.sequence([
@@ -318,9 +318,8 @@ export default function CoalPileActivity({
 
       setRewardTier(reward);
       setTbBonus(tbBonusAmount);
-      soundService.stop('pickaxe');
-      soundService.play('reward');
       setShowRewards(true);
+      soundService.play('chime');
       
       if (isBaseAttempt) {
         setWillDoubleRewards(false);

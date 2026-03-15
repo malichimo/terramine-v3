@@ -34,21 +34,23 @@ export default function MemoryMatchBoard({
   const handleCardPress = (cardId: string) => {
     if (isProcessing || gameState.isGameOver) return;
 
-    // Flip sound on every tap
-    soundService.play('flip');
-
+    // Flip the card
     const newState = flipCard(gameState, cardId);
+    soundService.play('flip');
     onGameStateChange(newState);
 
+    // If two cards are now flipped, check for match
     if (newState.flippedCards.length === 2) {
       setIsProcessing(true);
       
+      // Small delay to show both cards before checking match
       setTimeout(() => {
         const { newState: matchedState, isMatch } = checkMatch(newState);
         onGameStateChange(matchedState);
 
         if (!isMatch) {
           soundService.play('mismatch');
+          // If no match, flip cards back after delay
           mismatchTimeoutRef.current = setTimeout(() => {
             const flippedBackState = flipCardsBack(matchedState);
             onGameStateChange(flippedBackState);
@@ -56,6 +58,7 @@ export default function MemoryMatchBoard({
           }, MISMATCH_DELAY);
         } else {
           soundService.play('match');
+          // Match found, allow next move immediately
           setIsProcessing(false);
         }
       }, 300);

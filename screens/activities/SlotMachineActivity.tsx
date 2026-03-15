@@ -147,8 +147,7 @@ export default function SlotMachineActivity({
 
   const pullLever = () => {
     if (isRunning || !user || attemptsRemaining <= 0) return;
-    soundService.play('machine_start');
-    setTimeout(() => soundService.play('reel_spin'), 400);
+    
     setIsRunning(true);
 
     // Lever pull and reel spin animation
@@ -194,6 +193,7 @@ export default function SlotMachineActivity({
   };
 
   const spinReels = () => {
+    soundService.play('reel_spin');
     // Randomly determine result
     const result1 = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
     const result2 = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
@@ -338,9 +338,10 @@ export default function SlotMachineActivity({
 
       setRewardTier(reward);
       setTbBonus(tbBonusAmount);
-      soundService.stop('reel_spin');
-      soundService.play('reward');
       setShowRewards(true);
+      // Play reward sound for jackpot, chime for smaller wins
+      const allMatch = reward.tier === 'epic' || reward.tier === 'rare';
+      SoundService.play(allMatch ? 'reward' : 'chime');
       
       if (isBaseAttempt) {
         setWillDoubleRewards(false);

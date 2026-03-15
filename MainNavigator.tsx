@@ -18,10 +18,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from './contexts/AuthContext';
 import { DatabaseService } from './services/DatabaseService';
 import { ConsentService } from './services/ConsentService';
+import { soundService } from './services/SoundService';
 import { View, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import OnboardingScreen, { ONBOARDING_SEEN_KEY } from './screens/OnboardingScreen';
-import { soundService } from './services/SoundService';
 import DailyActivityScreen from './screens/DailyActivityScreen';
 import VisitorLogScreen from './screens/VisitorLogScreen';
 
@@ -169,9 +169,10 @@ export default function MainNavigator() {
     if (user) {
       loadUserData();
       checkOnboarding();
-      soundService.init();
       // Run UMP consent + MobileAds init. Must complete before any ad is loaded.
       ConsentService.initialize().then(() => setConsentReady(true));
+      // Initialise sound service (loads all sfx into memory)
+      soundService.init().catch(e => console.warn('SoundService init failed', e));
     }
   }, [user]);
 

@@ -132,9 +132,9 @@ export default function SluiceBoxActivity({
 
   const startPanning = () => {
     if (isRunning || !user || attemptsRemaining <= 0) return;
-    soundService.play('machine_start');
-    setTimeout(() => soundService.play('water_flow'), 400);
+    
     setIsRunning(true);
+    soundService.play('water_flow');
 
     // Sluice box animation: shovel dumps dirt → water washes → gold appears
     Animated.sequence([
@@ -300,9 +300,9 @@ export default function SluiceBoxActivity({
 
       setRewardTier(reward);
       setTbBonus(tbBonusAmount);
-      soundService.stop('water_flow');
-      soundService.play('reward');
       setShowRewards(true);
+      soundService.stop('water_flow');
+      soundService.play('chime');
       
       if (isBaseAttempt) {
         setWillDoubleRewards(false);
@@ -329,6 +329,7 @@ export default function SluiceBoxActivity({
   };
 
   const handleBack = () => {
+    soundService.stop('water_flow');
     navigation.goBack();
   };
 

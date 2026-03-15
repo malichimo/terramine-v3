@@ -378,7 +378,7 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
           <View style={[styles.statRow, styles.statRowMargin]}>
             <Text style={styles.statLabel}>Earning:</Text>
             <Text style={[styles.statValue, { color: getMineColor() }]}>
-              ${currentRate.toExponential(2)}/min
+              ${(currentRate * 60 * 24 * 30).toExponential(2)}/mo
             </Text>
           </View>
 
@@ -603,7 +603,7 @@ const styles = StyleSheet.create({
   headerTitleRow: { flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'center', gap: 8 },
   headerMineImage: { width: 32, height: 32 },
   headerMineEmoji: { fontSize: 20 },
-  mineHeroContainer: { alignItems: 'center', paddingVertical: 16, backgroundColor: '#111', marginBottom: 0 },
+  mineHeroContainer: { alignItems: 'center', paddingVertical: 16, backgroundColor: '#2C1810', marginBottom: 0 },
   mineHeroImage: { width: 180, height: 180 },
   doubleBanner: { backgroundColor: '#FF9800', padding: 10, alignItems: 'center' },
   doubleBannerText: { color: 'white', fontWeight: 'bold', fontSize: 14 },

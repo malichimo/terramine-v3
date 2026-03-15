@@ -4,9 +4,9 @@ import MapView, { Polygon, PROVIDER_GOOGLE, Marker } from 'react-native-maps';
 import * as ImagePicker from 'expo-image-picker';
 import { LocationService, Coordinates } from '../services/LocationService';
 import { DatabaseService, BoostState } from '../services/DatabaseService';
-import { soundService } from '../services/SoundService';
 import { generateGridSquare, getVisibleGridSquares, isWithinGridSquare, isAdjacentToUser, GridSquare, gridToLatLng } from '../utils/GridUtils';
 import BoostModal from '../components/BoostModal';
+import { soundService } from '../services/SoundService';
 
 // Extend BoostState with computed properties used locally in MapScreen
 interface MapScreenBoostState extends BoostState {
@@ -638,6 +638,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     };
     
     onPropertyPurchase(updatedSquare, 100);
+    soundService.play('purchase');
     
     setGridSquares(prev => {
       const updated = new Map(prev);
@@ -646,7 +647,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     });
     
     setSelectedSquare(updatedSquare);
-    soundService.play('purchase');
+    
     Alert.alert('Success!', `You purchased a ${mineType} mine!`);
   };
 
@@ -728,7 +729,13 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
 
   const getSquareFillColor = (square: GridSquare): string => {
     if (square.isOwned) {
-      return getMineColor(square.mineType);
+      if (square.ownerId === userId) {
+        // Player's own property — solid mine color
+        return getMineColor(square.mineType);
+      } else {
+        // Another player's property — orange fill
+        return 'rgba(255, 152, 0, 0.6)';
+      }
     }
     return 'rgba(76, 175, 80, 0.3)';
   };
@@ -736,9 +743,9 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const getSquareStrokeColor = (square: GridSquare): string => {
     if (square.isOwned) {
       if (square.ownerId === userId) {
-        return '#2196F3';
+        return '#2196F3'; // Blue border for own properties
       } else {
-        return '#FF9800';
+        return '#E65100'; // Dark orange border for others' properties
       }
     }
     return '#4CAF50';

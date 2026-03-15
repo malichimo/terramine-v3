@@ -23,9 +23,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AdMobService } from '../../../services/AdMobService';
+import { soundService } from '../../../services/SoundService';
 import { dbServicePhase2 } from '../../../services/DatabaseServicePhase2';
 import { useAuth } from '../../../contexts/AuthContext';
-import { soundService } from '../../../services/SoundService';
 
 // ─────────────────────────────────────────────────────────────────
 //  SCREEN METRICS
@@ -95,7 +95,6 @@ interface PowerUps {
   boosted: boolean;
   boostLeft: number;
   canary: boolean;
-  wideCone: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -115,13 +114,6 @@ const DIFFS: Record<string, DiffCfg> = {
   medium: { label:'Medium', emoji:'🟡', cols:19, rows:25, timeLimit:120, hazardCount:10, coneLen:2.8, coneAngle:80,  tbReward:30, resMult:1.5 },
   hard:   { label:'Hard',   emoji:'🔴', cols:25, rows:33, timeLimit:90,  hazardCount:20, coneLen:2.2, coneAngle:65,  tbReward:60, resMult:2.5 },
 };
-
-/** Levels 1–5 → Easy, 6–15 → Medium, 16+ → Hard */
-function getDiffByLevel(level: number): string {
-  if (level <= 5)  return 'easy';
-  if (level <= 15) return 'medium';
-  return 'hard';
-}
 
 const BOOST_DUR   = 12;
 const CANARY_DIST = 2;
@@ -149,7 +141,6 @@ const CANARY_DIST = 2;
 const SPRITES = {
   miner:       require('../../../assets/images/MinerImageClearBack.png'),
   minerCone:   require('../../../assets/images/MinerImage30Degree.png'),
-  minerCone75: require('../../../assets/images/MinerImage75Degree.png'),
   wall:        require('../../../assets/images/maze/rock_no_beam.png'),
   tileDeadEnd: require('../../../assets/images/maze/dead_grey.png'),
   tileHoriz:   require('../../../assets/images/maze/horiz_grey.png'),
@@ -260,15 +251,13 @@ function dirDeg(d: Dir): number {
   return d === 'right' ? 0 : d === 'down' ? 90 : d === 'left' ? 180 : 270;
 }
 
-function cellLit(m: MinerPos, r: number, c: number, cfg: DiffCfg, boosted: boolean, wideCone: boolean = false): boolean {
+function cellLit(m: MinerPos, r: number, c: number, cfg: DiffCfg, boosted: boolean): boolean {
   const dr = r - m.row, dc = c - m.col;
   const dist = Math.sqrt(dr * dr + dc * dc);
   if (dist === 0) return true;
   const len   = boosted ? cfg.coneLen * 2.2 : cfg.coneLen;
   if (dist > len) return false;
-  // wideCone uses 75° total angle; boosted expands it further; default is cfg.coneAngle (45°)
-  const baseAngle = wideCone ? 75 : cfg.coneAngle;
-  const angle = boosted ? Math.min(baseAngle * 1.6, 340) : baseAngle;
+  const angle = boosted ? Math.min(cfg.coneAngle * 1.6, 340) : cfg.coneAngle;
   const cellDeg = (Math.atan2(dr, dc) * 180) / Math.PI;
   const faceDeg = dirDeg(m.dir);
   let diff = Math.abs(cellDeg - faceDeg);
@@ -276,13 +265,13 @@ function cellLit(m: MinerPos, r: number, c: number, cfg: DiffCfg, boosted: boole
   return diff <= angle / 2;
 }
 
-function computeLit(m: MinerPos, g: Cell[][], cfg: DiffCfg, boosted: boolean, wideCone: boolean = false): Set<string> {
+function computeLit(m: MinerPos, g: Cell[][], cfg: DiffCfg, boosted: boolean): Set<string> {
   const s = new Set<string>();
   const len = Math.ceil(boosted ? cfg.coneLen * 2.2 : cfg.coneLen);
   for (let dr = -len; dr <= len; dr++) {
     for (let dc = -len; dc <= len; dc++) {
       const r = m.row + dr, c = m.col + dc;
-      if (r >= 0 && r < g.length && c >= 0 && c < g[0].length && cellLit(m, r, c, cfg, boosted, wideCone))
+      if (r >= 0 && r < g.length && c >= 0 && c < g[0].length && cellLit(m, r, c, cfg, boosted))
         s.add(`${r},${c}`);
     }
   }
@@ -348,7 +337,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
   const [newLevel,  setNewLevel]  = useState(1);
   const [adLevelLoading, setAdLevelLoading] = useState(false);
   const [liveDetails, setLiveDetails] = useState(propertyDetails);
-  // diffKey is derived from gameLevel — no manual selection
+  const [diffKey, setDiffKey] = useState('easy');
   const [grid,    setGrid]    = useState<Cell[][]>([]);
   const [miner,   setMiner]   = useState<MinerPos>({ row:0, col:0, dir:'right' });
   // lookAngle: free rotation in degrees (0=right, 90=down, 180=left, 270=up)
@@ -376,10 +365,8 @@ export default function MinerMazeScreen({ route, navigation }: any) {
   const [tLeft,   setTLeft]   = useState(120);
   const [score,   setScore]   = useState(0);
   const [steps,   setSteps]   = useState(0);
-  const [pu,      setPu]      = useState<PowerUps>({ charges:1, boosted:false, boostLeft:0, canary:false, wideCone:false });
+  const [pu,      setPu]      = useState<PowerUps>({ charges:1, boosted:false, boostLeft:0, canary:false });
   const [litSet,  setLitSet]  = useState<Set<string>>(new Set());
-  const [exploredCells, setExploredCells] = useState<Set<string>>(new Set());
-  const [showMiniMap, setShowMiniMap] = useState(true);
   const [lastHaz, setLastHaz] = useState<HazardDef|null>(null);
   const [reward,  setReward]  = useState<{tb:number,res:number}|null>(null);
 
@@ -404,9 +391,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
   puRef.current    = pu;
   phaseRef.current = phase;
 
-  const gameLevel = liveDetails?.gameLevel ?? 1;
-  const diffKey   = getDiffByLevel(gameLevel);
-  const cfg       = DIFFS[diffKey];
+  const cfg = DIFFS[diffKey];
 
   // ── MAIN TIMER ─────────────────────────────────────────────
   useEffect(() => {
@@ -431,7 +416,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
         const left = p.boostLeft - 1;
         if (left <= 0) {
           clearInterval(bstRef.current!);
-          setLitSet(computeLit(minerRef.current, gridRef.current, cfg, false, puRef.current.wideCone));
+          setLitSet(computeLit(minerRef.current, gridRef.current, cfg, false));
           return { ...p, boosted: false, boostLeft: 0 };
         }
         return { ...p, boostLeft: left };
@@ -517,28 +502,25 @@ export default function MinerMazeScreen({ route, navigation }: any) {
       if (wallBlocked || !inBounds) {
         if (prev.dir === dir) return prev;
         const turned: MinerPos = { ...prev, dir };
-        setLitSet(computeLit(turned, gridRef.current, cfg, puRef.current.boosted, puRef.current.wideCone));
+        setLitSet(computeLit(turned, gridRef.current, cfg, puRef.current.boosted));
         snapLookToDir(dir);
         return turned;
       }
 
-      // Moved forward — play step sound
-      soundService.play('step');
-
       const next: MinerPos = { row: nr, col: nc, dir };
-      setLitSet(computeLit(next, gridRef.current, cfg, puRef.current.boosted, puRef.current.wideCone));
-      setExploredCells(prev => new Set([...prev, `${nr},${nc}`]));
+      setLitSet(computeLit(next, gridRef.current, cfg, puRef.current.boosted));
       snapLookToDir(dir);
       setSteps(s => s + 1);
       setScore(s => s + 10);
       animateCamera(nc, nr);
+      soundService.play('step');
 
       const tgt = gridRef.current[nr][nc];
       if (tgt.hazard) {
         const hd = HAZARD_DEFS[tgt.hazard];
-        soundService.play('hazard');
         setLastHaz(hd);
         flashDmg();
+        soundService.play('hazard');
         setHealth(hp => {
           const n = hp - hd.damage;
           if (n <= 0) {
@@ -565,16 +547,53 @@ export default function MinerMazeScreen({ route, navigation }: any) {
 
   const doEnd = (res: 'won'|'lost') => {
     if (timerRef.current) clearInterval(timerRef.current);
-    soundService.play(res === 'won' ? 'win' : 'lose');
     const finalSc = res === 'won' ? score + tLeft * 5 + health * 2 : score;
     if (res === 'won') {
       const tb  = Math.max(cfg.tbReward, Math.floor(cfg.tbReward * finalSc / 1000));
       const res2 = Math.floor(50 * cfg.resMult);
       setScore(finalSc);
       setReward({ tb, res: res2 });
+      soundService.play('win');
+      setPhase('won');
+      saveResult(true, finalSc);
+    } else {
+      // Offer time extension via ad before declaring loss
+      if (adService.current) {
+        Alert.alert(
+          '⏱️ Time\'s Up!',
+          'Watch an ad to get +30 more seconds?',
+          [
+            {
+              text: 'End Game',
+              style: 'cancel',
+              onPress: () => { soundService.play('lose'); setPhase('lost'); saveResult(false, finalSc); },
+            },
+            {
+              text: '📺 Watch Ad (+30s)',
+              onPress: async () => {
+                try {
+                  await adService.current!.showAd(
+                    () => {
+                      setTLeft(30);
+                      setPhase('playing');
+                    },
+                    () => { soundService.play('lose'); setPhase('lost'); saveResult(false, finalSc); }
+                  );
+                } catch {
+                  soundService.play('lose');
+                  setPhase('lost');
+                  saveResult(false, finalSc);
+                }
+              },
+            },
+          ]
+        );
+      } else {
+        soundService.play('lose');
+        setPhase('lost');
+        saveResult(false, finalSc);
+      }
     }
-    setPhase(res);
-    saveResult(res === 'won', finalSc);
   };
 
   const saveResult = async (won: boolean, finalScore: number) => {
@@ -628,7 +647,6 @@ export default function MinerMazeScreen({ route, navigation }: any) {
 
   // ── START GAME ─────────────────────────────────────────────
   const startGame = useCallback(() => {
-    soundService.init();
     const raw  = buildMaze(cfg.rows, cfg.cols);
     const full = addHazards(raw, cfg.hazardCount);
     const m0: MinerPos = { row: 0, col: 0, dir: 'right' };
@@ -639,9 +657,8 @@ export default function MinerMazeScreen({ route, navigation }: any) {
     setTLeft(cfg.timeLimit);
     setScore(0);
     setSteps(0);
-    setPu({ charges: 1, boosted: false, boostLeft: 0, canary: false, wideCone: false });
-    setLitSet(computeLit(m0, full, cfg, false, false));
-    setExploredCells(new Set(['0,0']));
+    setPu({ charges: 1, boosted: false, boostLeft: 0, canary: false });
+    setLitSet(computeLit(m0, full, cfg, false));
     setLastHaz(null);
     setReward(null);
     // Delay camera snap until after viewport onLayout has fired
@@ -650,28 +667,19 @@ export default function MinerMazeScreen({ route, navigation }: any) {
       camX.setValue(worldOffsetX(0));
       camY.setValue(worldOffsetY(0));
     }, 150);
-  }, [cfg]);
+  }, [diffKey, cfg]);
 
   // ── POWER-UPS ──────────────────────────────────────────────
   const activateBoost = () => {
     if (pu.charges <= 0 || pu.boosted) return;
     soundService.play('boost');
     setPu(p => ({ ...p, charges: p.charges - 1, boosted: true, boostLeft: BOOST_DUR }));
-    setLitSet(computeLit(miner, grid, cfg, true, pu.wideCone));
+    setLitSet(computeLit(miner, grid, cfg, true));
   };
-  const adBoost    = async () => { if (!adService.current) return; try { await adService.current.showAd(() => setPu(p => ({...p, charges: p.charges+1})), () => {}); } catch {} };
-  const adCanary   = async () => { if (pu.canary || !adService.current) return; try { await adService.current.showAd(() => setPu(p => ({...p, canary:true})), () => {}); } catch {} };
-  const adHealth   = async () => { if (!adService.current) return; try { await adService.current.showAd(() => setHealth(h => Math.min(100, h+30)), () => {}); } catch {} };
-  const adWideCone = async () => {
-    if (pu.wideCone || !adService.current) return;
-    try {
-      await adService.current.showAd(() => {
-        setPu(p => ({ ...p, wideCone: true }));
-        // Recompute lit set immediately with wide cone
-        setLitSet(computeLit(minerRef.current, gridRef.current, cfg, puRef.current.boosted, true));
-      }, () => {});
-    } catch {}
-  };
+  const adBoost  = async () => { if (!adService.current) return; try { await adService.current.showAd(() => { soundService.play('chime'); setPu(p => ({...p, charges: p.charges+1})); }, () => {}); } catch {} };
+  const adCanary = async () => { if (pu.canary || !adService.current) return; try { await adService.current.showAd(() => { soundService.play('canary'); setPu(p => ({...p, canary:true})); }, () => {}); } catch {} };
+  const adHealth = async () => { if (!adService.current) return; try { await adService.current.showAd(() => { soundService.play('chime'); setHealth(h => Math.min(100, h+30)); }, () => {}); } catch {} };
+  const adTime   = async () => { if (!adService.current) return; try { await adService.current.showAd(() => { soundService.play('chime'); setTLeft(t => t + 30); }, () => {}); } catch {} };
 
   const isCanaryWarn = useCallback((r: number, c: number) => {
     if (!pu.canary) return false;
@@ -680,13 +688,6 @@ export default function MinerMazeScreen({ route, navigation }: any) {
         if (grid[r+dr]?.[c+dc]?.hazard) return true;
     return false;
   }, [grid, pu.canary]);
-
-  // Play canary chirp whenever miner enters a danger zone
-  useEffect(() => {
-    if (phase === 'playing' && isCanaryWarn(miner.row, miner.col)) {
-      soundService.play('canary');
-    }
-  }, [miner.row, miner.col, phase]);
 
   // ── WORLD RENDERER ─────────────────────────────────────────
   // Cell-based: one tile image per cell, baked beams, no stacking.
@@ -902,32 +903,25 @@ export default function MinerMazeScreen({ route, navigation }: any) {
 
         <View style={st.box}>
           <Text style={st.boxTitle}>💡  Power-Ups</Text>
-          <View style={st.row}><Text style={st.rIco}>🔦</Text><Text style={st.rTxt}>Headlamp Boost – wide cone for {BOOST_DUR}s (1 free)</Text></View>
-          <View style={st.row}><Text style={st.rIco}>🐦</Text><Text style={st.rTxt}>Canary – warns when hazards within {CANARY_DIST} cells</Text></View>
+          <View style={st.row}><Text style={st.rIco}>🔦</Text><Text style={st.rTxt}>Headlamp – wide cone for {BOOST_DUR}s (1 free, watch ad for more)</Text></View>
+          <View style={st.row}><Text style={st.rIco}>🐦</Text><Text style={st.rTxt}>Canary – warns when hazards within {CANARY_DIST} cells (watch ad)</Text></View>
+          <View style={st.row}><Text style={st.rIco}>⏱️</Text><Text style={st.rTxt}>Time – add 30 seconds (watch ad)</Text></View>
           <View style={st.row}><Text style={st.rIco}>❤️</Text><Text style={st.rTxt}>First Aid – restore 30 HP (watch ad)</Text></View>
         </View>
 
-        <View style={st.box}>
-          <Text style={st.boxTitle}>⚡  Your Difficulty — Level {gameLevel}</Text>
-          <View style={[st.dRow, { justifyContent:'center' }]}>
-            {Object.entries(DIFFS).map(([k, d]) => {
-              const isActive = k === diffKey;
-              return (
-                <View key={k} style={[st.mDBtn, isActive && st.dBtnOn, !isActive && { opacity:0.35 }]}>
-                  <Text style={{ fontSize:22 }}>{d.emoji}</Text>
-                  <Text style={st.dLbl}>{d.label}</Text>
-                  <Text style={st.dSub}>{d.cols}×{d.rows}</Text>
-                  <Text style={st.dSub}>{d.timeLimit}s</Text>
-                  <Text style={st.dTb}>+{d.tbReward} TB</Text>
-                </View>
-              );
-            })}
-          </View>
-          <Text style={[st.bTxt, { textAlign:'center', marginTop:8, color:'#aaa' }]}>
-            {diffKey === 'easy'   ? 'Levels 1–5 • Reach Level 6 to unlock Medium'   : ''}
-            {diffKey === 'medium' ? 'Levels 6–15 • Reach Level 16 to unlock Hard'   : ''}
-            {diffKey === 'hard'   ? '🔴 Hard Mode — Maximum rewards'                : ''}
-          </Text>
+        <Text style={st.secLbl}>Difficulty</Text>
+        <View style={st.dRow}>
+          {Object.entries(DIFFS).map(([k, d]) => (
+            <TouchableOpacity key={k}
+              style={[st.mDBtn, diffKey===k && st.dBtnOn]}
+              onPress={() => setDiffKey(k)}>
+              <Text style={{ fontSize:22 }}>{d.emoji}</Text>
+              <Text style={st.dLbl}>{d.label}</Text>
+              <Text style={st.dSub}>{d.cols}×{d.rows}</Text>
+              <Text style={st.dSub}>{d.timeLimit}s</Text>
+              <Text style={st.dTb}>+{d.tbReward} TB</Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
         <TouchableOpacity style={st.bigBtn} onPress={() => { resultSaved.current = false; startGame(); }}>
@@ -973,7 +967,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
             <Text style={st.rLine}>📊  Score: {score.toLocaleString()}</Text>
             <Text style={st.rLine}>👣  Steps: {steps}</Text>
             <View style={st.xpRow}>
-              <Text style={st.xpLbl}>⚡ Lv {gameLevel}</Text>
+              <Text style={st.xpLbl}>⚡ Lv {liveDetails?.gameLevel ?? 1}</Text>
               <View style={st.xpBg}>
                 <View style={[st.xpFill, { width: `${Math.min(100, ((liveDetails?.gameXP ?? 0) / 1000) * 100)}%` }]} />
               </View>
@@ -986,7 +980,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
             <Text style={st.rLine}>👣  Steps: {steps}</Text>
             <Text style={st.rLine}>📊  +10 XP earned</Text>
             <View style={st.xpRow}>
-              <Text style={st.xpLbl}>⚡ Lv {gameLevel}</Text>
+              <Text style={st.xpLbl}>⚡ Lv {liveDetails?.gameLevel ?? 1}</Text>
               <View style={st.xpBg}>
                 <View style={[st.xpFill, { width: `${Math.min(100, ((liveDetails?.gameXP ?? 0) / 1000) * 100)}%` }]} />
               </View>
@@ -1052,7 +1046,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
 
       {/* ── XP Meter ── */}
       <View style={st.xpRow}>
-        <Text style={st.xpLbl}>⚡ Lv {gameLevel}</Text>
+        <Text style={st.xpLbl}>⚡ Lv {liveDetails?.gameLevel ?? 1}</Text>
         <View style={st.xpBg}>
           <View style={[st.xpFill, { width: `${Math.min(100, ((liveDetails?.gameXP ?? 0) / 1000) * 100)}%` }]} />
         </View>
@@ -1076,11 +1070,6 @@ export default function MinerMazeScreen({ route, navigation }: any) {
       {pu.boosted && (
         <View style={[st.banner,{backgroundColor:'#1565C0EE'}]}>
           <Text style={st.bannerT}>🔦 Headlamp Boosted — {pu.boostLeft}s</Text>
-        </View>
-      )}
-      {pu.wideCone && (
-        <View style={[st.banner,{backgroundColor:'#6A1B9AEE'}]}>
-          <Text style={st.bannerT}>🔆 Wide Cone Active — 75°</Text>
         </View>
       )}
 
@@ -1113,7 +1102,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
             const minerCenterY = miner.row * SZ + Math.round(VIEWPORT_H / 2) + Math.round(SZ * 0.5);
             return (
               <Image
-                source={pu.wideCone ? SPRITES.minerCone75 : SPRITES.minerCone}
+                source={SPRITES.minerCone}
                 style={{
                   position: 'absolute',
                   left:   minerCenterX - CONE_SIZE * CONE_MINER_X,
@@ -1137,75 +1126,6 @@ export default function MinerMazeScreen({ route, navigation }: any) {
             {miner.dir==='up'?'⬆️':miner.dir==='down'?'⬇️':miner.dir==='left'?'⬅️':'➡️'}
           </Text>
         </View>
-
-        {/* ── Mini-map overlay ── */}
-        {(() => {
-          const MM_CELL = 4;           // px per cell on the mini-map
-          const MM_PAD  = 6;           // inner padding
-          const rows = grid.length;
-          const cols = grid[0]?.length ?? 0;
-          if (!rows || !cols) return null;
-          const mapW = cols * MM_CELL + MM_PAD * 2;
-          const mapH = rows * MM_CELL + MM_PAD * 2;
-
-          // Find exit cell for gold marker
-          let exitRow = -1, exitCol = -1;
-          for (let r = 0; r < rows; r++)
-            for (let c = 0; c < cols; c++)
-              if (grid[r][c].isExit) { exitRow = r; exitCol = c; }
-
-          return (
-            <View style={[st.miniMapWrap, { width: mapW + 28, bottom: 10, left: 10 }]}>
-              {/* Toggle button */}
-              <TouchableOpacity
-                style={st.miniMapToggle}
-                onPress={() => setShowMiniMap(v => !v)}
-              >
-                <Text style={st.miniMapToggleTxt}>{showMiniMap ? '🗺' : '🗺'}</Text>
-              </TouchableOpacity>
-
-              {showMiniMap && (
-                <View style={[st.miniMap, { width: mapW, height: mapH }]}>
-                  {/* Explored cells */}
-                  {Array.from(exploredCells).map(key => {
-                    const [r, c] = key.split(',').map(Number);
-                    const cell = grid[r]?.[c];
-                    if (!cell) return null;
-                    const isMiner = r === miner.row && c === miner.col;
-                    const isExit  = cell.isExit;
-                    const hasHaz  = !!cell.hazard;
-                    const bgColor = isMiner ? '#FFD700'
-                                  : isExit  ? '#4FC3F7'
-                                  : hasHaz  ? '#F44336'
-                                  : '#8B6914';
-                    return (
-                      <View key={key} style={{
-                        position: 'absolute',
-                        left: MM_PAD + c * MM_CELL,
-                        top:  MM_PAD + r * MM_CELL,
-                        width: MM_CELL - 1,
-                        height: MM_CELL - 1,
-                        backgroundColor: bgColor,
-                        borderRadius: isMiner ? 2 : 0,
-                      }} />
-                    );
-                  })}
-                  {/* Exit marker even if not yet explored */}
-                  {exitRow >= 0 && !exploredCells.has(`${exitRow},${exitCol}`) && (
-                    <View style={{
-                      position: 'absolute',
-                      left: MM_PAD + exitCol * MM_CELL,
-                      top:  MM_PAD + exitRow * MM_CELL,
-                      width: MM_CELL - 1,
-                      height: MM_CELL - 1,
-                      backgroundColor: 'rgba(79,195,247,0.4)',
-                    }} />
-                  )}
-                </View>
-              )}
-            </View>
-          );
-        })()}
       </View>
 
       {/* ══ CONTROLS ══ */}
@@ -1215,19 +1135,19 @@ export default function MinerMazeScreen({ route, navigation }: any) {
           <TouchableOpacity style={[st.pBtn,(pu.charges<=0||pu.boosted)&&st.pDim]}
             onPress={activateBoost} disabled={pu.charges<=0||pu.boosted}>
             <Text style={st.pIco}>🔦</Text>
-            <Text style={st.pLbl}>Boost ({pu.charges})</Text>
+            <Text style={st.pLbl}>Headlamp ({pu.charges})</Text>
           </TouchableOpacity>
           <TouchableOpacity style={st.pBtn} onPress={adBoost}>
             <Text style={st.pIco}>📺</Text>
-            <Text style={st.pLbl}>+Boost</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[st.pBtn, pu.wideCone && st.pOn]} onPress={adWideCone} disabled={pu.wideCone}>
-            <Text style={st.pIco}>🔆</Text>
-            <Text style={st.pLbl}>{pu.wideCone ? 'Wide 75°' : 'Wide Cone'}</Text>
+            <Text style={st.pLbl}>+Headlamp</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[st.pBtn, pu.canary && st.pOn]} onPress={adCanary} disabled={pu.canary}>
             <Text style={st.pIco}>🐦</Text>
-            <Text style={st.pLbl}>{pu.canary ? 'Active' : 'Canary'}</Text>
+            <Text style={st.pLbl}>{pu.canary ? 'Canary ✓' : 'Canary'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={st.pBtn} onPress={adTime}>
+            <Text style={st.pIco}>⏱️</Text>
+            <Text style={st.pLbl}>+30s</Text>
           </TouchableOpacity>
           <TouchableOpacity style={st.pBtn} onPress={adHealth}>
             <Text style={st.pIco}>❤️</Text>
@@ -1398,31 +1318,6 @@ const st = StyleSheet.create({
     justifyContent:'center', alignItems:'center',
   },
   compassTxt: { fontSize:20 },
-
-  miniMapWrap: {
-    position: 'absolute',
-    bottom: 10,
-    left: 10,
-    alignItems: 'flex-start',
-    zIndex: 30,
-  },
-  miniMapToggle: {
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: 14,
-    width: 28,
-    height: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  miniMapToggleTxt: { fontSize: 14 },
-  miniMap: {
-    backgroundColor: 'rgba(0,0,0,0.72)',
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(255,215,0,0.3)',
-    overflow: 'hidden',
-  },
 
   // ── Controls ──────────────────────────────────────────────
   ctrlWrap: {

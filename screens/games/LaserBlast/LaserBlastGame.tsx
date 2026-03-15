@@ -233,13 +233,9 @@ export default function LaserBlastGame({ route, navigation }: any) {
       setGrid(updatedGrid);
 
       if (fireResult.allHit) {
-        soundService.play('explosion');
         // Win!
         setTimeout(() => handleWin(), 600);
       } else {
-        // Some targets hit — still play explosion for partial hits
-        const anyHit = fireResult.results.some(r => r.hit);
-        if (anyHit) soundService.play('explosion');
         // Miss — fade beams then check lives
         setTimeout(() => {
           Animated.timing(beamOpacity, {
@@ -433,6 +429,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
           // No reward — game over
           setAdLoading(false);
           setShowAdOffer(false);
+          soundService.play('lose');
           setPhase('gameover');
           saveResult(false, 0, tapsUsedRef.current, 0);
         }
@@ -440,6 +437,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
     } catch {
       setAdLoading(false);
       setShowAdOffer(false);
+      soundService.play('lose');
       setPhase('gameover');
       saveResult(false, 0, tapsUsedRef.current, 0);
     }
@@ -531,7 +529,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
       {/* ── Header ── */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => navigation.navigate('PropertyDetail', { property, userId: property.ownerId, refresh: Date.now() })}
+          onPress={() => navigation.goBack()}
           style={styles.backBtn}
         >
           <Text style={styles.backBtnTxt}>← Back</Text>
@@ -784,7 +782,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.btn, styles.btnBlue]}
-                onPress={() => navigation.navigate('PropertyDetail', { property, userId: property.ownerId, refresh: Date.now() })}
+                onPress={() => navigation.goBack()}
               >
                 <Text style={styles.btnTxt}>🚪 Exit</Text>
               </TouchableOpacity>
@@ -809,7 +807,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.btn, styles.btnBlue]}
-                onPress={() => navigation.navigate('PropertyDetail', { property, userId: property.ownerId, refresh: Date.now() })}
+                onPress={() => navigation.goBack()}
               >
                 <Text style={styles.btnTxt}>🚪 Exit</Text>
               </TouchableOpacity>

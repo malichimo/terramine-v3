@@ -146,9 +146,9 @@ export default function RockConveyorActivity({
 
   const startConveyor = () => {
     if (isRunning || !user || attemptsRemaining <= 0) return;
-    soundService.play('machine_start');
-    setTimeout(() => soundService.play('machine_loop'), 400);
+    
     setIsRunning(true);
+    soundService.play('machine_loop');
 
     Animated.stagger(500, [
       Animated.parallel([
@@ -286,9 +286,9 @@ export default function RockConveyorActivity({
 
       setRewardTier(reward);
       setTbBonus(tbBonusAmount);
-      soundService.stop('machine_loop');
-      soundService.play('reward');
       setShowRewards(true);
+      soundService.stop('machine_loop');
+      soundService.play('chime');
       
       // Reset double flag after first use (base attempt)
       if (isBaseAttempt) {
@@ -318,6 +318,7 @@ export default function RockConveyorActivity({
   };
 
   const handleBack = () => {
+    soundService.stop('machine_loop');
     navigation.goBack();
   };
 
