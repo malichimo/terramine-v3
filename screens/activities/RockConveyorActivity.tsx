@@ -129,7 +129,7 @@ export default function RockConveyorActivity({
           setAttemptsRemaining((prev: number) => prev + 2);
           
           Alert.alert('Success!', 
-            `+2 attempts added!\n${attemptsRemaining - 2} left today.`
+            `+2 attempts added! (${Math.floor((attemptsRemaining - 2) / 2)} ad${Math.floor((attemptsRemaining - 2) / 2) === 1 ? '' : 's'} remaining today)`
           );
         },
         () => console.log('Ad closed')

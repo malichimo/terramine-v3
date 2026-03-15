@@ -219,7 +219,7 @@ export default function BoostModal({
               </Text>
             )}
             <Text style={styles.maxInfo}>
-              Refills at 1 per 30 minutes • Max 6 hours from ads
+              Refills at 1 per 30 minutes • Max 8 hours from ads
             </Text>
 
             <TouchableOpacity

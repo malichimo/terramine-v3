@@ -31,9 +31,9 @@ export type { GameReward, PropertyDetails, MineType, GameDifficulty, ResourcePoo
 import { shouldResetDailyActivity, getResetDay, isSameResetDay } from '../utils/TimeUtils';
 
 /**
- * No daily ad cap — players can watch unlimited ads
+ * Maximum ad attempts allowed per day for daily activity bonus turns (3 ads × 2 attempts each)
  */
-export const MAX_AD_ATTEMPTS_PER_DAY = 999999;
+export const MAX_AD_ATTEMPTS_PER_DAY = 6;
 
 export class DatabaseServicePhase2 {
   // ============================================

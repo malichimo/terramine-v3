@@ -1,14 +1,15 @@
 import { db, storage } from '../firebaseConfig';
-import {
-  collection,
-  doc,
-  setDoc,
-  getDoc,
-  getDocs,
-  query,
+import { 
+  collection, 
+  doc, 
+  setDoc, 
+  getDoc, 
+  getDocs, 
+  query, 
   where,
   updateDoc,
   increment,
+  serverTimestamp
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { GridSquare } from '../utils/GridUtils';
@@ -21,25 +22,8 @@ export interface BoostState {
   lastAdBoostRefillAt: string;
 }
 
-export interface ActivityEvent {
-  id: string;
-  type: 'checkin_made' | 'visitor_received' | 'property_purchased' | 'game_played';
-  timestamp: string;
-  propertyId?: string;
-  propertyOwnerId?: string;
-  mineType?: string;
-  message?: string;
-  hasPhoto?: boolean;
-  visitorNickname?: string;
-  visitorUserId?: string;
-  gameType?: string;
-  tbEarned?: number;
-}
-
 export class DatabaseService {
-
-  // ── User ──────────────────────────────────────────────────────────────────
-
+  // User data
   async getUserData(userId: string) {
     const docRef = doc(db, 'users', userId);
     const docSnap = await getDoc(docRef);
@@ -59,42 +43,22 @@ export class DatabaseService {
 
   async updateUserBalance(userId: string, amount: number) {
     const userRef = doc(db, 'users', userId);
-    await updateDoc(userRef, { tbBalance: increment(amount) });
+    await updateDoc(userRef, {
+      tbBalance: increment(amount),
+    });
   }
 
-  // Update any subset of profile fields
-  async updateUserProfile(userId: string, profileData: {
-    firstName?: string;
-    lastName?: string;
-    nickname?: string;
-    address?: string;
-    avatarUrl?: string;
-  }): Promise<void> {
-    const userRef = doc(db, 'users', userId);
-    const updates: Record<string, any> = {};
-    if (profileData.firstName !== undefined) updates.firstName = profileData.firstName;
-    if (profileData.lastName  !== undefined) updates.lastName  = profileData.lastName;
-    if (profileData.nickname  !== undefined) updates.nickname  = profileData.nickname;
-    if (profileData.address   !== undefined) updates.address   = profileData.address;
-    if (profileData.avatarUrl !== undefined) updates.avatarUrl = profileData.avatarUrl;
-    await updateDoc(userRef, updates);
-  }
-
-  // Upload avatar to Firebase Storage, return public download URL
-  async uploadAvatar(userId: string, localUri: string): Promise<string> {
-    const response = await fetch(localUri);
-    const blob = await response.blob();
-    const storageRef = ref(storage, `avatars/${userId}.jpg`);
-    await uploadBytes(storageRef, blob);
-    return getDownloadURL(storageRef);
-  }
-
-  // ── Properties ────────────────────────────────────────────────────────────
-
+  // Properties
   async purchaseProperty(userId: string, property: GridSquare, tbCost: number) {
     const propertyRef = doc(db, 'properties', property.id);
+    
+    // Check if already owned
     const propertySnap = await getDoc(propertyRef);
-    if (propertySnap.exists()) throw new Error('Property already owned');
+    if (propertySnap.exists()) {
+      throw new Error('Property already owned');
+    }
+
+    // Save property
     await setDoc(propertyRef, {
       id: property.id,
       ownerId: userId,
@@ -104,14 +68,17 @@ export class DatabaseService {
       corners: property.corners,
       purchasedAt: new Date().toISOString(),
     });
+
+    // Deduct TB from user
     await this.updateUserBalance(userId, -tbCost);
   }
 
   async getPropertiesByOwner(userId: string): Promise<GridSquare[]> {
     const q = query(collection(db, 'properties'), where('ownerId', '==', userId));
     const querySnapshot = await getDocs(q);
-    const properties = querySnapshot.docs.map(d => {
-      const data = d.data();
+    
+    const properties = querySnapshot.docs.map(doc => {
+      const data = doc.data();
       return {
         id: data.id,
         centerLat: data.centerLat,
@@ -122,6 +89,8 @@ export class DatabaseService {
         mineType: data.mineType as 'rock' | 'coal' | 'gold' | 'diamond',
       } as GridSquare;
     });
+
+    // Fetch customName from propertyDetails for each property
     await Promise.all(properties.map(async (property) => {
       try {
         const detailsSnap = await getDoc(doc(db, 'propertyDetails', property.id));
@@ -129,15 +98,20 @@ export class DatabaseService {
           const name = detailsSnap.data().customName;
           if (name) property.customName = name;
         }
-      } catch { /* non-fatal */ }
+      } catch {
+        // Non-fatal — property just won't have a custom name
+      }
     }));
+
     return properties;
   }
 
   async getPropertyById(propertyId: string): Promise<GridSquare | null> {
     const docRef = doc(db, 'properties', propertyId);
     const docSnap = await getDoc(docRef);
+    
     if (!docSnap.exists()) return null;
+    
     const data = docSnap.data();
     return {
       id: data.id,
@@ -152,8 +126,9 @@ export class DatabaseService {
 
   async getAllProperties(): Promise<GridSquare[]> {
     const querySnapshot = await getDocs(collection(db, 'properties'));
-    return querySnapshot.docs.map(d => {
-      const data = d.data();
+    
+    return querySnapshot.docs.map(doc => {
+      const data = doc.data();
       return {
         id: data.id,
         centerLat: data.centerLat,
@@ -166,30 +141,25 @@ export class DatabaseService {
     });
   }
 
-  // ── Check-ins ─────────────────────────────────────────────────────────────
+  // Upload a check-in photo to Firebase Storage and return the download URL
+  async uploadCheckInPhoto(userId: string, propertyId: string, photoUri: string): Promise<string> {
+    const timestamp = Date.now();
+    const storageRef = ref(storage, `checkIns/${propertyId}_${userId}_${timestamp}.jpg`);
+    const response = await fetch(photoUri);
+    const blob = await response.blob();
+    await uploadBytes(storageRef, blob);
+    return await getDownloadURL(storageRef);
+  }
 
-  async createCheckIn(
-    userId: string,
-    propertyId: string,
-    propertyOwnerId: string,
-    message?: string,
-    hasPhoto?: boolean,
-    photoUri?: string,
-    visitorNickname?: string,
-  ) {
+  // Check-ins - FIXED to properly handle messages
+  async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) {
     const checkInRef = doc(collection(db, 'checkIns'));
-    let photoURL: string | undefined;
-    if (photoUri && hasPhoto) {
-      try {
-        const response = await fetch(photoUri);
-        const blob = await response.blob();
-        const storageRef = ref(storage, `checkIns/${propertyId}_${userId}_${Date.now()}.jpg`);
-        await uploadBytes(storageRef, blob);
-        photoURL = await getDownloadURL(storageRef);
-      } catch (error) {
-        console.error('Photo upload failed:', error);
-      }
-    }
+
+    // photoUri here is already an uploaded download URL (uploaded by MapScreen before calling this)
+    // No re-upload needed — just use it directly
+    const photoURL = hasPhoto && photoUri ? photoUri : undefined;
+
+    // Create check-in document with proper message handling
     const checkInData: any = {
       userId,
       propertyId,
@@ -198,164 +168,122 @@ export class DatabaseService {
       timestamp: new Date().toISOString(),
       ...(visitorNickname ? { visitorNickname } : {}),
     };
-    if (message?.trim()) checkInData.message = message.trim();
-    if (photoURL) checkInData.photoURL = photoURL;
-    await setDoc(checkInRef, checkInData);
-    await updateDoc(doc(db, 'users', userId), { totalCheckIns: increment(1) });
-    await updateDoc(doc(db, 'users', propertyOwnerId), { tbBalance: increment(1) });
-  }
-
-  async getCheckInsForProperty(propertyId: string) {
-    const q = query(collection(db, 'checkIns'), where('propertyId', '==', propertyId));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => {
-      const data = d.data();
-      return {
-        id: d.id,
-        userId: data.userId,
-        visitorNickname: data.visitorNickname || undefined,
-        propertyId: data.propertyId,
-        propertyOwnerId: data.propertyOwnerId,
-        message: data.message || undefined,
-        hasPhoto: data.hasPhoto || false,
-        photoURL: data.photoURL || undefined,
-        timestamp: data.timestamp,
-      };
-    });
-  }
-
-  async getCheckInsByUser(userId: string) {
-    const q = query(collection(db, 'checkIns'), where('userId', '==', userId));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => {
-      const data = d.data();
-      return {
-        id: d.id,
-        userId: data.userId,
-        visitorNickname: data.visitorNickname || undefined,
-        propertyId: data.propertyId,
-        propertyOwnerId: data.propertyOwnerId,
-        message: data.message || undefined,
-        hasPhoto: data.hasPhoto || false,
-        photoURL: data.photoURL || undefined,
-        timestamp: data.timestamp,
-      };
-    });
-  }
-
-  // ── Activity Feed ─────────────────────────────────────────────────────────
-  // NOTE: Queries on userId in checkIns may need a Firestore single-field index.
-  // If you see an index error in the console with a link, click it to auto-create.
-
-  async getRecentActivityFeed(userId: string, ownedPropertyIds: string[]): Promise<ActivityEvent[]> {
-    const events: ActivityEvent[] = [];
-
-    // 1. Check-ins I made
-    try {
-      const snap = await getDocs(query(collection(db, 'checkIns'), where('userId', '==', userId)));
-      snap.forEach(d => {
-        const data = d.data();
-        events.push({
-          id: `ci_${d.id}`,
-          type: 'checkin_made',
-          timestamp: data.timestamp,
-          propertyId: data.propertyId,
-          message: data.message || undefined,
-          hasPhoto: data.hasPhoto || false,
-        });
-      });
-    } catch (e) { console.warn('Activity: my check-ins error', e); }
-
-    // 2. Visitors to my properties (chunk to stay under Firestore 'in' limit of 30)
-    if (ownedPropertyIds.length > 0) {
-      try {
-        for (let i = 0; i < ownedPropertyIds.length; i += 30) {
-          const chunk = ownedPropertyIds.slice(i, i + 30);
-          const snap = await getDocs(query(collection(db, 'checkIns'), where('propertyId', 'in', chunk)));
-          snap.forEach(d => {
-            const data = d.data();
-            if (data.userId === userId) return;
-            events.push({
-              id: `vr_${d.id}`,
-              type: 'visitor_received',
-              timestamp: data.timestamp,
-              propertyId: data.propertyId,
-              visitorNickname: data.visitorNickname || undefined,
-              visitorUserId: data.userId,
-              message: data.message || undefined,
-              hasPhoto: data.hasPhoto || false,
-            });
-          });
-        }
-      } catch (e) { console.warn('Activity: visitors error', e); }
+    
+    if (message && message.trim() !== '') {
+      checkInData.message = message.trim();
     }
 
-    // 3. Properties I purchased
-    try {
-      const snap = await getDocs(query(collection(db, 'properties'), where('ownerId', '==', userId)));
-      snap.forEach(d => {
-        const data = d.data();
-        events.push({
-          id: `pp_${d.id}`,
-          type: 'property_purchased',
-          timestamp: data.purchasedAt || data.createdAt || new Date(0).toISOString(),
-          propertyId: data.id,
-          mineType: data.mineType,
-        });
-      });
-    } catch (e) { console.warn('Activity: properties error', e); }
+    if (photoURL) {
+      checkInData.photoURL = photoURL;
+    }
+    
+    await setDoc(checkInRef, checkInData);
 
-    // 4. Games played
-    try {
-      const snap = await getDocs(query(collection(db, 'gameResults'), where('userId', '==', userId)));
-      snap.forEach(d => {
-        const data = d.data();
-        events.push({
-          id: `gp_${d.id}`,
-          type: 'game_played',
-          timestamp: data.timestamp || data.createdAt || new Date(0).toISOString(),
-          gameType: data.gameType || data.mineType || 'unknown',
-          tbEarned: data.tbEarned ?? 0,
-        });
-      });
-    } catch (e) { console.warn('Activity: games error', e); }
+    // Update visitor stats
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+      totalCheckIns: increment(1),
+    });
 
-    return events
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, 50);
+    // Reward property owner with 1 TB
+    const ownerRef = doc(db, 'users', propertyOwnerId);
+    await updateDoc(ownerRef, {
+      tbBalance: increment(1),
+    });
+    
+    console.log('Check-in saved to Firebase:', {
+      propertyId,
+      hasMessage: !!message,
+      hasPhoto: hasPhoto || false,
+      messageLength: message?.length || 0
+    });
   }
 
-  // ── Earnings ──────────────────────────────────────────────────────────────
+  // Get check-ins for a property
+  async getCheckInsForProperty(propertyId: string) {
+    const q = query(
+      collection(db, 'checkIns'), 
+      where('propertyId', '==', propertyId)
+    );
+    const querySnapshot = await getDocs(q);
+    
+    return querySnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        userId: data.userId,
+        propertyId: data.propertyId,
+        propertyOwnerId: data.propertyOwnerId,
+        message: data.message || undefined, // Convert null to undefined
+        hasPhoto: data.hasPhoto || false,
+        photoURL: data.photoURL || undefined,
+        timestamp: data.timestamp,
+      };
+    });
+  }
 
+  // Get all check-ins by a user
+  async getCheckInsByUser(userId: string) {
+    const q = query(
+      collection(db, 'checkIns'),
+      where('userId', '==', userId)
+    );
+    const querySnapshot = await getDocs(q);
+    
+    return querySnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        userId: data.userId,
+        propertyId: data.propertyId,
+        propertyOwnerId: data.propertyOwnerId,
+        message: data.message || undefined,
+        hasPhoto: data.hasPhoto || false,
+        photoURL: data.photoURL || undefined,
+        timestamp: data.timestamp,
+      };
+    });
+  }
+
+  // USD Earnings
   async updateUSDEarnings(userId: string, amount: number) {
-    await updateDoc(doc(db, 'users', userId), { usdEarnings: increment(amount) });
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+      usdEarnings: increment(amount),
+    });
   }
 
-  // Kept for backward compat with MapScreen photo uploads
-  async uploadCheckInPhoto(userId: string, propertyId: string, localUri: string): Promise<string> {
-    const response = await fetch(localUri);
-    const blob = await response.blob();
-    const storageRef = ref(storage, `checkIns/${propertyId}_${userId}_${Date.now()}.jpg`);
-    await uploadBytes(storageRef, blob);
-    return getDownloadURL(storageRef);
-  }
-
-  // ── Boost ─────────────────────────────────────────────────────────────────
-
+  // Boost system
   async getBoostState(userId: string): Promise<BoostState> {
     const userRef = doc(db, 'users', userId);
     const userSnap = await getDoc(userRef);
-    if (!userSnap.exists()) return this.getDefaultBoostState();
+
+    if (!userSnap.exists()) {
+      return this.getDefaultBoostState();
+    }
+
     const data = userSnap.data();
 
-    let adBoostsRemaining = data.adBoostsRemaining ?? 12;
-    const lastRefill = data.lastAdBoostRefillAt ? new Date(data.lastAdBoostRefillAt) : new Date(0);
-    const hoursSinceRefill = (Date.now() - lastRefill.getTime()) / (1000 * 60 * 60);
+    // Ad boost refill: 1 boost per 30 minutes, max 12
+    const MAX_AD_BOOSTS = 12;
+    const REFILL_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+    let adBoostsRemaining = data.adBoostsRemaining ?? MAX_AD_BOOSTS;
+    const lastRefill = data.lastAdBoostRefillAt
+      ? new Date(data.lastAdBoostRefillAt)
+      : new Date(0);
+    const msSinceRefill = Date.now() - lastRefill.getTime();
+    const boostsToAdd = Math.floor(msSinceRefill / REFILL_INTERVAL_MS);
+
     let lastAdBoostRefillAt = data.lastAdBoostRefillAt || new Date().toISOString();
-    if (hoursSinceRefill >= 24 && adBoostsRemaining < 12) {
-      adBoostsRemaining = 12;
-      lastAdBoostRefillAt = new Date().toISOString();
-      await updateDoc(userRef, { adBoostsRemaining: 12, lastAdBoostRefillAt });
+    if (boostsToAdd > 0 && adBoostsRemaining < MAX_AD_BOOSTS) {
+      adBoostsRemaining = Math.min(MAX_AD_BOOSTS, adBoostsRemaining + boostsToAdd);
+      // Advance the refill timestamp by the number of intervals consumed
+      const newRefill = new Date(lastRefill.getTime() + boostsToAdd * REFILL_INTERVAL_MS);
+      lastAdBoostRefillAt = newRefill.toISOString();
+      await updateDoc(userRef, {
+        adBoostsRemaining,
+        lastAdBoostRefillAt,
+      });
     }
 
     return {
@@ -368,11 +296,15 @@ export class DatabaseService {
   }
 
   async updateLastActiveTime(userId: string): Promise<void> {
-    await updateDoc(doc(db, 'users', userId), { lastActiveAt: new Date().toISOString() });
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+      lastActiveAt: new Date().toISOString(),
+    });
   }
 
   async updateBoostState(userId: string, boostState: BoostState): Promise<void> {
-    await updateDoc(doc(db, 'users', userId), {
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
       freeBoostsRemaining: boostState.freeBoostsRemaining,
       adBoostsRemaining: boostState.adBoostsRemaining,
       boostExpiresAt: boostState.boostExpiresAt,
@@ -382,31 +314,70 @@ export class DatabaseService {
   }
 
   async useFreeBoost(userId: string, currentState: BoostState): Promise<BoostState> {
-    if (currentState.freeBoostsRemaining <= 0) throw new Error('No free boosts remaining');
+    if (currentState.freeBoostsRemaining <= 0) {
+      throw new Error('No free boosts remaining');
+    }
+
+    const boostDurationMs = 30 * 60 * 1000; // 30 minutes
     const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
+
+    // Extend from current expiry if already active, otherwise from now
+    const currentExpiry = currentState.boostExpiresAt
+      ? new Date(currentState.boostExpiresAt)
+      : now;
+    const baseTime = currentExpiry > now ? currentExpiry : now;
+    const boostExpiresAt = new Date(baseTime.getTime() + boostDurationMs).toISOString();
+
+    // Next free boost reset at 4 AM EST (using same logic as TimeUtils)
+    const estOffset = -5 * 60 * 60 * 1000;
+    const estNow = new Date(now.getTime() + estOffset);
+    const next4AM = new Date(estNow);
+    next4AM.setHours(4, 0, 0, 0);
+    if (estNow.getHours() >= 4) next4AM.setDate(next4AM.getDate() + 1);
+    const nextFreeBoostResetAt = new Date(next4AM.getTime() - estOffset).toISOString();
+
     const newState: BoostState = {
       ...currentState,
       freeBoostsRemaining: currentState.freeBoostsRemaining - 1,
-      boostExpiresAt: new Date(now.getTime() + 30 * 60 * 1000).toISOString(),
-      nextFreeBoostResetAt: tomorrow.toISOString(),
+      boostExpiresAt,
+      nextFreeBoostResetAt,
     };
+
     await this.updateBoostState(userId, newState);
     return newState;
   }
 
   async useAdBoost(userId: string, currentState: BoostState): Promise<BoostState> {
-    if (currentState.adBoostsRemaining <= 0) throw new Error('No ad boosts remaining');
+    if (currentState.adBoostsRemaining <= 0) {
+      throw new Error('No ad boosts remaining');
+    }
+
+    const boostDurationMs = 30 * 60 * 1000; // 30 minutes
+    const MAX_BOOST_MS = 8 * 60 * 60 * 1000; // 8-hour cap on queued boost time
     const now = new Date();
-    const currentExpiry = currentState.boostExpiresAt ? new Date(currentState.boostExpiresAt) : now;
+
+    // If boost already active, extend from current expiry — but cap at 8h from now
+    const currentExpiry = currentState.boostExpiresAt
+      ? new Date(currentState.boostExpiresAt)
+      : now;
     const baseTime = currentExpiry > now ? currentExpiry : now;
+    const maxExpiry = new Date(now.getTime() + MAX_BOOST_MS);
+
+    // Block if already at the 8-hour ceiling
+    if (baseTime >= maxExpiry) {
+      throw new Error('Boost already at maximum 8-hour limit');
+    }
+
+    // Add 30 min but don't exceed the 8-hour ceiling
+    const proposedExpiry = new Date(baseTime.getTime() + boostDurationMs);
+    const boostExpiresAt = (proposedExpiry <= maxExpiry ? proposedExpiry : maxExpiry).toISOString();
+
     const newState: BoostState = {
       ...currentState,
       adBoostsRemaining: currentState.adBoostsRemaining - 1,
-      boostExpiresAt: new Date(baseTime.getTime() + 30 * 60 * 1000).toISOString(),
+      boostExpiresAt,
     };
+
     await this.updateBoostState(userId, newState);
     return newState;
   }

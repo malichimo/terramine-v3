@@ -5,7 +5,7 @@
     "scheme": "terramine",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/terramine_logo_1024.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -32,8 +32,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/terramine_logo_1024.png",
+        "backgroundColor": "#1A3A5C"
       },
       "package": "com.terramine.app",
       "permissions": [
@@ -50,7 +50,7 @@
       }
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/terramine_logo.png"
     },
     "plugins": [
       "expo-web-browser",

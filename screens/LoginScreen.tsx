@@ -1,81 +1,79 @@
-// screens/LoginScreen.tsx
-
 import React, { useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  Alert, KeyboardAvoidingView, Platform, Image,
-  ActivityIndicator, ScrollView,
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function LoginScreen() {
-  const [email,    setEmail]    = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
-  const [loading,  setLoading]  = useState(false);
-  const [socialLoading, setSocialLoading] = useState<'google' | 'facebook' | null>(null);
-
-  const { signInWithEmail, signUpWithEmail, signInWithGoogle, signInWithFacebook } = useAuth();
-
-  // ── Email submit ────────────────────────────────────────────────────────────
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const { signInWithEmail, signUpWithEmail, signInWithGoogle, resetPassword } = useAuth();
 
   const handleSubmit = async () => {
-    if (!email.trim() || !password.trim()) {
+    if (!email || !password) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
-    setLoading(true);
     try {
       if (isSignUp) {
-        await signUpWithEmail(email.trim(), password);
+        await signUpWithEmail(email, password);
+        Alert.alert('Success', 'Account created!');
       } else {
-        await signInWithEmail(email.trim(), password);
+        await signInWithEmail(email, password);
       }
     } catch (error: any) {
       Alert.alert('Error', error.message);
-    } finally {
-      setLoading(false);
     }
   };
 
-  // ── Google ──────────────────────────────────────────────────────────────────
-
-  const handleGoogle = async () => {
-    setSocialLoading('google');
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      Alert.alert(
+        'Enter your email',
+        'Type your email address above, then tap Forgot Password.',
+      );
+      return;
+    }
     try {
+      await resetPassword(email.trim());
+      Alert.alert(
+        'Email Sent',
+        'Check your inbox for a password reset link.',
+      );
+    } catch (error: any) {
+      Alert.alert('Error', error.message);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    try {
+      setGoogleLoading(true);
       await signInWithGoogle();
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      Alert.alert('Google Sign-In Failed', error.message);
     } finally {
-      setSocialLoading(null);
+      setGoogleLoading(false);
     }
   };
-
-  // ── Facebook ────────────────────────────────────────────────────────────────
-
-  const handleFacebook = async () => {
-    setSocialLoading('facebook');
-    try {
-      await signInWithFacebook();
-    } catch (error: any) {
-      Alert.alert('Error', error.message);
-    } finally {
-      setSocialLoading(null);
-    }
-  };
-
-  const isBusy = loading || socialLoading !== null;
 
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        keyboardShouldPersistTaps="handled"
-        bounces={false}
-      >
+      <View style={styles.content}>
+
         {/* Logo */}
         <View style={styles.logoContainer}>
           <Image
@@ -88,38 +86,45 @@ export default function LoginScreen() {
         <Text style={styles.title}>TerraMine</Text>
         <Text style={styles.subtitle}>Earn real money by visiting friends</Text>
 
-        {/* Social buttons */}
-        <View style={styles.socialRow}>
-          <TouchableOpacity
-            style={[styles.socialBtn, styles.googleBtn]}
-            onPress={handleGoogle}
-            disabled={isBusy}
-            activeOpacity={0.85}
-          >
-            {socialLoading === 'google' ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <>
-                <Text style={styles.googleIcon}>G</Text>
-                <Text style={styles.socialBtnText}>Continue with Google</Text>
-              </>
-            )}
+        {/* Email / Password form */}
+        <View style={styles.form}>
+          <TextInput
+            style={styles.input}
+            placeholder="Email"
+            placeholderTextColor="#999"
+            value={email}
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            placeholderTextColor="#999"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+          />
+
+          <TouchableOpacity style={styles.button} onPress={handleSubmit}>
+            <Text style={styles.buttonText}>
+              {isSignUp ? 'Sign Up' : 'Sign In'}
+            </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.socialBtn, styles.facebookBtn]}
-            onPress={handleFacebook}
-            disabled={isBusy}
-            activeOpacity={0.85}
-          >
-            {socialLoading === 'facebook' ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <>
-                <Text style={styles.fbIcon}>f</Text>
-                <Text style={styles.socialBtnText}>Continue with Facebook</Text>
-              </>
-            )}
+          {!isSignUp && (
+            <TouchableOpacity onPress={handleForgotPassword} style={styles.forgotButton}>
+              <Text style={styles.forgotText}>Forgot Password?</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity onPress={() => setIsSignUp(!isSignUp)}>
+            <Text style={styles.switchText}>
+              {isSignUp
+                ? 'Already have an account? Sign In'
+                : "Don't have an account? Sign Up"}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -130,81 +135,45 @@ export default function LoginScreen() {
           <View style={styles.dividerLine} />
         </View>
 
-        {/* Email / password form */}
-        <View style={styles.form}>
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor="#999"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            editable={!isBusy}
-          />
+        {/* Google Sign-In */}
+        <TouchableOpacity
+          style={styles.googleButton}
+          onPress={handleGoogleSignIn}
+          disabled={googleLoading}
+          activeOpacity={0.85}
+        >
+          {googleLoading ? (
+            <ActivityIndicator color="#444" size="small" />
+          ) : (
+            <>
+              <Image
+                source={require('../assets/images/google-logo.png')}
+                style={styles.googleIcon}
+                resizeMode="contain"
+              />
+              <Text style={styles.googleButtonText}>Continue with Google</Text>
+            </>
+          )}
+        </TouchableOpacity>
 
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor="#999"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            editable={!isBusy}
-          />
-
-          <TouchableOpacity
-            style={[styles.button, isBusy && styles.buttonDisabled]}
-            onPress={handleSubmit}
-            disabled={isBusy}
-            activeOpacity={0.85}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Text style={styles.buttonText}>
-                {isSignUp ? 'Sign Up' : 'Sign In'}
-              </Text>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() => setIsSignUp(!isSignUp)}
-            disabled={isBusy}
-          >
-            <Text style={styles.switchText}>
-              {isSignUp
-                ? 'Already have an account? Sign In'
-                : "Don't have an account? Sign Up"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
+      </View>
     </KeyboardAvoidingView>
   );
 }
-
-const GOOGLE_RED  = '#DB4437';
-const FB_BLUE     = '#1877F2';
-const BRAND_BLUE  = '#2B6B94';
-const ACCENT_BLUE = '#5CB3E6';
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  scroll: {
-    flexGrow: 1,
+  content: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 40,
+    padding: 20,
   },
-
-  // ── Logo ────────────────────────────────────────────────────────────────────
   logoContainer: {
-    marginBottom: 16,
+    marginBottom: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
@@ -212,89 +181,25 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   logo: {
-    width: 110,
-    height: 110,
+    width: 120,
+    height: 120,
   },
   title: {
-    fontSize: 46,
+    fontSize: 48,
     fontWeight: 'bold',
-    color: BRAND_BLUE,
-    marginBottom: 6,
+    color: '#2B6B94',
+    marginBottom: 10,
     textShadowColor: 'rgba(91, 179, 230, 0.3)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#7CAA2D',
-    marginBottom: 32,
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-
-  // ── Social buttons ──────────────────────────────────────────────────────────
-  socialRow: {
-    width: '100%',
-    maxWidth: 400,
-    gap: 12,
-    marginBottom: 24,
-  },
-  socialBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 10,
-    gap: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.18,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  googleBtn:   { backgroundColor: GOOGLE_RED },
-  facebookBtn: { backgroundColor: FB_BLUE },
-  socialBtnText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  googleIcon: {
-    color: 'white',
     fontSize: 18,
-    fontWeight: 'bold',
-    width: 20,
+    color: '#7CAA2D',
+    marginBottom: 40,
     textAlign: 'center',
+    fontWeight: '600',
   },
-  fbIcon: {
-    color: 'white',
-    fontSize: 20,
-    fontWeight: 'bold',
-    width: 20,
-    textAlign: 'center',
-  },
-
-  // ── Divider ─────────────────────────────────────────────────────────────────
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    width: '100%',
-    maxWidth: 400,
-    marginBottom: 20,
-    gap: 12,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#e0e0e0',
-  },
-  dividerText: {
-    color: '#aaa',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-
-  // ── Email form ──────────────────────────────────────────────────────────────
   form: {
     width: '100%',
     maxWidth: 400,
@@ -303,26 +208,22 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     padding: 15,
     borderRadius: 10,
-    marginBottom: 14,
+    marginBottom: 15,
     fontSize: 16,
     borderWidth: 2,
-    borderColor: ACCENT_BLUE,
+    borderColor: '#5CB3E6',
   },
   button: {
-    backgroundColor: BRAND_BLUE,
+    backgroundColor: '#2B6B94',
     padding: 15,
     borderRadius: 10,
     alignItems: 'center',
-    marginTop: 6,
-    marginBottom: 4,
+    marginTop: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 3,
     elevation: 3,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
   },
   buttonText: {
     color: 'white',
@@ -330,10 +231,63 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   switchText: {
-    color: ACCENT_BLUE,
+    color: '#5CB3E6',
     textAlign: 'center',
-    marginTop: 18,
+    marginTop: 20,
     fontSize: 14,
     fontWeight: '600',
+  },
+  forgotButton: {
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  forgotText: {
+    color: '#999',
+    fontSize: 13,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 400,
+    marginVertical: 24,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E0E0E0',
+  },
+  dividerText: {
+    marginHorizontal: 12,
+    color: '#999',
+    fontSize: 14,
+  },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#DADCE0',
+    borderRadius: 10,
+    paddingVertical: 13,
+    paddingHorizontal: 20,
+    width: '100%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  googleIcon: {
+    width: 22,
+    height: 22,
+    marginRight: 12,
+  },
+  googleButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3C4043',
   },
 });
