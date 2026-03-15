@@ -120,8 +120,7 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
         `Out of time! Watch an ad to get 30 more seconds?`,
         [
           { text: 'End Game', style: 'cancel', onPress: () => showLoseResult(result) },
-            onPress: () => handleWatchTimeAd(),
-          },
+          { text: '📺 Watch Ad (+30s)', onPress: () => handleWatchTimeAd() },
         ]
       );
     } else if (ranOutOfMoves) {
@@ -135,8 +134,7 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
         `No moves left! Watch an ad to get ${bonusMoves} more moves?`,
         [
           { text: 'End Game', style: 'cancel', onPress: () => showLoseResult(result) },
-            onPress: () => handleWatchMovesAd(bonusMoves),
-          },
+          { text: `📺 Watch Ad (+${bonusMoves} moves)`, onPress: () => handleWatchMovesAd(bonusMoves) },
         ]
       );
     } else {
