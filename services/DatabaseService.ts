@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { GridSquare } from '../utils/GridUtils';
+import { getNext4AMEST } from '../utils/TimeUtils';
 
 export interface BoostState {
   freeBoostsRemaining: number;
@@ -151,15 +152,13 @@ export class DatabaseService {
     return await getDownloadURL(storageRef);
   }
 
-  // Check-ins - FIXED to properly handle messages
+  // Check-ins
   async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) {
     const checkInRef = doc(collection(db, 'checkIns'));
 
-    // photoUri here is already an uploaded download URL (uploaded by MapScreen before calling this)
-    // No re-upload needed — just use it directly
+    // photoUri here is already an uploaded download URL — no re-upload needed
     const photoURL = hasPhoto && photoUri ? photoUri : undefined;
 
-    // Create check-in document with proper message handling
     const checkInData: any = {
       userId,
       propertyId,
@@ -168,7 +167,7 @@ export class DatabaseService {
       timestamp: new Date().toISOString(),
       ...(visitorNickname ? { visitorNickname } : {}),
     };
-    
+
     if (message && message.trim() !== '') {
       checkInData.message = message.trim();
     }
@@ -176,7 +175,7 @@ export class DatabaseService {
     if (photoURL) {
       checkInData.photoURL = photoURL;
     }
-    
+
     await setDoc(checkInRef, checkInData);
 
     // Update visitor stats
@@ -190,11 +189,11 @@ export class DatabaseService {
     await updateDoc(ownerRef, {
       tbBalance: increment(1),
     });
-    
+
     console.log('Check-in saved to Firebase:', {
       propertyId,
       hasMessage: !!message,
-      hasPhoto: hasPhoto || false,
+      hasPhoto: !!photoURL,
       messageLength: message?.length || 0
     });
   }
@@ -264,9 +263,9 @@ export class DatabaseService {
 
     const data = userSnap.data();
 
-    // Ad boost refill: 1 boost per 30 minutes, max 12
+    // Ad boost refill: 1 per 30 minutes, max 12
     const MAX_AD_BOOSTS = 12;
-    const REFILL_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+    const REFILL_INTERVAL_MS = 30 * 60 * 1000;
     let adBoostsRemaining = data.adBoostsRemaining ?? MAX_AD_BOOSTS;
     const lastRefill = data.lastAdBoostRefillAt
       ? new Date(data.lastAdBoostRefillAt)
@@ -277,7 +276,6 @@ export class DatabaseService {
     let lastAdBoostRefillAt = data.lastAdBoostRefillAt || new Date().toISOString();
     if (boostsToAdd > 0 && adBoostsRemaining < MAX_AD_BOOSTS) {
       adBoostsRemaining = Math.min(MAX_AD_BOOSTS, adBoostsRemaining + boostsToAdd);
-      // Advance the refill timestamp by the number of intervals consumed
       const newRefill = new Date(lastRefill.getTime() + boostsToAdd * REFILL_INTERVAL_MS);
       lastAdBoostRefillAt = newRefill.toISOString();
       await updateDoc(userRef, {
@@ -328,13 +326,8 @@ export class DatabaseService {
     const baseTime = currentExpiry > now ? currentExpiry : now;
     const boostExpiresAt = new Date(baseTime.getTime() + boostDurationMs).toISOString();
 
-    // Next free boost reset at 4 AM EST (using same logic as TimeUtils)
-    const estOffset = -5 * 60 * 60 * 1000;
-    const estNow = new Date(now.getTime() + estOffset);
-    const next4AM = new Date(estNow);
-    next4AM.setHours(4, 0, 0, 0);
-    if (estNow.getHours() >= 4) next4AM.setDate(next4AM.getDate() + 1);
-    const nextFreeBoostResetAt = new Date(next4AM.getTime() - estOffset).toISOString();
+    // Reset free boosts at next 4 AM EST (consistent with all other daily resets)
+    const nextFreeBoostResetAt = getNext4AMEST().toISOString();
 
     const newState: BoostState = {
       ...currentState,
@@ -353,22 +346,19 @@ export class DatabaseService {
     }
 
     const boostDurationMs = 30 * 60 * 1000; // 30 minutes
-    const MAX_BOOST_MS = 8 * 60 * 60 * 1000; // 8-hour cap on queued boost time
+    const MAX_BOOST_MS = 8 * 60 * 60 * 1000; // 8-hour cap
     const now = new Date();
 
-    // If boost already active, extend from current expiry — but cap at 8h from now
     const currentExpiry = currentState.boostExpiresAt
       ? new Date(currentState.boostExpiresAt)
       : now;
     const baseTime = currentExpiry > now ? currentExpiry : now;
     const maxExpiry = new Date(now.getTime() + MAX_BOOST_MS);
 
-    // Block if already at the 8-hour ceiling
     if (baseTime >= maxExpiry) {
       throw new Error('Boost already at maximum 8-hour limit');
     }
 
-    // Add 30 min but don't exceed the 8-hour ceiling
     const proposedExpiry = new Date(baseTime.getTime() + boostDurationMs);
     const boostExpiresAt = (proposedExpiry <= maxExpiry ? proposedExpiry : maxExpiry).toISOString();
 
