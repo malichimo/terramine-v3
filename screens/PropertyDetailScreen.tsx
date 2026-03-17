@@ -296,9 +296,7 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
             {property.mineType?.toUpperCase()} MINE
           </Text>
         </View>
-        <TouchableOpacity style={styles.settingsButton}>
-          <Text style={styles.settingsButtonText}>⚙️</Text>
-        </TouchableOpacity>
+        <View style={styles.settingsButton} />
       </View>
 
       <ScrollView style={styles.scrollView}>

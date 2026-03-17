@@ -228,21 +228,21 @@ export default function SluiceBoxActivity({
       reward = {
         tier: 'uncommon',
         amount: Math.floor(60 + Math.random() * 60), // 60-120
-        displayName: 'Gold Flakes',
+        displayName: 'Gold Nugget',
         image: RESOURCE_IMAGES.uncommon,
       };
     } else if (roll < 97) {
       reward = {
         tier: 'rare',
         amount: Math.floor(6 + Math.random() * 14), // 6-20
-        displayName: 'Gold Nuggets',
+        displayName: 'Gold Bar',
         image: RESOURCE_IMAGES.rare,
       };
     } else {
       reward = {
         tier: 'epic',
         amount: Math.floor(1 + Math.random() * 3), // 1-4
-        displayName: 'Gold Bars',
+        displayName: 'Pure Gold',
         image: RESOURCE_IMAGES.epic,
       };
     }

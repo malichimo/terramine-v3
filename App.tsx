@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import MainNavigator from './MainNavigator';
-import LoginScreen from './components/LoginScreen';
+import LoginScreen from './screens/LoginScreen';
 import WelcomeScreen from './screens/WelcomeScreen';
 import LoadingScreen from './components/LoadingScreen';
 

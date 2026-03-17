@@ -4,14 +4,15 @@ import React, { useState, useEffect } from 'react';
 import {
   StyleSheet, View, Text, ScrollView, TouchableOpacity,
   Switch, Alert, Linking, SafeAreaView, Platform, StatusBar,
-  ActivityIndicator,
+  ActivityIndicator, TextInput, Modal,
 } from 'react-native';
-import { sendPasswordResetEmail } from 'firebase/auth';
+import { sendPasswordResetEmail, EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
 import { deleteDoc, doc } from 'firebase/firestore';
 import { auth, db } from '../firebaseConfig';
 import { useAuth } from '../contexts/AuthContext';
 import Constants from 'expo-constants';
 import { soundService } from '../services/SoundService';
+import { Ionicons } from '@expo/vector-icons';
 
 // ── URLs — swap these once you have real hosted pages ──────────────────────
 const PRIVACY_POLICY_URL = 'https://terramine.app/privacy';
@@ -27,8 +28,17 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [sfxEnabled,   setSfxEnabled]   = useState(true);
   const [musicEnabled, setMusicEnabled] = useState(true);
-  const [sendingReset, setSendingReset] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+
+  // Change Password modal state
+  const [changePasswordVisible, setChangePasswordVisible] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showCurrentPw, setShowCurrentPw] = useState(false);
+  const [showNewPw, setShowNewPw] = useState(false);
+  const [showConfirmPw, setShowConfirmPw] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
 
   // Load persisted sound prefs on mount
   useEffect(() => {
@@ -48,13 +58,11 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
 
   const handleNotificationsToggle = async (value: boolean) => {
     if (value) {
-      // Placeholder: wire up expo-notifications here when push is implemented
       Alert.alert(
         'Notifications',
         'Push notification setup is coming soon. You\'ll be notified when visitors check in and when you earn TB.',
         [{ text: 'OK' }]
       );
-      // Don't toggle on yet — no backend hooked up
     } else {
       setNotificationsEnabled(false);
     }
@@ -72,35 +80,59 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
     await soundService.setMusicEnabled(value);
   };
 
-  // ── Password reset ───────────────────────────────────────────────────────
+  // ── Change Password ──────────────────────────────────────────────────────
 
-  const handlePasswordReset = () => {
+  const openChangePassword = () => {
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setShowCurrentPw(false);
+    setShowNewPw(false);
+    setShowConfirmPw(false);
+    setChangePasswordVisible(true);
+  };
+
+  const handleChangePassword = async () => {
     if (!user?.email) return;
-    Alert.alert(
-      'Reset Password',
-      `Send a password reset email to ${user.email}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Send Email',
-          onPress: async () => {
-            setSendingReset(true);
-            try {
-              await sendPasswordResetEmail(auth, user.email!);
-              Alert.alert(
-                'Email Sent',
-                `A password reset link has been sent to ${user.email}. Check your inbox.`
-              );
-            } catch (error: any) {
-              console.error('Password reset error:', error);
-              Alert.alert('Error', 'Failed to send reset email. Please try again.');
-            } finally {
-              setSendingReset(false);
-            }
-          },
-        },
-      ]
-    );
+
+    if (!currentPassword || !newPassword || !confirmNewPassword) {
+      Alert.alert('Error', 'Please fill in all fields.');
+      return;
+    }
+    if (newPassword.length < 6) {
+      Alert.alert('Error', 'New password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      Alert.alert('Error', 'New passwords do not match.');
+      return;
+    }
+    if (currentPassword === newPassword) {
+      Alert.alert('Error', 'New password must be different from your current password.');
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      // Re-authenticate first
+      const credential = EmailAuthProvider.credential(user.email, currentPassword);
+      await reauthenticateWithCredential(user, credential);
+      // Update password
+      await updatePassword(user, newPassword);
+      setChangePasswordVisible(false);
+      Alert.alert('Success', 'Your password has been updated.');
+    } catch (error: any) {
+      console.error('Change password error:', error);
+      if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        Alert.alert('Error', 'Current password is incorrect. Please try again.');
+      } else if (error.code === 'auth/too-many-requests') {
+        Alert.alert('Error', 'Too many attempts. Please try again later.');
+      } else {
+        Alert.alert('Error', 'Failed to change password. Please try again.');
+      }
+    } finally {
+      setChangingPassword(false);
+    }
   };
 
   // ── Links ────────────────────────────────────────────────────────────────
@@ -132,7 +164,6 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
   };
 
   const confirmDeleteAccount = () => {
-    // Second confirmation — Apple requires a clear double-confirm for destructive actions
     Alert.alert(
       'Final Confirmation',
       'This is permanent. Your account, all properties, and your TB balance will be deleted forever.',
@@ -151,11 +182,8 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
     if (!user) return;
     setDeletingAccount(true);
     try {
-      // Delete Firestore user doc (properties/checkIns cleanup can be a Cloud Function)
       await deleteDoc(doc(db, 'users', user.uid));
-      // Delete the Firebase Auth account
       await user.delete();
-      // Auth context listener will detect sign-out and navigate to login
     } catch (error: any) {
       console.error('Account deletion error:', error);
       if (error.code === 'auth/requires-recent-login') {
@@ -249,21 +277,17 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
         <View style={styles.card}>
           <TouchableOpacity
             style={styles.row}
-            onPress={handlePasswordReset}
-            disabled={sendingReset}
+            onPress={openChangePassword}
             activeOpacity={0.7}
           >
             <View style={styles.rowLeft}>
               <Text style={styles.rowIcon}>🔑</Text>
               <View>
-                <Text style={styles.rowTitle}>Reset Password</Text>
-                <Text style={styles.rowSubtitle}>Send reset link to your email</Text>
+                <Text style={styles.rowTitle}>Change Password</Text>
+                <Text style={styles.rowSubtitle}>Update your current password</Text>
               </View>
             </View>
-            {sendingReset
-              ? <ActivityIndicator size="small" color="#2196F3" />
-              : <Text style={styles.rowChevron}>›</Text>
-            }
+            <Text style={styles.rowChevron}>›</Text>
           </TouchableOpacity>
         </View>
 
@@ -334,6 +358,93 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
 
         <View style={styles.footer} />
       </ScrollView>
+
+      {/* ── Change Password Modal ── */}
+      <Modal
+        visible={changePasswordVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setChangePasswordVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Change Password</Text>
+            <Text style={styles.modalSubtitle}>Enter your current password, then choose a new one.</Text>
+
+            {/* Current Password */}
+            <Text style={styles.fieldLabel}>Current Password</Text>
+            <View style={styles.pwRow}>
+              <TextInput
+                style={styles.pwInput}
+                placeholder="Current password"
+                placeholderTextColor="#aaa"
+                secureTextEntry={!showCurrentPw}
+                value={currentPassword}
+                onChangeText={setCurrentPassword}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity onPress={() => setShowCurrentPw(!showCurrentPw)} style={styles.eyeBtn}>
+                <Ionicons name={showCurrentPw ? 'eye-off-outline' : 'eye-outline'} size={20} color="#999" />
+              </TouchableOpacity>
+            </View>
+
+            {/* New Password */}
+            <Text style={styles.fieldLabel}>New Password</Text>
+            <View style={styles.pwRow}>
+              <TextInput
+                style={styles.pwInput}
+                placeholder="New password (min 6 characters)"
+                placeholderTextColor="#aaa"
+                secureTextEntry={!showNewPw}
+                value={newPassword}
+                onChangeText={setNewPassword}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity onPress={() => setShowNewPw(!showNewPw)} style={styles.eyeBtn}>
+                <Ionicons name={showNewPw ? 'eye-off-outline' : 'eye-outline'} size={20} color="#999" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Confirm New Password */}
+            <Text style={styles.fieldLabel}>Confirm New Password</Text>
+            <View style={styles.pwRow}>
+              <TextInput
+                style={styles.pwInput}
+                placeholder="Confirm new password"
+                placeholderTextColor="#aaa"
+                secureTextEntry={!showConfirmPw}
+                value={confirmNewPassword}
+                onChangeText={setConfirmNewPassword}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity onPress={() => setShowConfirmPw(!showConfirmPw)} style={styles.eyeBtn}>
+                <Ionicons name={showConfirmPw ? 'eye-off-outline' : 'eye-outline'} size={20} color="#999" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Buttons */}
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => setChangePasswordVisible(false)}
+                disabled={changingPassword}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.saveButton}
+                onPress={handleChangePassword}
+                disabled={changingPassword}
+              >
+                {changingPassword
+                  ? <ActivityIndicator color="white" size="small" />
+                  : <Text style={styles.saveButtonText}>Update Password</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -418,4 +529,86 @@ const styles = StyleSheet.create({
   },
 
   footer: { height: 40 },
+
+  // ── Modal styles ──
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1a1a1a',
+    marginBottom: 6,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#888',
+    marginBottom: 20,
+  },
+  fieldLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#555',
+    marginBottom: 6,
+  },
+  pwRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    marginBottom: 16,
+    backgroundColor: '#fafafa',
+  },
+  pwInput: {
+    flex: 1,
+    padding: 12,
+    fontSize: 15,
+    color: '#1a1a1a',
+  },
+  eyeBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 4,
+  },
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#ddd',
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    fontSize: 15,
+    color: '#666',
+    fontWeight: '600',
+  },
+  saveButton: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 10,
+    backgroundColor: '#2B6B94',
+    alignItems: 'center',
+  },
+  saveButtonText: {
+    fontSize: 15,
+    color: 'white',
+    fontWeight: '700',
+  },
 });

@@ -93,9 +93,9 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
       case 'coal':
         return { common: 'Lignite', uncommon: 'Soft Coal', rare: 'Anthracite', epic: 'Diamond' };
       case 'gold':
-        return { common: 'Gold Dust', uncommon: 'Gold Flakes', rare: 'Gold Nuggets', epic: 'Gold Bars' };
+        return { common: 'Gold Dust', uncommon: 'Gold Nugget', rare: 'Gold Bar', epic: 'Pure Gold' };
       case 'diamond':
-        return { common: 'Diamond Shards', uncommon: 'Diamond Pieces', rare: 'Diamond Stones', epic: 'Diamonds' };
+        return { common: 'Diamond Chip', uncommon: 'Raw Diamond', rare: 'Cut Diamond', epic: 'Flawless Diamond' };
       default:
         return { common: 'Common', uncommon: 'Uncommon', rare: 'Rare', epic: 'Epic' };
     }

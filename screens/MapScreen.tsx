@@ -59,6 +59,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const [checkInMessage, setCheckInMessage] = useState('');
   const [lastCheckIns, setLastCheckIns] = useState<Map<string, string>>(new Map());
   const [propertyCheckIns, setPropertyCheckIns] = useState<Map<string, CheckIn[]>>(new Map());
+  const [ownerNicknames, setOwnerNicknames] = useState<Map<string, string>>(new Map());
+  const [showLegend, setShowLegend] = useState(false);
   
   // Boost state
   const [boostState, setBoostState] = useState<MapScreenBoostState>({
@@ -477,8 +479,25 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     // If this is one of the user's own properties, use the enriched version
     // from ownedProperties which includes customName
     const enriched = ownedProperties.find(p => p.id === square.id);
-    setSelectedSquare(enriched || square);
+    const resolved = enriched || square;
+    setSelectedSquare(resolved);
     setShowCheckInModal(false);
+
+    // Fetch owner nickname if needed
+    if (resolved.isOwned && resolved.ownerId && resolved.ownerId !== userId) {
+      fetchOwnerNickname(resolved.ownerId);
+    }
+  };
+
+  const fetchOwnerNickname = async (ownerId: string) => {
+    if (ownerNicknames.has(ownerId)) return; // already cached
+    try {
+      const userData = await dbService.getUserData(ownerId);
+      const nickname = userData?.nickname || userData?.email?.split('@')[0] || 'Unknown';
+      setOwnerNicknames(prev => new Map(prev).set(ownerId, nickname));
+    } catch {
+      setOwnerNicknames(prev => new Map(prev).set(ownerId, 'Unknown'));
+    }
   };
 
   const canCheckInToday = (propertyId: string): boolean => {
@@ -845,15 +864,58 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         <Text style={styles.tbText}>💰 {userTB} TB</Text>
       </View>
 
+      {/* Legend Toggle Button */}
+      <TouchableOpacity
+        style={styles.legendButton}
+        onPress={() => setShowLegend(!showLegend)}
+      >
+        <Text style={styles.legendButtonText}>🗺 Legend</Text>
+      </TouchableOpacity>
+
+      {/* Legend Overlay */}
+      {showLegend && (
+        <View style={styles.legendPanel}>
+          <Text style={styles.legendTitle}>Map Legend</Text>
+          <View style={styles.legendRow}>
+            <View style={[styles.legendSwatch, { backgroundColor: 'rgba(76, 175, 80, 0.3)', borderColor: '#4CAF50' }]} />
+            <Text style={styles.legendLabel}>Available Property</Text>
+          </View>
+          <View style={styles.legendRow}>
+            <View style={[styles.legendSwatch, { backgroundColor: 'rgba(255, 152, 0, 0.6)', borderColor: '#E65100' }]} />
+            <Text style={styles.legendLabel}>Owned by Others</Text>
+          </View>
+          <View style={styles.legendRow}>
+            <View style={[styles.legendSwatch, { backgroundColor: '#808080', borderColor: '#2196F3' }]} />
+            <Text style={styles.legendLabel}>Your Rock Mine</Text>
+          </View>
+          <View style={styles.legendRow}>
+            <View style={[styles.legendSwatch, { backgroundColor: '#000000', borderColor: '#2196F3' }]} />
+            <Text style={styles.legendLabel}>Your Coal Mine</Text>
+          </View>
+          <View style={styles.legendRow}>
+            <View style={[styles.legendSwatch, { backgroundColor: '#FFD700', borderColor: '#2196F3' }]} />
+            <Text style={styles.legendLabel}>Your Gold Mine</Text>
+          </View>
+          <View style={styles.legendRow}>
+            <View style={[styles.legendSwatch, { backgroundColor: '#B9F2FF', borderColor: '#2196F3' }]} />
+            <Text style={styles.legendLabel}>Your Diamond Mine</Text>
+          </View>
+        </View>
+      )}
+
       {selectedSquare && (
         <View style={styles.infoPanel}>
           <Text style={styles.infoTitle}>
-            {selectedSquare.customName || (selectedSquare.mineType?.toUpperCase() || 'UNOWNED') + ' MINE'}
+            {selectedSquare.isOwned
+              ? (selectedSquare.customName || (selectedSquare.mineType?.toUpperCase() || 'UNKNOWN') + ' MINE')
+              : (selectedSquare.mineType?.toUpperCase() || 'ROCK') + ' MINE — AVAILABLE'}
           </Text>
           {selectedSquare.isOwned ? (
             <View>
               <Text style={styles.usernameText}>
-                Owner: {selectedSquare.ownerId === userId ? 'You' : selectedSquare.ownerId}
+                Owner: {selectedSquare.ownerId === userId
+                  ? 'You'
+                  : (ownerNicknames.get(selectedSquare.ownerId || '') || 'Loading...')}
               </Text>
               {selectedSquare.ownerId === userId && (
                 <TouchableOpacity
@@ -898,6 +960,15 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
                     <Text style={styles.buttonText}>
                       {canCheckInToday(selectedSquare.id) ? 'Check In' : 'Already Checked In Today'}
                     </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.visitorLogButton}
+                    onPress={() => {
+                      setSelectedSquare(null);
+                      onNavigateToPropertyDetail?.(selectedSquare);
+                    }}
+                  >
+                    <Text style={styles.buttonText}>📋 View Visitor Log</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -1260,6 +1331,70 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#666',
     marginBottom: 2,
+  },
+  legendButton: {
+    position: 'absolute',
+    bottom: 90,
+    right: 16,
+    backgroundColor: 'white',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  legendButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
+  },
+  legendPanel: {
+    position: 'absolute',
+    bottom: 130,
+    right: 16,
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+    minWidth: 200,
+  },
+  legendTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 7,
+  },
+  legendSwatch: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    marginRight: 10,
+  },
+  legendLabel: {
+    fontSize: 13,
+    color: '#444',
+  },
+  visitorLogButton: {
+    backgroundColor: '#7B3FA0',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
   },
 });
 

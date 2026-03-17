@@ -141,6 +141,7 @@ const CANARY_DIST = 2;
 const SPRITES = {
   miner:       require('../../../assets/images/MinerImageClearBack.png'),
   minerCone:   require('../../../assets/images/MinerImage30Degree.png'),
+  minerCone75: require('../../../assets/images/MinerImage75Degree.png'),
   wall:        require('../../../assets/images/maze/rock_no_beam.png'),
   tileDeadEnd: require('../../../assets/images/maze/dead_grey.png'),
   tileHoriz:   require('../../../assets/images/maze/horiz_grey.png'),
@@ -657,7 +658,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
     setTLeft(cfg.timeLimit);
     setScore(0);
     setSteps(0);
-    setPu({ charges: 1, boosted: false, boostLeft: 0, canary: false });
+    setPu({ charges: 1, boosted: false, boostLeft: 0, canary: true });
     setLitSet(computeLit(m0, full, cfg, false));
     setLastHaz(null);
     setReward(null);
@@ -1102,7 +1103,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
             const minerCenterY = miner.row * SZ + Math.round(VIEWPORT_H / 2) + Math.round(SZ * 0.5);
             return (
               <Image
-                source={SPRITES.minerCone}
+                source={pu.boosted ? SPRITES.minerCone75 : SPRITES.minerCone}
                 style={{
                   position: 'absolute',
                   left:   minerCenterX - CONE_SIZE * CONE_MINER_X,
@@ -1126,21 +1127,60 @@ export default function MinerMazeScreen({ route, navigation }: any) {
             {miner.dir==='up'?'⬆️':miner.dir==='down'?'⬇️':miner.dir==='left'?'⬅️':'➡️'}
           </Text>
         </View>
+
+        {/* Mini-map overlay */}
+        {grid.length > 0 && (() => {
+          const MM_CELL = Math.max(2, Math.floor(80 / Math.max(grid.length, grid[0]?.length ?? 1)));
+          const MM_W = (grid[0]?.length ?? 0) * MM_CELL;
+          const MM_H = grid.length * MM_CELL;
+          return (
+            <View style={{
+              position: 'absolute', bottom: 8, left: 8,
+              width: MM_W + 4, height: MM_H + 4,
+              backgroundColor: 'rgba(0,0,0,0.65)',
+              borderRadius: 4, borderWidth: 1, borderColor: '#6D4C1F',
+              padding: 2,
+            }}>
+              {grid.map((rowArr, r) => (
+                <View key={r} style={{ flexDirection: 'row' }}>
+                  {rowArr.map((cell, c) => {
+                    const isMiner = miner.row === r && miner.col === c;
+                    const isExit  = cell.isExit;
+                    const isOpen  = !cell.walls.top || !cell.walls.bottom || !cell.walls.left || !cell.walls.right;
+                    return (
+                      <View key={c} style={{
+                        width: MM_CELL, height: MM_CELL,
+                        backgroundColor: isMiner ? '#FFD700'
+                          : isExit         ? '#4CAF50'
+                          : cell.hazard    ? '#F44336'
+                          : isOpen         ? '#8B7355'
+                          : '#1A0900',
+                      }} />
+                    );
+                  })}
+                </View>
+              ))}
+            </View>
+          );
+        })()}
+
       </View>
 
       {/* ══ CONTROLS ══ */}
       <View style={st.ctrlWrap}>
-        {/* Power-up row */}
+        {/* Power-up row — 4 slots */}
         <View style={st.pRow}>
-          <TouchableOpacity style={[st.pBtn,(pu.charges<=0||pu.boosted)&&st.pDim]}
-            onPress={activateBoost} disabled={pu.charges<=0||pu.boosted}>
-            <Text style={st.pIco}>🔦</Text>
-            <Text style={st.pLbl}>Headlamp ({pu.charges})</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={st.pBtn} onPress={adBoost}>
-            <Text style={st.pIco}>📺</Text>
-            <Text style={st.pLbl}>+Headlamp</Text>
-          </TouchableOpacity>
+          {/* Headlamp: tap to activate a charge; long-press / ad button to get more */}
+          <View style={{ alignItems: 'center', gap: 4 }}>
+            <TouchableOpacity style={[st.pBtn,(pu.charges<=0||pu.boosted)&&st.pDim]}
+              onPress={activateBoost} disabled={pu.charges<=0||pu.boosted}>
+              <Text style={st.pIco}>🔦</Text>
+              <Text style={st.pLbl}>Headlamp ({pu.charges})</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[st.pBtn, { paddingVertical: 3 }]} onPress={adBoost}>
+              <Text style={{ color:'#A1887F', fontSize:10 }}>📺 +1 via Ad</Text>
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity style={[st.pBtn, pu.canary && st.pOn]} onPress={adCanary} disabled={pu.canary}>
             <Text style={st.pIco}>🐦</Text>
             <Text style={st.pLbl}>{pu.canary ? 'Canary ✓' : 'Canary'}</Text>

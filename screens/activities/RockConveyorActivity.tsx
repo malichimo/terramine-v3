@@ -398,13 +398,15 @@ export default function RockConveyorActivity({
           </>
         )}
 
-        {/* Crusher Indicator */}
-        <View style={[styles.crusherArea, { 
-          top: endYPos - 30,
-          right: width - endXPos - 50,
-        }]}>
-          <Text style={styles.crusherText}>💥 CRUSHER</Text>
-        </View>
+        {/* Crusher Indicator — only visible while running */}
+        {isRunning && (
+          <View style={[styles.crusherArea, { 
+            top: endYPos - 30,
+            right: width - endXPos - 50,
+          }]}>
+            <Text style={styles.crusherText}>💥 CRUSHER</Text>
+          </View>
+        )}
       </View>
 
       {/* Instructions / Buttons */}
@@ -504,6 +506,19 @@ export default function RockConveyorActivity({
               {attemptsRemaining} {attemptsRemaining === 1 ? 'attempt' : 'attempts'} remaining
             </Text>
           )}
+
+          {/* Watch Ad for more turns — available before AND after activity */}
+          <TouchableOpacity
+            style={[styles.extraTurnButton, { marginTop: 12 }]}
+            onPress={handleWatchAdForTurn}
+          >
+            <Text style={styles.extraTurnButtonText}>
+              📺 Watch Ad for +2 Attempts
+            </Text>
+            <Text style={styles.extraTurnSubtext}>
+              (No 2x bonus on extra turns)
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
     </SafeAreaView>

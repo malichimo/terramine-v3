@@ -10,13 +10,18 @@ import {
   Platform,
   Image,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const { signInWithEmail, signUpWithEmail, signInWithGoogle, resetPassword } = useAuth();
 
@@ -25,6 +30,18 @@ export default function LoginScreen() {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
+
+    if (isSignUp) {
+      if (!confirmPassword) {
+        Alert.alert('Error', 'Please confirm your password');
+        return;
+      }
+      if (password !== confirmPassword) {
+        Alert.alert('Error', 'Passwords do not match');
+        return;
+      }
+    }
+
     try {
       if (isSignUp) {
         await signUpWithEmail(email, password);
@@ -47,10 +64,7 @@ export default function LoginScreen() {
     }
     try {
       await resetPassword(email.trim());
-      Alert.alert(
-        'Email Sent',
-        'Check your inbox for a password reset link.',
-      );
+      Alert.alert('Email Sent', 'Check your inbox for a password reset link.');
     } catch (error: any) {
       Alert.alert('Error', error.message);
     }
@@ -67,14 +81,25 @@ export default function LoginScreen() {
     }
   };
 
+  const handleSwitchMode = () => {
+    setIsSignUp(!isSignUp);
+    setPassword('');
+    setConfirmPassword('');
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+  };
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.content}>
-
-        {/* Logo */}
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Logo — no background color so black square doesn't show */}
         <View style={styles.logoContainer}>
           <Image
             source={require('../assets/terramine_logo.png')}
@@ -98,14 +123,53 @@ export default function LoginScreen() {
             keyboardType="email-address"
           />
 
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor="#999"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
+          {/* Password field with show/hide toggle */}
+          <View style={styles.passwordContainer}>
+            <TextInput
+              style={styles.passwordInput}
+              placeholder="Password"
+              placeholderTextColor="#999"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+            />
+            <TouchableOpacity
+              style={styles.eyeButton}
+              onPress={() => setShowPassword(!showPassword)}
+            >
+              <Ionicons
+                name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                size={22}
+                color="#999"
+              />
+            </TouchableOpacity>
+          </View>
+
+          {/* Confirm Password — sign-up only */}
+          {isSignUp && (
+            <View style={styles.passwordContainer}>
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="Confirm Password"
+                placeholderTextColor="#999"
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                secureTextEntry={!showConfirmPassword}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity
+                style={styles.eyeButton}
+                onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+              >
+                <Ionicons
+                  name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={22}
+                  color="#999"
+                />
+              </TouchableOpacity>
+            </View>
+          )}
 
           <TouchableOpacity style={styles.button} onPress={handleSubmit}>
             <Text style={styles.buttonText}>
@@ -119,7 +183,7 @@ export default function LoginScreen() {
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity onPress={() => setIsSignUp(!isSignUp)}>
+          <TouchableOpacity onPress={handleSwitchMode}>
             <Text style={styles.switchText}>
               {isSignUp
                 ? 'Already have an account? Sign In'
@@ -155,8 +219,7 @@ export default function LoginScreen() {
             </>
           )}
         </TouchableOpacity>
-
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -166,19 +229,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  content: {
-    flex: 1,
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+    paddingVertical: 40,
   },
   logoContainer: {
     marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
+    // No backgroundColor — prevents black square around logo
   },
   logo: {
     width: 120,
@@ -212,6 +272,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
     borderWidth: 2,
     borderColor: '#5CB3E6',
+  },
+  passwordContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    borderRadius: 10,
+    marginBottom: 15,
+    borderWidth: 2,
+    borderColor: '#5CB3E6',
+  },
+  passwordInput: {
+    flex: 1,
+    padding: 15,
+    fontSize: 16,
+  },
+  eyeButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 15,
   },
   button: {
     backgroundColor: '#2B6B94',

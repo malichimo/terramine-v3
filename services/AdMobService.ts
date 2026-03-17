@@ -69,7 +69,7 @@ export class AdMobService {
           console.log('📱 Rewarded ad closed');
           this.isLoaded = false;
           // Reinitialize with fresh instance to avoid stale listener buildup
-          setTimeout(() => this.initializeAd(), 1000);
+          setTimeout(() => this.initializeAd(), 500);
         }
       );
 
@@ -117,16 +117,27 @@ export class AdMobService {
   async showAd(onRewarded: () => void, onAdClosed: () => void): Promise<boolean> {
     if (!this.isLoaded || !this.rewardedAd) {
       console.log('❌ Ad not loaded yet');
+      // Trigger a load attempt so the next call may succeed
+      this.loadAd().catch(() => {});
       return false;
     }
 
     try {
       console.log('📺 Showing rewarded ad...');
-      
-      // One-time listeners for this specific show — unsubscribe immediately after firing
+
+      // Remove permanent earned/closed listeners before showing to prevent
+      // double-firing — we replace them with one-shot listeners for this show
+      this.unsubscribeEarned?.();
+      this.unsubscribeClosed?.();
+      this.unsubscribeEarned = null;
+      this.unsubscribeClosed = null;
+
+      let rewardEarned = false;
+
       const unsubscribeEarned = this.rewardedAd.addAdEventListener(
         RewardedAdEventType.EARNED_REWARD,
         () => {
+          rewardEarned = true;
           onRewarded();
           unsubscribeEarned();
         }
@@ -135,8 +146,14 @@ export class AdMobService {
       const unsubscribeClosed = this.rewardedAd.addAdEventListener(
         AdEventType.CLOSED,
         () => {
-          onAdClosed();
           unsubscribeClosed();
+          this.isLoaded = false;
+          if (!rewardEarned) {
+            // User closed without earning — still fire the closed callback
+            onAdClosed();
+          }
+          // Reinitialize for the next ad request
+          setTimeout(() => this.initializeAd(), 500);
         }
       );
 
@@ -145,6 +162,8 @@ export class AdMobService {
       return true;
     } catch (error) {
       console.error('❌ Error showing rewarded ad:', error);
+      // Reinitialize on error so ads recover automatically
+      setTimeout(() => this.initializeAd(), 1000);
       return false;
     }
   }

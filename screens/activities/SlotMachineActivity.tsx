@@ -235,61 +235,72 @@ export default function SlotMachineActivity({
   };
 
   const generateReward = (symbol1: string, symbol2: string, symbol3: string, shouldDouble: boolean): RewardTier => {
-    // Check for matches
-    const allMatch = symbol1 === symbol2 && symbol2 === symbol3;
-    const twoMatch = symbol1 === symbol2 || symbol2 === symbol3 || symbol1 === symbol3;
-    
-    let reward: RewardTier;
-    
-    // Triple match (JACKPOT)
-    if (allMatch) {
-      if (symbol1 === 'diamond') {
-        reward = {
-          tier: 'epic',
-          amount: Math.floor(1 + Math.random() * 5), // 1-6 (3x normal epic)
-          displayName: 'Diamonds',
-          image: RESOURCE_IMAGES.epic,
-        };
-      } else if (symbol1 === 'gold') {
-        reward = {
-          tier: 'rare',
-          amount: Math.floor(9 + Math.random() * 21), // 9-30 (3x normal rare)
-          displayName: 'Diamond Stones',
-          image: RESOURCE_IMAGES.rare,
-        };
-      } else {
+    try {
+      // Check for matches
+      const allMatch = symbol1 === symbol2 && symbol2 === symbol3;
+      const twoMatch = symbol1 === symbol2 || symbol2 === symbol3 || symbol1 === symbol3;
+      
+      let reward: RewardTier;
+      
+      // Triple match (JACKPOT)
+      if (allMatch) {
+        if (symbol1 === 'diamond') {
+          reward = {
+            tier: 'epic',
+            amount: Math.floor(1 + Math.random() * 5),
+            displayName: 'Flawless Diamond',
+            image: RESOURCE_IMAGES.epic,
+          };
+        } else if (symbol1 === 'gold') {
+          reward = {
+            tier: 'rare',
+            amount: Math.floor(9 + Math.random() * 21),
+            displayName: 'Cut Diamond',
+            image: RESOURCE_IMAGES.rare,
+          };
+        } else {
+          reward = {
+            tier: 'uncommon',
+            amount: Math.floor(90 + Math.random() * 90),
+            displayName: 'Raw Diamond',
+            image: RESOURCE_IMAGES.uncommon,
+          };
+        }
+      }
+      // Two match (good)
+      else if (twoMatch) {
         reward = {
           tier: 'uncommon',
-          amount: Math.floor(90 + Math.random() * 90), // 90-180 (3x normal)
-          displayName: 'Diamond Pieces',
+          amount: Math.floor(90 + Math.random() * 90),
+          displayName: 'Raw Diamond',
           image: RESOURCE_IMAGES.uncommon,
         };
       }
-    }
-    // Two match (good)
-    else if (twoMatch) {
-      reward = {
-        tier: 'uncommon',
-        amount: Math.floor(90 + Math.random() * 90), // 90-180
-        displayName: 'Diamond Pieces',
-        image: RESOURCE_IMAGES.uncommon,
-      };
-    }
-    // No match (consolation)
-    else {
-      reward = {
+      // No match (consolation)
+      else {
+        reward = {
+          tier: 'common',
+          amount: Math.floor(900 + Math.random() * 900),
+          displayName: 'Diamond Chip',
+          image: RESOURCE_IMAGES.common,
+        };
+      }
+
+      if (shouldDouble) {
+        reward.amount = reward.amount * 2;
+      }
+
+      return reward;
+    } catch (error) {
+      // Default to common reward on any calculation error
+      console.error('Error generating reward, defaulting to common:', error);
+      return {
         tier: 'common',
-        amount: Math.floor(900 + Math.random() * 900), // 900-1800 (3x rock)
-        displayName: 'Diamond Shards',
+        amount: 100,
+        displayName: 'Diamond Chip',
         image: RESOURCE_IMAGES.common,
       };
     }
-
-    if (shouldDouble) {
-      reward.amount = reward.amount * 2;
-    }
-
-    return reward;
   };
 
   const processRewards = async (symbol1: string, symbol2: string, symbol3: string) => {
@@ -341,7 +352,7 @@ export default function SlotMachineActivity({
       setShowRewards(true);
       // Play reward sound for jackpot, chime for smaller wins
       const allMatch = reward.tier === 'epic' || reward.tier === 'rare';
-      SoundService.play(allMatch ? 'reward' : 'chime');
+      soundService.play(allMatch ? 'reward' : 'chime');
       
       if (isBaseAttempt) {
         setWillDoubleRewards(false);
@@ -562,6 +573,19 @@ export default function SlotMachineActivity({
               {attemptsRemaining} {attemptsRemaining === 1 ? 'attempt' : 'attempts'} remaining
             </Text>
           )}
+
+          {/* Watch Ad for more turns — available before AND after activity */}
+          <TouchableOpacity
+            style={[styles.extraTurnButton, { marginTop: 12 }]}
+            onPress={handleWatchAdForTurn}
+          >
+            <Text style={styles.extraTurnButtonText}>
+              📺 Watch Ad for +2 Attempts
+            </Text>
+            <Text style={styles.extraTurnSubtext}>
+              (No 2x bonus on extra turns)
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
     </SafeAreaView>
