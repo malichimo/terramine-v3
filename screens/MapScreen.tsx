@@ -535,8 +535,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       return;
     }
     
-    if (!isWithinGridSquare(userLocation.latitude, userLocation.longitude, selectedSquare)) {
-      Alert.alert('Too Far', 'You must be within the property boundaries to check in.');
+    if (!isAdjacentToUser(userLocation.latitude, userLocation.longitude, selectedSquare)) {
+      Alert.alert('Too Far', 'You must be within or adjacent to the property to check in.');
       return;
     }
     
@@ -962,18 +962,18 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
               {selectedSquare.ownerId !== userId && (
                 <>
                   <Text style={styles.infoText}>
-                    {isWithinGridSquare(
+                    {isAdjacentToUser(
                       userLocation?.latitude || 0,
                       userLocation?.longitude || 0,
                       selectedSquare
                     )
-                      ? '✓ You are within property'
+                      ? '✓ Within check-in range'
                       : '✗ Too far to check in'}
                   </Text>
                   <TouchableOpacity 
                     style={[
                       styles.checkInButton,
-                      (!isWithinGridSquare(
+                      (!isAdjacentToUser(
                         userLocation?.latitude || 0,
                         userLocation?.longitude || 0,
                         selectedSquare
@@ -981,7 +981,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
                     ]}
                     onPress={handleCheckIn}
                     disabled={
-                      !isWithinGridSquare(
+                      !isAdjacentToUser(
                         userLocation?.latitude || 0,
                         userLocation?.longitude || 0,
                         selectedSquare
