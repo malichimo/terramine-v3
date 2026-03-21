@@ -228,21 +228,21 @@ export default function SluiceBoxActivity({
       reward = {
         tier: 'uncommon',
         amount: Math.floor(60 + Math.random() * 60), // 60-120
-        displayName: 'Gold Nugget',
+        displayName: 'Gold Flakes',
         image: RESOURCE_IMAGES.uncommon,
       };
     } else if (roll < 97) {
       reward = {
         tier: 'rare',
         amount: Math.floor(6 + Math.random() * 14), // 6-20
-        displayName: 'Gold Bar',
+        displayName: 'Gold Nuggets',
         image: RESOURCE_IMAGES.rare,
       };
     } else {
       reward = {
         tier: 'epic',
         amount: Math.floor(1 + Math.random() * 3), // 1-4
-        displayName: 'Pure Gold',
+        displayName: 'Gold Bars',
         image: RESOURCE_IMAGES.epic,
       };
     }
@@ -380,40 +380,6 @@ export default function SluiceBoxActivity({
             ]}
             resizeMode="contain"
           />
-        )}
-
-        {/* Dirt falling */}
-        {isRunning && (
-          <Animated.View
-            style={[
-              styles.dirt,
-              { opacity: dirtOpacity },
-            ]}
-          >
-            <Text style={styles.dirtText}>🟤🟤🟤</Text>
-          </Animated.View>
-        )}
-
-        {/* Water flowing (always visible but pulses) */}
-        <Animated.View
-          style={[
-            styles.water,
-            { opacity: waterOpacity },
-          ]}
-        >
-          <Text style={styles.waterText}>💧💧💧</Text>
-        </Animated.View>
-
-        {/* Gold appearing */}
-        {isRunning && (
-          <Animated.View
-            style={[
-              styles.gold,
-              { opacity: goldOpacity },
-            ]}
-          >
-            <Text style={styles.goldText}>✨🟡✨</Text>
-          </Animated.View>
         )}
       </View>
 

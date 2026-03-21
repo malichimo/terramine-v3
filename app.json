@@ -17,6 +17,7 @@
       "bundleIdentifier": "com.terramine.app",
       "supportsTablet": true,
       "config": {
+        "googleMapsApiKey": "AIzaSyBsh79SG1PlF7WMA8b_ObYMrGatmhSWrtc",
         "googleMobileAdsAppId": "ca-app-pub-4502698429383902~3587962923"
       },
       "infoPlist": {
@@ -26,8 +27,15 @@
           },
           {
             "SKAdNetworkIdentifier": "n38lu8286q.skadnetwork"
+          },
+          {
+            "SKAdNetworkIdentifier": "v9wttpbfk9.skadnetwork"
+          },
+          {
+            "SKAdNetworkIdentifier": "n38lu8286q.skadnetwork"
           }
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {

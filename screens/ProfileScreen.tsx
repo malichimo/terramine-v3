@@ -15,6 +15,7 @@ interface ProfileScreenProps {
   navigation: any;
   username: string;
   userTB: number;
+  usdEarnings: number;
   ownedProperties: GridSquare[];
   totalCheckIns: number;
   totalTBEarned: number;
@@ -41,6 +42,7 @@ export default function ProfileScreen({
   navigation,
   username,
   userTB,
+  usdEarnings,
   ownedProperties,
   totalCheckIns,
   totalTBEarned,
@@ -354,6 +356,10 @@ export default function ProfileScreen({
               <View style={styles.statCard}>
                 <Text style={styles.statNumber}>${monthlyEarnings.toFixed(4)}</Text>
                 <Text style={styles.statLabel}>Est. Monthly Rent</Text>
+              </View>
+              <View style={[styles.statCard, { width: '100%' }]}>
+                <Text style={styles.statNumber}>${usdEarnings.toFixed(6)}</Text>
+                <Text style={styles.statLabel}>Total USD Earned</Text>
               </View>
             </View>
 

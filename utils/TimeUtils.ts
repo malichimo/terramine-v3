@@ -5,6 +5,7 @@
  * Get the EST/EDT offset in minutes for a given date.
  * EDT = UTC-4 (second Sunday in March through first Sunday in November)
  * EST = UTC-5 (rest of year)
+ * Returns NEGATIVE values: -240 (EDT) or -300 (EST)
  */
 function getESTOffset(date: Date): number {
   const year = date.getUTCFullYear();
@@ -20,24 +21,38 @@ function getESTOffset(date: Date): number {
   const dstEnd = new Date(Date.UTC(year, 10, (7 - novDay) % 7 + 1, 6)); // 2 AM EDT = 6 UTC
 
   const isDST = date >= dstStart && date < dstEnd;
-  return isDST ? -4 * 60 : -5 * 60; // minutes
+  return isDST ? -4 * 60 : -5 * 60; // minutes offset from UTC
 }
 
 /**
- * Get the next 4 AM EST/EDT timestamp
+ * Get the next 4 AM EST/EDT timestamp.
+ * 
+ * FIX: offset must be SUBTRACTED when converting UTC→EST and ADDED back
+ * when converting EST→UTC. getESTOffset returns negative values (e.g. -300 for EST),
+ * so:
+ *   UTC → EST: subtract the offset  (now - (-300min) = now + 300min ... NO)
+ * 
+ * Correct approach: offset is negative, so:
+ *   EST time = UTC + offset  (e.g. UTC + (-300min) = UTC - 5h) ✅
+ *   UTC time = EST - offset  (e.g. EST - (-300min) = EST + 5h) ✅
  */
 export function getNext4AMEST(): Date {
   const now = new Date();
-  const estOffset = getESTOffset(now);
+  const estOffset = getESTOffset(now); // e.g. -300 for EST, -240 for EDT
+
+  // Convert UTC → EST by adding the (negative) offset
   const estNow = new Date(now.getTime() + estOffset * 60 * 1000);
 
+  // Find next 4 AM in EST
   const next4AM = new Date(estNow);
   next4AM.setHours(4, 0, 0, 0);
 
+  // If it's already past 4 AM EST today, move to tomorrow
   if (estNow.getHours() >= 4) {
     next4AM.setDate(next4AM.getDate() + 1);
   }
 
+  // Convert EST → UTC by subtracting the (negative) offset (i.e. adding absolute value)
   return new Date(next4AM.getTime() - estOffset * 60 * 1000);
 }
 
@@ -56,15 +71,19 @@ export function shouldResetDailyActivity(lastResetTime: string): boolean {
 export function getLastPassed4AMEST(): Date {
   const now = new Date();
   const estOffset = getESTOffset(now);
+
+  // Convert UTC → EST
   const estNow = new Date(now.getTime() + estOffset * 60 * 1000);
 
   const today4AM = new Date(estNow);
   today4AM.setHours(4, 0, 0, 0);
 
+  // If before 4 AM EST today, last reset was 4 AM yesterday
   if (estNow.getHours() < 4) {
     today4AM.setDate(today4AM.getDate() - 1);
   }
 
+  // Convert EST → UTC
   return new Date(today4AM.getTime() - estOffset * 60 * 1000);
 }
 
@@ -75,8 +94,11 @@ export function getLastPassed4AMEST(): Date {
 export function getResetDay(): string {
   const now = new Date();
   const estOffset = getESTOffset(now);
+
+  // Convert UTC → EST
   const estNow = new Date(now.getTime() + estOffset * 60 * 1000);
 
+  // Before 4 AM EST, we're still on the previous reset day
   if (estNow.getHours() < 4) {
     estNow.setDate(estNow.getDate() - 1);
   }
@@ -118,9 +140,11 @@ export function isSameResetDay(date1: string | Date, date2: string | Date): bool
   const offset1 = getESTOffset(d1);
   const offset2 = getESTOffset(d2);
 
+  // Convert UTC → EST for both dates
   const est1 = new Date(d1.getTime() + offset1 * 60 * 1000);
   const est2 = new Date(d2.getTime() + offset2 * 60 * 1000);
 
+  // Before 4 AM, roll back to previous calendar day for reset-day comparison
   if (est1.getHours() < 4) est1.setDate(est1.getDate() - 1);
   if (est2.getHours() < 4) est2.setDate(est2.getDate() - 1);
 

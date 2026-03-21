@@ -350,6 +350,7 @@ export default function SlotMachineActivity({
       setRewardTier(reward);
       setTbBonus(tbBonusAmount);
       setShowRewards(true);
+      soundService.stop('reel_spin');
       // Play reward sound for jackpot, chime for smaller wins
       const allMatch = reward.tier === 'epic' || reward.tier === 'rare';
       soundService.play(allMatch ? 'reward' : 'chime');
@@ -382,6 +383,7 @@ export default function SlotMachineActivity({
   };
 
   const handleBack = () => {
+    soundService.stop('reel_spin');
     navigation.goBack();
   };
 

@@ -368,6 +368,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
   const [steps,   setSteps]   = useState(0);
   const [pu,      setPu]      = useState<PowerUps>({ charges:1, boosted:false, boostLeft:0, canary:false });
   const [litSet,  setLitSet]  = useState<Set<string>>(new Set());
+  const [visitedCells, setVisitedCells] = useState<Set<string>>(new Set());
   const [lastHaz, setLastHaz] = useState<HazardDef|null>(null);
   const [reward,  setReward]  = useState<{tb:number,res:number}|null>(null);
 
@@ -513,6 +514,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
       snapLookToDir(dir);
       setSteps(s => s + 1);
       setScore(s => s + 10);
+      setVisitedCells(prev => new Set(prev).add(`${nr},${nc}`));
       animateCamera(nc, nr);
       soundService.play('step');
 
@@ -660,6 +662,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
     setSteps(0);
     setPu({ charges: 1, boosted: false, boostLeft: 0, canary: true });
     setLitSet(computeLit(m0, full, cfg, false));
+    setVisitedCells(new Set(['0,0']));
     setLastHaz(null);
     setReward(null);
     // Delay camera snap until after viewport onLayout has fired
@@ -1144,17 +1147,21 @@ export default function MinerMazeScreen({ route, navigation }: any) {
               {grid.map((rowArr, r) => (
                 <View key={r} style={{ flexDirection: 'row' }}>
                   {rowArr.map((cell, c) => {
-                    const isMiner = miner.row === r && miner.col === c;
-                    const isExit  = cell.isExit;
-                    const isOpen  = !cell.walls.top || !cell.walls.bottom || !cell.walls.left || !cell.walls.right;
+                    const key = `${r},${c}`;
+                    const isMiner   = miner.row === r && miner.col === c;
+                    const isExit    = cell.isExit;
+                    const isVisited = visitedCells.has(key);
+                    const isOpen    = !cell.walls.top || !cell.walls.bottom || !cell.walls.left || !cell.walls.right;
+                    let bg = '#0A0400'; // unvisited — dark
+                    if (isMiner)        bg = '#FFD700'; // player — gold
+                    else if (isExit && isVisited) bg = '#4CAF50'; // exit revealed — green
+                    else if (isVisited && cell.hazard) bg = '#F44336'; // hazard revealed — red
+                    else if (isVisited && isOpen) bg = '#8B7355'; // visited path — tan
+                    else if (isVisited) bg = '#3E2723'; // visited wall — dark brown
                     return (
                       <View key={c} style={{
                         width: MM_CELL, height: MM_CELL,
-                        backgroundColor: isMiner ? '#FFD700'
-                          : isExit         ? '#4CAF50'
-                          : cell.hazard    ? '#F44336'
-                          : isOpen         ? '#8B7355'
-                          : '#1A0900',
+                        backgroundColor: bg,
                       }} />
                     );
                   })}

@@ -45,13 +45,14 @@ interface MapStackProps {
   onEarningsUpdate: (amount: number) => Promise<void>;
   mapRef: React.RefObject<any>;
   onPropertyUpdate: () => void;
+  onNavigateToVisitorLog: (property: GridSquare) => void;
 }
 
 function MapStackNavigator({
   userId, username, userTB, usdEarnings,
   ownedProperties, allProperties, boostState,
   onPropertyPurchase, onCheckIn, onBoostUpdate, onEarningsUpdate,
-  mapRef, onPropertyUpdate,
+  mapRef, onPropertyUpdate, onNavigateToVisitorLog,
 }: MapStackProps) {
   return (
     <MapStack.Navigator screenOptions={{ headerShown: false }}>
@@ -74,6 +75,9 @@ function MapStackNavigator({
             onNavigateToPropertyDetail={(property: GridSquare) =>
               props.navigation.navigate('PropertyDetail', { property, userId })
             }
+            onNavigateToVisitorLog={(property: GridSquare) =>
+              props.navigation.navigate('VisitorLog', { property })
+            }
           />
         )}
       </MapStack.Screen>
@@ -94,6 +98,7 @@ function MapStackNavigator({
 // ─── Profile Stack ────────────────────────────────────────────────────────────
 interface ProfileStackProps {
   userTB: number;
+  usdEarnings: number;
   username: string;
   ownedProperties: GridSquare[];
   totalCheckIns: number;
@@ -105,7 +110,7 @@ interface ProfileStackProps {
 }
 
 function ProfileStackNavigator({
-  userTB, username, ownedProperties,
+  userTB, usdEarnings, username, ownedProperties,
   totalCheckIns, totalTBEarned, userId, onSignOut, onPropertyUpdate, onUsernameChange,
 }: ProfileStackProps) {
   return (
@@ -115,6 +120,7 @@ function ProfileStackNavigator({
           <ProfileScreen
             {...(props as any)}
             userTB={userTB}
+            usdEarnings={usdEarnings}
             username={username}
             ownedProperties={ownedProperties}
             totalCheckIns={totalCheckIns}
@@ -278,7 +284,7 @@ export default function MainNavigator() {
     }
   };
 
-  if (!dataLoaded || onboardingDone === null || !consentReady) {
+  if (!dataLoaded || onboardingDone === null) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator size="large" color="#2196F3" />
@@ -286,11 +292,21 @@ export default function MainNavigator() {
     );
   }
 
+  // Show onboarding before consent/main app — doesn't need consentReady
   if (!onboardingDone) {
     return (
       <OnboardingScreen
         onDone={() => setOnboardingDone(true)}
       />
+    );
+  }
+
+  // Wait for consent after onboarding is done
+  if (!consentReady) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#2196F3" />
+      </View>
     );
   }
 
@@ -330,6 +346,7 @@ export default function MainNavigator() {
               onEarningsUpdate={handleEarningsUpdate}
               mapRef={mapRef}
               onPropertyUpdate={handlePropertyUpdate}
+              onNavigateToVisitorLog={() => {}}
             />
           )}
         </Tab.Screen>
@@ -337,6 +354,7 @@ export default function MainNavigator() {
           {() => (
             <ProfileStackNavigator
               userTB={userTB}
+              usdEarnings={usdEarnings}
               username={username}
               ownedProperties={ownedProperties}
               totalCheckIns={totalCheckIns}

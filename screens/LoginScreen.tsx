@@ -102,7 +102,7 @@ export default function LoginScreen() {
         {/* Logo — no background color so black square doesn't show */}
         <View style={styles.logoContainer}>
           <Image
-            source={require('../assets/terramine_logo.png')}
+            source={require('../assets/terramine_logo_clear.png')}
             style={styles.logo}
             resizeMode="contain"
           />

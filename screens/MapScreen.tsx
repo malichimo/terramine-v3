@@ -35,6 +35,7 @@ interface MapScreenProps {
   onEarningsUpdate?: (usdAmount: number) => Promise<void>;
   usdEarnings?: number;
   onNavigateToPropertyDetail?: (property: GridSquare) => void;
+  onNavigateToVisitorLog?: (property: GridSquare) => void;
 }
 
 const MapScreen = React.forwardRef<any, MapScreenProps>(({ 
@@ -50,6 +51,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   onEarningsUpdate,
   usdEarnings = 0,
   onNavigateToPropertyDetail,
+  onNavigateToVisitorLog,
 }, ref) => {
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
   const [gridSquares, setGridSquares] = useState<Map<string, GridSquare>>(new Map());
@@ -128,20 +130,31 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     }
   }));
 
-  // Update boost timer
+  // Update boost timer — uses ref to always read latest boostExpiresAt
+  // without re-creating the interval on every state change
+  const boostExpiresAtRef = useRef(boostState.boostExpiresAt);
+  useEffect(() => {
+    boostExpiresAtRef.current = boostState.boostExpiresAt;
+  }, [boostState.boostExpiresAt]);
+
   useEffect(() => {
     const updateBoostTimer = () => {
-      if (!boostState.boostExpiresAt) {
-        setBoostState(prev => ({ ...prev, boostTimeRemaining: 0, isBoostActive: false }));
+      const expiresAtStr = boostExpiresAtRef.current;
+      if (!expiresAtStr) {
+        setBoostState(prev => {
+          if (!prev.isBoostActive && prev.boostTimeRemaining === 0) return prev; // no change needed
+          return { ...prev, boostTimeRemaining: 0, isBoostActive: false };
+        });
         return;
       }
 
       const now = new Date();
-      const expiresAt = new Date(boostState.boostExpiresAt);
+      const expiresAt = new Date(expiresAtStr);
       const diffMs = expiresAt.getTime() - now.getTime();
       const diffMinutes = Math.max(0, diffMs / (1000 * 60));
 
       if (diffMinutes <= 0) {
+        boostExpiresAtRef.current = null;
         setBoostState(prev => ({ 
           ...prev, 
           boostTimeRemaining: 0, 
@@ -167,7 +180,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     updateBoostTimer();
     const interval = setInterval(updateBoostTimer, 1000);
     return () => clearInterval(interval);
-  }, [boostState.boostExpiresAt]);
+  }, []); // Run once on mount — reads boostExpiresAt via ref, not closure
 
   // Check free boost reset
   useEffect(() => {
@@ -199,6 +212,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     const loadBoostState = async () => {
       try {
         const state = await dbService.getBoostState(userId);
+        boostExpiresAtRef.current = state.boostExpiresAt;
         setBoostState(state);
         console.log('📊 Initial boost state loaded:', state);
       } catch (error) {
@@ -672,9 +686,15 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
 
   // Boost handlers
   const handleFreeBoost = async () => {
-    // Now handled by DatabaseService.useFreeBoost() method
     try {
       const newState = await dbService.useFreeBoost(userId, boostState);
+      boostExpiresAtRef.current = newState.boostExpiresAt; // keep ref in sync immediately
+      console.log('🔥 Free boost activated!');
+      console.log('🔥 boostExpiresAt set to:', newState.boostExpiresAt);
+      console.log('🔥 Current time:', new Date().toISOString());
+      console.log('🔥 Diff minutes:', newState.boostExpiresAt 
+        ? ((new Date(newState.boostExpiresAt).getTime() - Date.now()) / 60000).toFixed(2)
+        : 'null');
       setBoostState(newState);
       onBoostUpdate(newState);
       setShowBoostModal(false);
@@ -699,6 +719,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         boostExpiresAt: newState.boostExpiresAt,
       });
       
+      boostExpiresAtRef.current = newState.boostExpiresAt; // keep ref in sync immediately
       setBoostState(newState);
       onBoostUpdate(newState);
       setShowBoostModal(false);
@@ -840,10 +861,20 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       <TouchableOpacity 
         style={styles.boostButton}
         onPress={async () => {
-          // Check for ad boost refills before opening modal
+          // Only refresh ad boost refill count — do NOT overwrite boostExpiresAt
+          // as Firestore may not have committed the write yet on slower devices
           try {
             const refreshedState = await dbService.getBoostState(userId);
-            setBoostState(refreshedState);
+            setBoostState(prev => ({
+              ...refreshedState,
+              // Preserve local boostExpiresAt if it's further in the future than what Firestore returned
+              boostExpiresAt: (prev.boostExpiresAt && (!refreshedState.boostExpiresAt || 
+                new Date(prev.boostExpiresAt) > new Date(refreshedState.boostExpiresAt)))
+                ? prev.boostExpiresAt
+                : refreshedState.boostExpiresAt,
+              boostTimeRemaining: prev.boostTimeRemaining,
+              isBoostActive: prev.isBoostActive,
+            }));
           } catch (error) {
             console.error('Error refreshing boost state:', error);
           }
@@ -965,7 +996,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
                     style={styles.visitorLogButton}
                     onPress={() => {
                       setSelectedSquare(null);
-                      onNavigateToPropertyDetail?.(selectedSquare);
+                      onNavigateToVisitorLog?.(selectedSquare);
                     }}
                   >
                     <Text style={styles.buttonText}>📋 View Visitor Log</Text>
@@ -1334,7 +1365,7 @@ const styles = StyleSheet.create({
   },
   legendButton: {
     position: 'absolute',
-    bottom: 90,
+    bottom: 140,
     right: 16,
     backgroundColor: 'white',
     paddingHorizontal: 14,
@@ -1355,7 +1386,7 @@ const styles = StyleSheet.create({
   },
   legendPanel: {
     position: 'absolute',
-    bottom: 130,
+    bottom: 185,
     right: 16,
     backgroundColor: 'white',
     borderRadius: 12,

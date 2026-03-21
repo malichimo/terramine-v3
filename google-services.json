@@ -12,7 +12,20 @@
           "package_name": "com.terramine.app"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "183143680304-qqeo3j5s920dq1jkq8mrvb1khgqjdkbq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.terramine.app",
+            "certificate_hash": "886b392ec085452b54766d7cb17b7030a6157c84"
+          }
+        },
+        {
+          "client_id": "183143680304-softi78fkuth02kkfrngc9km9b6anamp.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCLhBNrnqK3YrOlPrBcBdQTsx2MwSIZTr4"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "183143680304-softi78fkuth02kkfrngc9km9b6anamp.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "183143680304-if4fq2o2n7h0sqodvlejre0a1hagk8ui.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.terramine.app"
+              }
+            }
+          ]
         }
       }
     }
