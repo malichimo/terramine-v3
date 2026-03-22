@@ -36,6 +36,7 @@ interface MapScreenProps {
   usdEarnings?: number;
   onNavigateToPropertyDetail?: (property: GridSquare) => void;
   onNavigateToVisitorLog?: (property: GridSquare) => void;
+  onNavigateToReferral?: () => void;
 }
 
 const MapScreen = React.forwardRef<any, MapScreenProps>(({ 
@@ -52,6 +53,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   usdEarnings = 0,
   onNavigateToPropertyDetail,
   onNavigateToVisitorLog,
+  onNavigateToReferral,
 }, ref) => {
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
   const [gridSquares, setGridSquares] = useState<Map<string, GridSquare>>(new Map());
@@ -903,6 +905,15 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         <Text style={styles.legendButtonText}>🗺 Legend</Text>
       </TouchableOpacity>
 
+      {/* Referral Button */}
+      <TouchableOpacity
+        style={styles.referralButton}
+        onPress={() => onNavigateToReferral?.()}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.referralButtonText}>🤝 Refer</Text>
+      </TouchableOpacity>
+
       {/* Legend Overlay */}
       {showLegend && (
         <View style={styles.legendPanel}>
@@ -1383,6 +1394,25 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#333',
+  },
+  referralButton: {
+    position: 'absolute',
+    bottom: 192,
+    right: 16,
+    backgroundColor: '#FFD700',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  referralButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1A0900',
   },
   legendPanel: {
     position: 'absolute',

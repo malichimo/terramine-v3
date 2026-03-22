@@ -14,6 +14,7 @@ import {
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { GridSquare } from '../utils/GridUtils';
 import { getNext4AMEST } from '../utils/TimeUtils';
+import { ReferralService } from './ReferralService';
 
 export interface BoostState {
   freeBoostsRemaining: number;
@@ -72,6 +73,16 @@ export class DatabaseService {
 
     // Deduct TB from user
     await this.updateUserBalance(userId, -tbCost);
+
+    // Check if this is their first purchase — fire referral reward if so
+    const q = query(collection(db, 'properties'), where('ownerId', '==', userId));
+    const existing = await getDocs(q);
+    if (existing.size === 1) {
+      // This was the first property — process referral reward (non-fatal)
+      ReferralService.processFirstPurchaseReferral(userId).catch(e =>
+        console.warn('Referral reward failed (non-fatal):', e)
+      );
+    }
   }
 
   async getPropertiesByOwner(userId: string): Promise<GridSquare[]> {

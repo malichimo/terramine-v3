@@ -22,6 +22,7 @@ interface ProfileScreenProps {
   onPropertyPress: (property: GridSquare) => void;
   onSignOut: () => void;
   onUsernameChange: (newUsername: string) => void;
+  onNavigateToReferral: () => void;
 }
 
 interface CheckInData {
@@ -49,6 +50,7 @@ export default function ProfileScreen({
   onPropertyPress,
   onSignOut,
   onUsernameChange,
+  onNavigateToReferral,
 }: ProfileScreenProps) {
   const [activeTab, setActiveTab] = useState<'portfolio' | 'properties' | 'visitors' | 'activity'>('portfolio');
   const [mineTypeFilter, setMineTypeFilter] = useState<string | null>(null);
@@ -309,10 +311,13 @@ export default function ProfileScreen({
           </View>
         </View>
 
-        {/* Edit + Logout */}
+        {/* Edit + Referral + Logout */}
         <View style={styles.headerActions}>
           <TouchableOpacity style={styles.editButton} onPress={() => setShowEditModal(true)}>
             <Text style={styles.editButtonText}>Edit</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.referralButton} onPress={onNavigateToReferral}>
+            <Text style={styles.referralButtonText}>🤝 Refer</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.logoutButton} onPress={onSignOut}>
             <Text style={styles.logoutText}>Logout</Text>
@@ -716,6 +721,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   logoutText: { color: 'white', fontWeight: 'bold', fontSize: 13 },
+  referralButton: {
+    backgroundColor: '#FFD700',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  referralButtonText: { color: '#1A0900', fontWeight: 'bold', fontSize: 13 },
 
   // Tabs
   tabContainer: {

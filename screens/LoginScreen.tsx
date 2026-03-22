@@ -14,11 +14,13 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
+import { ReferralService } from '../services/ReferralService';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [referralCode, setReferralCode] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -44,7 +46,15 @@ export default function LoginScreen() {
 
     try {
       if (isSignUp) {
-        await signUpWithEmail(email, password);
+        const userCredential = await signUpWithEmail(email, password);
+        // Apply referral code if provided
+        if (referralCode.trim() && userCredential?.uid) {
+          try {
+            await ReferralService.applyReferralCode(userCredential.uid, referralCode.trim());
+          } catch (e) {
+            console.warn('Referral code apply failed (non-fatal):', e);
+          }
+        }
         Alert.alert('Success', 'Account created!');
       } else {
         await signInWithEmail(email, password);
@@ -85,6 +95,7 @@ export default function LoginScreen() {
     setIsSignUp(!isSignUp);
     setPassword('');
     setConfirmPassword('');
+    setReferralCode('');
     setShowPassword(false);
     setShowConfirmPassword(false);
   };
@@ -169,6 +180,19 @@ export default function LoginScreen() {
                 />
               </TouchableOpacity>
             </View>
+          )}
+
+          {/* Referral Code — sign-up only, optional */}
+          {isSignUp && (
+            <TextInput
+              style={[styles.input, { borderColor: referralCode ? '#FFD700' : '#5CB3E6' }]}
+              placeholder="Referral Code (optional)"
+              placeholderTextColor="#999"
+              value={referralCode}
+              onChangeText={t => setReferralCode(t.toUpperCase())}
+              autoCapitalize="characters"
+              maxLength={8}
+            />
           )}
 
           <TouchableOpacity style={styles.button} onPress={handleSubmit}>

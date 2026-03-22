@@ -22,36 +22,11 @@ GoogleSignin.configure({
   offlineAccess: false,
 });
 
-// ── Friendly error messages ────────────────────────────────────────────────
-function getFriendlyAuthError(error: any): string {
-  const code = error?.code || '';
-  switch (code) {
-    case 'auth/network-request-failed':
-      return 'No internet connection. Please check your connection and try again.';
-    case 'auth/user-not-found':
-    case 'auth/wrong-password':
-    case 'auth/invalid-credential':
-      return 'Incorrect email or password. Please try again.';
-    case 'auth/invalid-email':
-      return 'Please enter a valid email address.';
-    case 'auth/email-already-in-use':
-      return 'An account with this email already exists. Try signing in instead.';
-    case 'auth/weak-password':
-      return 'Password must be at least 6 characters.';
-    case 'auth/too-many-requests':
-      return 'Too many failed attempts. Please wait a moment and try again.';
-    case 'auth/user-disabled':
-      return 'This account has been disabled. Please contact support.';
-    default:
-      return error?.message || 'Something went wrong. Please try again.';
-  }
-}
-
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   signInWithEmail: (email: string, password: string) => Promise<void>;
-  signUpWithEmail: (email: string, password: string) => Promise<void>;
+  signUpWithEmail: (email: string, password: string) => Promise<{ uid: string } | void>;
   signInWithGoogle: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   signOut: (onBeforeSignOut?: () => Promise<void>) => Promise<void>;
@@ -86,16 +61,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await signInWithEmailAndPassword(auth, email, password);
     } catch (error: any) {
       console.error('Sign In Error:', error);
-      throw new Error(getFriendlyAuthError(error));
+      throw new Error(error.message);
     }
   };
 
   const signUpWithEmail = async (email: string, password: string) => {
     try {
-      await createUserWithEmailAndPassword(auth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      return { uid: userCredential.user.uid };
     } catch (error: any) {
       console.error('Sign Up Error:', error);
-      throw new Error(getFriendlyAuthError(error));
+      throw new Error(error.message);
     }
   };
 
@@ -127,8 +103,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
         throw new Error('Google Play Services not available on this device.');
-      } else if (error?.code === 'auth/network-request-failed') {
-        throw new Error('No internet connection. Please check your connection and try again.');
       } else {
         console.error('Google Sign-In Error:', error);
         throw new Error(error.message || 'Google Sign-In failed. Please try again.');
@@ -141,7 +115,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await sendPasswordResetEmail(auth, email);
     } catch (error: any) {
       console.error('Password Reset Error:', error);
-      throw new Error(getFriendlyAuthError(error));
+      throw new Error(error.message);
     }
   };
 

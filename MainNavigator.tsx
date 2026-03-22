@@ -15,6 +15,7 @@ import MinerMazeScreen from './screens/games/MinerMaze/MinerMazeScreen';
 import LaserBlastGame from './screens/games/LaserBlast/LaserBlastGame';
 import { GridSquare } from './utils/GridUtils';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'react-native';
 import { useAuth } from './contexts/AuthContext';
 import { DatabaseService } from './services/DatabaseService';
 import { ConsentService } from './services/ConsentService';
@@ -24,6 +25,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import OnboardingScreen, { ONBOARDING_SEEN_KEY } from './screens/OnboardingScreen';
 import DailyActivityScreen from './screens/DailyActivityScreen';
 import VisitorLogScreen from './screens/VisitorLogScreen';
+import ReferralScreen from './screens/ReferralScreen';
+import { ReferralService } from './services/ReferralService';
 
 const Tab = createBottomTabNavigator();
 const MapStack = createStackNavigator();
@@ -45,14 +48,14 @@ interface MapStackProps {
   onEarningsUpdate: (amount: number) => Promise<void>;
   mapRef: React.RefObject<any>;
   onPropertyUpdate: () => void;
-  onNavigateToVisitorLog: (property: GridSquare) => void;
+  onNavigateToReferral: () => void;
 }
 
 function MapStackNavigator({
   userId, username, userTB, usdEarnings,
   ownedProperties, allProperties, boostState,
   onPropertyPurchase, onCheckIn, onBoostUpdate, onEarningsUpdate,
-  mapRef, onPropertyUpdate, onNavigateToVisitorLog,
+  mapRef, onPropertyUpdate, onNavigateToReferral,
 }: MapStackProps) {
   return (
     <MapStack.Navigator screenOptions={{ headerShown: false }}>
@@ -78,6 +81,9 @@ function MapStackNavigator({
             onNavigateToVisitorLog={(property: GridSquare) =>
               props.navigation.navigate('VisitorLog', { property })
             }
+            onNavigateToReferral={() =>
+              props.navigation.navigate('Referral')
+            }
           />
         )}
       </MapStack.Screen>
@@ -91,6 +97,7 @@ function MapStackNavigator({
       <MapStack.Screen name="MinerMaze" component={MinerMazeScreen as any} />
       <MapStack.Screen name="LaserBlast" component={LaserBlastGame as any} />
       <MapStack.Screen name="VisitorLog" component={VisitorLogScreen as any} />
+      <MapStack.Screen name="Referral" component={ReferralScreen as any} />
     </MapStack.Navigator>
   );
 }
@@ -130,6 +137,9 @@ function ProfileStackNavigator({
             }
             onSignOut={onSignOut}
             onUsernameChange={onUsernameChange}
+            onNavigateToReferral={() =>
+              props.navigation.navigate('Referral')
+            }
           />
         )}
       </ProfileStack.Screen>
@@ -143,6 +153,7 @@ function ProfileStackNavigator({
       <ProfileStack.Screen name="MinerMaze" component={MinerMazeScreen as any} />
       <ProfileStack.Screen name="LaserBlast" component={LaserBlastGame as any} />
       <ProfileStack.Screen name="VisitorLog" component={VisitorLogScreen as any} />
+      <ProfileStack.Screen name="Referral" component={ReferralScreen as any} />
     </ProfileStack.Navigator>
   );
 }
@@ -220,6 +231,11 @@ export default function MainNavigator() {
         lastAdBoostRefillAt: boostData.lastAdBoostRefillAt,
       });
 
+      // Ensure user has a referral code
+      ReferralService.getOrCreateReferralCode(user.uid).catch(e =>
+        console.warn('Referral code init failed (non-fatal):', e)
+      );
+
       setDataLoaded(true);
     } catch (error) {
       console.error('Error loading data:', error);
@@ -284,7 +300,7 @@ export default function MainNavigator() {
     }
   };
 
-  if (!dataLoaded || onboardingDone === null) {
+  if (!dataLoaded || onboardingDone === null || !consentReady) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator size="large" color="#2196F3" />
@@ -292,7 +308,6 @@ export default function MainNavigator() {
     );
   }
 
-  // Show onboarding before consent/main app — doesn't need consentReady
   if (!onboardingDone) {
     return (
       <OnboardingScreen
@@ -301,32 +316,52 @@ export default function MainNavigator() {
     );
   }
 
-  // Wait for consent after onboarding is done
-  if (!consentReady) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#2196F3" />
-      </View>
-    );
-  }
-
   return (
     <NavigationContainer>
       <Tab.Navigator
         screenOptions={({ route }) => ({
           tabBarIcon: ({ focused, color, size }) => {
-            let iconName: keyof typeof Ionicons.glyphMap = 'map';
             if (route.name === 'Map') {
-              iconName = focused ? 'map' : 'map-outline';
+              return (
+                <Image
+                  source={require('./assets/images/map.png')}
+                  style={{ width: size + 4, height: size + 4, opacity: focused ? 1 : 0.45 }}
+                  resizeMode="contain"
+                />
+              );
             } else if (route.name === 'Profile') {
-              iconName = focused ? 'person' : 'person-outline';
+              return (
+                <Image
+                  source={require('./assets/images/miner_face.png')}
+                  style={{ width: size + 4, height: size + 4, opacity: focused ? 1 : 0.45 }}
+                  resizeMode="contain"
+                />
+              );
             } else if (route.name === 'Settings') {
-              iconName = focused ? 'settings' : 'settings-outline';
+              return (
+                <Image
+                  source={require('./assets/images/gear.png')}
+                  style={{ width: size + 4, height: size + 4, opacity: focused ? 1 : 0.45 }}
+                  resizeMode="contain"
+                />
+              );
             }
-            return <Ionicons name={iconName} size={size} color={color} />;
+            return null;
           },
-          tabBarActiveTintColor: '#2196F3',
-          tabBarInactiveTintColor: 'gray',
+          tabBarActiveTintColor: '#FFD700',
+          tabBarInactiveTintColor: '#8B7355',
+          tabBarStyle: {
+            backgroundColor: '#1A0900',
+            borderTopColor: '#6D4C1F',
+            borderTopWidth: 2,
+            paddingBottom: 4,
+            paddingTop: 4,
+            height: 60,
+          },
+          tabBarLabelStyle: {
+            fontSize: 11,
+            fontWeight: '600',
+          },
           headerShown: false,
         })}
       >
@@ -346,7 +381,7 @@ export default function MainNavigator() {
               onEarningsUpdate={handleEarningsUpdate}
               mapRef={mapRef}
               onPropertyUpdate={handlePropertyUpdate}
-              onNavigateToVisitorLog={() => {}}
+              onNavigateToReferral={() => {}}
             />
           )}
         </Tab.Screen>
