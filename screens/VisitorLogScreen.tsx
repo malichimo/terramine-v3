@@ -15,7 +15,10 @@ import {
   StatusBar,
 } from 'react-native';
 import { DatabaseService } from '../services/DatabaseService';
+import { ModerationService } from '../services/ModerationService';
 import { GridSquare } from '../utils/GridUtils';
+import { useAuth } from '../contexts/AuthContext';
+import ReportModal from '../components/ReportModal';
 
 const dbService = new DatabaseService();
 
@@ -28,6 +31,9 @@ interface CheckIn {
   photoURL?: string;
   timestamp: string;
   visitorNickname?: string;
+  reportCount?: number;
+  isHidden?: boolean;
+  isAdult?: boolean;
 }
 
 function getMineColor(mineType: string): string {
@@ -69,8 +75,13 @@ function formatTimestamp(iso: string): string {
 
 export default function VisitorLogScreen({ route, navigation }: any) {
   const { property } = route.params as { property: GridSquare };
+  const { user } = useAuth();
   const [checkIns, setCheckIns] = useState<CheckIn[]>([]);
   const [loading, setLoading] = useState(true);
+  const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
+  const [viewerIsAdult, setViewerIsAdult] = useState(false);
+  const [reportModalVisible, setReportModalVisible] = useState(false);
+  const [reportingCheckIn, setReportingCheckIn] = useState<CheckIn | null>(null);
 
   const mineColor = getMineColor(property.mineType);
   const propertyTitle = (property as any).customName ||
@@ -78,16 +89,30 @@ export default function VisitorLogScreen({ route, navigation }: any) {
 
   useEffect(() => {
     loadCheckIns();
+    if (user) loadModerationData();
   }, []);
+
+  const loadModerationData = async () => {
+    if (!user) return;
+    try {
+      const blocked = await ModerationService.getBlockedUsers(user.uid);
+      setBlockedUsers(blocked);
+      const userData = await new (require('../services/DatabaseService').DatabaseService)().getUserData(user.uid);
+      setViewerIsAdult(userData?.isAdult ?? false);
+    } catch (e) {
+      console.warn('Moderation data load failed:', e);
+    }
+  };
 
   const loadCheckIns = async () => {
     try {
       setLoading(true);
       const data = await dbService.getCheckInsForProperty(property.id);
-      // Sort most recent first
-      const sorted = data.sort((a, b) =>
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      );
+      const sorted = data
+        .filter(ci => !ci.isHidden)
+        .sort((a, b) =>
+          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        );
       setCheckIns(sorted);
     } catch (err) {
       console.error('Error loading check-ins:', err);
@@ -96,41 +121,64 @@ export default function VisitorLogScreen({ route, navigation }: any) {
     }
   };
 
-  const renderCheckIn = ({ item }: { item: CheckIn }) => (
-    <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <View style={[styles.avatarCircle, { backgroundColor: mineColor }]}>
-          <Text style={styles.avatarText}>
-            {(item.visitorNickname || item.userId).charAt(0).toUpperCase()}
-          </Text>
+  const renderCheckIn = ({ item }: { item: CheckIn }) => {
+    // Hide content from blocked users
+    if (blockedUsers.includes(item.userId)) return null;
+
+    const showPhoto = item.photoURL &&
+      ModerationService.shouldShowPhoto(item.isAdult ?? false, viewerIsAdult);
+    const photoBlocked = item.photoURL && !showPhoto;
+
+    return (
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={[styles.avatarCircle, { backgroundColor: mineColor }]}>
+            <Text style={styles.avatarText}>
+              {(item.visitorNickname || item.userId).charAt(0).toUpperCase()}
+            </Text>
+          </View>
+          <View style={styles.cardHeaderText}>
+            <Text style={styles.visitorName}>
+              @{item.visitorNickname || item.userId}
+            </Text>
+            <Text style={styles.timestamp}>{formatTimestamp(item.timestamp)}</Text>
+          </View>
+          {/* Report button — only show for other users' content */}
+          {user && item.userId !== user.uid && (
+            <TouchableOpacity
+              style={styles.reportButton}
+              onPress={() => { setReportingCheckIn(item); setReportModalVisible(true); }}
+            >
+              <Text style={styles.reportButtonText}>⋯</Text>
+            </TouchableOpacity>
+          )}
         </View>
-        <View style={styles.cardHeaderText}>
-          <Text style={styles.visitorName}>
-            @{item.visitorNickname || item.userId}
-          </Text>
-          <Text style={styles.timestamp}>{formatTimestamp(item.timestamp)}</Text>
-        </View>
+
+        {item.message ? (
+          <View style={styles.messageBox}>
+            <Text style={styles.messageText}>"{item.message}"</Text>
+          </View>
+        ) : null}
+
+        {showPhoto ? (
+          <Image
+            source={{ uri: item.photoURL }}
+            style={styles.photo}
+            resizeMode="cover"
+          />
+        ) : photoBlocked ? (
+          <View style={styles.adultBlockedPhoto}>
+            <Text style={styles.adultBlockedIcon}>🔞</Text>
+            <Text style={styles.adultBlockedText}>Age-restricted content</Text>
+          </View>
+        ) : null}
+
+        {!item.message && !item.photoURL ? (
+          <Text style={styles.noMessageText}>Stopped by 👋</Text>
+        ) : null}
       </View>
-
-      {item.message ? (
-        <View style={styles.messageBox}>
-          <Text style={styles.messageText}>"{item.message}"</Text>
-        </View>
-      ) : null}
-
-      {item.photoURL ? (
-        <Image
-          source={{ uri: item.photoURL }}
-          style={styles.photo}
-          resizeMode="cover"
-        />
-      ) : null}
-
-      {!item.message && !item.photoURL ? (
-        <Text style={styles.noMessageText}>Stopped by 👋</Text>
-      ) : null}
-    </View>
-  );
+    );
+  };
 
   const statusBarHeight = Platform.OS === 'android' ? StatusBar.currentHeight || 0 : 0;
 
@@ -177,6 +225,28 @@ export default function VisitorLogScreen({ route, navigation }: any) {
           renderItem={renderCheckIn}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
+        />
+      )}
+
+      {/* Report Modal */}
+      {reportingCheckIn && (
+        <ReportModal
+          visible={reportModalVisible}
+          checkInId={reportingCheckIn.id}
+          reportedUserId={reportingCheckIn.userId}
+          onClose={() => { setReportModalVisible(false); setReportingCheckIn(null); }}
+          onReported={() => {
+            setReportModalVisible(false);
+            setReportingCheckIn(null);
+            loadCheckIns();
+          }}
+          onBlocked={() => {
+            setReportModalVisible(false);
+            setReportingCheckIn(null);
+            if (reportingCheckIn) {
+              setBlockedUsers(prev => [...prev, reportingCheckIn.userId]);
+            }
+          }}
         />
       )}
     </SafeAreaView>
@@ -307,6 +377,27 @@ const styles = StyleSheet.create({
     color: '#AAA',
     marginTop: 2,
   },
+  reportButton: {
+    padding: 8,
+    marginLeft: 4,
+  },
+  reportButtonText: {
+    fontSize: 20,
+    color: '#AAA',
+    fontWeight: 'bold',
+  },
+  adultBlockedPhoto: {
+    width: '100%',
+    height: 120,
+    backgroundColor: '#F0E0E0',
+    borderRadius: 8,
+    marginTop: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  adultBlockedIcon: { fontSize: 28 },
+  adultBlockedText: { fontSize: 13, color: '#888' },
   centered: {
     flex: 1,
     alignItems: 'center',

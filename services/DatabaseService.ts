@@ -78,7 +78,6 @@ export class DatabaseService {
     const q = query(collection(db, 'properties'), where('ownerId', '==', userId));
     const existing = await getDocs(q);
     if (existing.size === 1) {
-      // This was the first property — process referral reward (non-fatal)
       ReferralService.processFirstPurchaseReferral(userId).catch(e =>
         console.warn('Referral reward failed (non-fatal):', e)
       );
@@ -167,8 +166,20 @@ export class DatabaseService {
   async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) {
     const checkInRef = doc(collection(db, 'checkIns'));
 
-    // photoUri here is already an uploaded download URL — no re-upload needed
     const photoURL = hasPhoto && photoUri ? photoUri : undefined;
+
+    // Determine adult status of the uploader for photo flagging
+    let isAdult = false;
+    if (hasPhoto && photoURL) {
+      try {
+        const userSnap = await getDoc(doc(db, 'users', userId));
+        if (userSnap.exists()) {
+          isAdult = userSnap.data().isAdult ?? false;
+        }
+      } catch {
+        // Non-fatal — default to false (safe)
+      }
+    }
 
     const checkInData: any = {
       userId,
@@ -176,7 +187,10 @@ export class DatabaseService {
       propertyOwnerId,
       hasPhoto: !!photoURL,
       timestamp: new Date().toISOString(),
+      reportCount: 0,
+      isHidden: false,
       ...(visitorNickname ? { visitorNickname } : {}),
+      ...(photoURL ? { isAdult } : {}),
     };
 
     if (message && message.trim() !== '') {

@@ -14,18 +14,40 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
-import { ReferralService } from '../services/ReferralService';
+import { ModerationService } from '../services/ModerationService';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [referralCode, setReferralCode] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState('');
+  const [dobError, setDobError] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const { signInWithEmail, signUpWithEmail, signInWithGoogle, resetPassword } = useAuth();
+
+  const validateDOB = (dob: string): boolean => {
+    // Expect MM/DD/YYYY format
+    const dobRegex = /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/\d{4}$/;
+    if (!dobRegex.test(dob)) return false;
+    const date = new Date(dob);
+    if (isNaN(date.getTime())) return false;
+    if (date > new Date()) return false;
+    const year = date.getFullYear();
+    if (year < 1900 || year > new Date().getFullYear()) return false;
+    return true;
+  };
+
+  const formatDOBInput = (text: string): string => {
+    // Auto-insert slashes: MM/DD/YYYY
+    const digits = text.replace(/\D/g, '');
+    if (digits.length <= 2) return digits;
+    if (digits.length <= 4) return `${digits.slice(0,2)}/${digits.slice(2)}`;
+    return `${digits.slice(0,2)}/${digits.slice(2,4)}/${digits.slice(4,8)}`;
+  };
 
   const handleSubmit = async () => {
     if (!email || !password) {
@@ -42,17 +64,34 @@ export default function LoginScreen() {
         Alert.alert('Error', 'Passwords do not match');
         return;
       }
+      if (!dateOfBirth) {
+        Alert.alert('Error', 'Please enter your date of birth');
+        return;
+      }
+      if (!validateDOB(dateOfBirth)) {
+        Alert.alert('Error', 'Please enter a valid date of birth (MM/DD/YYYY)');
+        return;
+      }
     }
 
     try {
       if (isSignUp) {
-        const userCredential = await signUpWithEmail(email, password);
-        // Apply referral code if provided
-        if (referralCode.trim() && userCredential?.uid) {
+        const result = await signUpWithEmail(email, password);
+        if (result?.uid) {
+          // Save DOB and adult status
           try {
-            await ReferralService.applyReferralCode(userCredential.uid, referralCode.trim());
+            await ModerationService.saveDateOfBirth(result.uid, dateOfBirth);
           } catch (e) {
-            console.warn('Referral code apply failed (non-fatal):', e);
+            console.warn('DOB save failed (non-fatal):', e);
+          }
+          // Apply referral code if provided
+          if (referralCode.trim()) {
+            try {
+              const { ReferralService } = require('../services/ReferralService');
+              await ReferralService.applyReferralCode(result.uid, referralCode.trim());
+            } catch (e) {
+              console.warn('Referral code apply failed (non-fatal):', e);
+            }
           }
         }
         Alert.alert('Success', 'Account created!');
@@ -96,6 +135,8 @@ export default function LoginScreen() {
     setPassword('');
     setConfirmPassword('');
     setReferralCode('');
+    setDateOfBirth('');
+    setDobError('');
     setShowPassword(false);
     setShowConfirmPassword(false);
   };
@@ -179,6 +220,27 @@ export default function LoginScreen() {
                   color="#999"
                 />
               </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Date of Birth — sign-up only, required */}
+          {isSignUp && (
+            <View>
+              <TextInput
+                style={[styles.input, dobError ? { borderColor: '#C0392B' } : {}]}
+                placeholder="Date of Birth (MM/DD/YYYY)"
+                placeholderTextColor="#999"
+                value={dateOfBirth}
+                onChangeText={(text) => {
+                  setDobError('');
+                  setDateOfBirth(formatDOBInput(text));
+                }}
+                keyboardType="numeric"
+                maxLength={10}
+              />
+              {dobError ? (
+                <Text style={styles.dobError}>{dobError}</Text>
+              ) : null}
             </View>
           )}
 
@@ -346,6 +408,13 @@ const styles = StyleSheet.create({
   forgotText: {
     color: '#999',
     fontSize: 13,
+  },
+  dobError: {
+    color: '#C0392B',
+    fontSize: 12,
+    marginTop: -10,
+    marginBottom: 10,
+    paddingHorizontal: 4,
   },
   dividerRow: {
     flexDirection: 'row',
