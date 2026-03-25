@@ -7,8 +7,6 @@ import { DatabaseService, BoostState } from '../services/DatabaseService';
 import { generateGridSquare, getVisibleGridSquares, isWithinGridSquare, isAdjacentToUser, GridSquare, gridToLatLng } from '../utils/GridUtils';
 import BoostModal from '../components/BoostModal';
 import { soundService } from '../services/SoundService';
-import { ModerationService } from '../services/ModerationService';
-import ReportModal from '../components/ReportModal';
 
 // Extend BoostState with computed properties used locally in MapScreen
 interface MapScreenBoostState extends BoostState {
@@ -62,9 +60,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const [selectedSquare, setSelectedSquare] = useState<GridSquare | null>(null);
   const [showCheckInModal, setShowCheckInModal] = useState(false);
   const [showBoostModal, setShowBoostModal] = useState(false);
-  const [reportModalVisible, setReportModalVisible] = useState(false);
-  const [reportingCheckInId, setReportingCheckInId] = useState<string | null>(null);
-  const [reportingUserId, setReportingUserId] = useState<string | null>(null);
   const [checkInMessage, setCheckInMessage] = useState('');
   const [lastCheckIns, setLastCheckIns] = useState<Map<string, string>>(new Map());
   const [propertyCheckIns, setPropertyCheckIns] = useState<Map<string, CheckIn[]>>(new Map());
@@ -220,7 +215,16 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       try {
         const state = await dbService.getBoostState(userId);
         boostExpiresAtRef.current = state.boostExpiresAt;
-        setBoostState(state);
+        // Preserve display fields — timer will recalculate them on next tick
+        setBoostState(prev => ({
+          ...prev,
+          freeBoostsRemaining: state.freeBoostsRemaining,
+          adBoostsRemaining: state.adBoostsRemaining,
+          boostExpiresAt: state.boostExpiresAt,
+          nextFreeBoostResetAt: state.nextFreeBoostResetAt,
+          lastAdBoostRefillAt: state.lastAdBoostRefillAt,
+          // Keep boostTimeRemaining and isBoostActive — timer recalculates these
+        }));
         console.log('📊 Initial boost state loaded:', state);
       } catch (error) {
         console.error('Error loading boost state:', error);
@@ -228,8 +232,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     };
 
     loadBoostState();
-    // DON'T set up interval - it causes race conditions
-    // The boost handlers will update state directly
   }, [userId]);
 
   // Earnings update timer - updates display every second, saves to Firebase every minute
@@ -1017,18 +1019,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
                   >
                     <Text style={styles.buttonText}>📋 View Visitor Log</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.reportPropertyButton}
-                    onPress={() => {
-                      if (selectedSquare?.ownerId) {
-                        setReportingUserId(selectedSquare.ownerId);
-                        setReportingCheckInId(selectedSquare.id);
-                        setReportModalVisible(true);
-                      }
-                    }}
-                  >
-                    <Text style={styles.reportPropertyButtonText}>⋯ Report</Text>
-                  </TouchableOpacity>
                 </>
               )}
               {selectedPropertyCheckIns.length > 0 && (
@@ -1136,18 +1126,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         nextResetTime={boostState.nextFreeBoostResetAt}
         lastAdBoostRefillAt={boostState.lastAdBoostRefillAt}
       />
-
-      {/* Report Modal */}
-      {reportingCheckInId && reportingUserId && (
-        <ReportModal
-          visible={reportModalVisible}
-          checkInId={reportingCheckInId}
-          reportedUserId={reportingUserId}
-          onClose={() => { setReportModalVisible(false); setReportingCheckInId(null); setReportingUserId(null); }}
-          onReported={() => { setReportModalVisible(false); setReportingCheckInId(null); setReportingUserId(null); }}
-          onBlocked={() => { setReportModalVisible(false); setReportingCheckInId(null); setReportingUserId(null); setSelectedSquare(null); }}
-        />
-      )}
     </View>
   );
 });
@@ -1485,20 +1463,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     marginTop: 8,
-  },
-  reportPropertyButton: {
-    backgroundColor: '#F5F5F5',
-    padding: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 6,
-    borderWidth: 1,
-    borderColor: '#DDD',
-  },
-  reportPropertyButtonText: {
-    fontSize: 13,
-    color: '#888',
-    fontWeight: '600',
   },
 });
 

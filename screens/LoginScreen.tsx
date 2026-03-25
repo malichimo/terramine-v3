@@ -33,12 +33,29 @@ export default function LoginScreen() {
     // Expect MM/DD/YYYY format
     const dobRegex = /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/\d{4}$/;
     if (!dobRegex.test(dob)) return false;
-    const date = new Date(dob);
-    if (isNaN(date.getTime())) return false;
-    if (date > new Date()) return false;
-    const year = date.getFullYear();
+    // Parse manually to avoid Android JS engine date parsing issues
+    const parts = dob.split('/');
+    const month = parseInt(parts[0], 10);
+    const day = parseInt(parts[1], 10);
+    const year = parseInt(parts[2], 10);
     if (year < 1900 || year > new Date().getFullYear()) return false;
+    // Validate day for the given month
+    const daysInMonth = new Date(year, month, 0).getDate();
+    if (day < 1 || day > daysInMonth) return false;
+    // Must be at least 13 years old
+    const today = new Date();
+    const age = today.getFullYear() - year - (
+      today.getMonth() + 1 < month ||
+      (today.getMonth() + 1 === month && today.getDate() < day) ? 1 : 0
+    );
+    if (age < 13) return false;
     return true;
+  };
+
+  // Convert MM/DD/YYYY to ISO YYYY-MM-DD for safe cross-platform storage
+  const dobToISO = (dob: string): string => {
+    const parts = dob.split('/');
+    return `${parts[2]}-${parts[0].padStart(2,'0')}-${parts[1].padStart(2,'0')}`;
   };
 
   const formatDOBInput = (text: string): string => {
@@ -78,9 +95,9 @@ export default function LoginScreen() {
       if (isSignUp) {
         const result = await signUpWithEmail(email, password);
         if (result?.uid) {
-          // Save DOB and adult status
+          // Save DOB and adult status using ISO format for cross-platform safety
           try {
-            await ModerationService.saveDateOfBirth(result.uid, dateOfBirth);
+            await ModerationService.saveDateOfBirth(result.uid, dobToISO(dateOfBirth));
           } catch (e) {
             console.warn('DOB save failed (non-fatal):', e);
           }

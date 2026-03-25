@@ -10,6 +10,7 @@ import { GridSquare } from '../utils/GridUtils';
 import { useAuth } from '../contexts/AuthContext';
 import { DatabaseService, ActivityEvent } from '../services/DatabaseService';
 import EditProfileModal, { ProfileData } from '../components/EditProfileModal';
+import ReportModal from '../components/ReportModal';
 
 interface ProfileScreenProps {
   navigation: any;
@@ -62,6 +63,9 @@ export default function ProfileScreen({
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [displayUsername, setDisplayUsername] = useState(username);
+  const [reportModalVisible, setReportModalVisible] = useState(false);
+  const [reportingCheckInId, setReportingCheckInId] = useState<string | null>(null);
+  const [reportingUserId, setReportingUserId] = useState<string | null>(null);
 
   const { user } = useAuth();
 
@@ -546,6 +550,19 @@ export default function ProfileScreen({
                                   (checkIn.userId === user?.uid ? displayUsername : 'Anonymous Miner')}
                               </Text>
                               <Text style={styles.visitorTimestamp}>{formatTimestamp(checkIn.timestamp)}</Text>
+                              {/* Report button — only for other users' content */}
+                              {checkIn.userId !== user?.uid && (
+                                <TouchableOpacity
+                                  style={styles.visitorReportButton}
+                                  onPress={() => {
+                                    setReportingCheckInId(checkIn.id);
+                                    setReportingUserId(checkIn.userId);
+                                    setReportModalVisible(true);
+                                  }}
+                                >
+                                  <Text style={styles.visitorReportButtonText}>⋯</Text>
+                                </TouchableOpacity>
+                              )}
                             </View>
                             {checkIn.message ? (
                               <Text style={styles.visitorMessage}>"{checkIn.message}"</Text>
@@ -629,6 +646,18 @@ export default function ProfileScreen({
         onClose={() => setShowEditModal(false)}
         onSave={handleProfileSave}
       />
+
+      {/* Report Modal */}
+      {reportingCheckInId && reportingUserId && (
+        <ReportModal
+          visible={reportModalVisible}
+          checkInId={reportingCheckInId}
+          reportedUserId={reportingUserId}
+          onClose={() => { setReportModalVisible(false); setReportingCheckInId(null); setReportingUserId(null); }}
+          onReported={() => { setReportModalVisible(false); setReportingCheckInId(null); setReportingUserId(null); }}
+          onBlocked={() => { setReportModalVisible(false); setReportingCheckInId(null); setReportingUserId(null); }}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -895,6 +924,15 @@ const styles = StyleSheet.create({
   visitorTimestamp: { fontSize: 12, color: '#999' },
   visitorMessage: { fontSize: 14, color: '#555', fontStyle: 'italic', marginBottom: 8 },
   visitorPhoto: { width: '100%', height: 180, borderRadius: 8, marginTop: 8 },
+  visitorReportButton: {
+    marginLeft: 8,
+    padding: 4,
+  },
+  visitorReportButtonText: {
+    fontSize: 18,
+    color: '#AAA',
+    fontWeight: 'bold',
+  },
   photoIndicatorText: { fontSize: 12, color: '#9C27B0', fontWeight: '600' },
 
   // Activity tab

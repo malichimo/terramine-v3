@@ -125,14 +125,24 @@ export class ModerationService {
    */
   static isAdultFromDOB(dateOfBirth: string): boolean {
     try {
-      const dob = new Date(dateOfBirth);
-      const now = new Date();
-      const age = now.getFullYear() - dob.getFullYear();
-      const monthDiff = now.getMonth() - dob.getMonth();
-      const dayDiff = now.getDate() - dob.getDate();
-      if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
-        return age - 1 >= 18;
+      // Handle both YYYY-MM-DD (ISO, stored format) and MM/DD/YYYY (legacy)
+      let year: number, month: number, day: number;
+      if (dateOfBirth.includes('-')) {
+        const parts = dateOfBirth.split('-');
+        year = parseInt(parts[0], 10);
+        month = parseInt(parts[1], 10);
+        day = parseInt(parts[2], 10);
+      } else {
+        const parts = dateOfBirth.split('/');
+        month = parseInt(parts[0], 10);
+        day = parseInt(parts[1], 10);
+        year = parseInt(parts[2], 10);
       }
+      const today = new Date();
+      const age = today.getFullYear() - year - (
+        today.getMonth() + 1 < month ||
+        (today.getMonth() + 1 === month && today.getDate() < day) ? 1 : 0
+      );
       return age >= 18;
     } catch {
       return false;
