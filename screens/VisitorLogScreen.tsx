@@ -31,6 +31,7 @@ interface CheckIn {
   photoURL?: string;
   timestamp: string;
   nickname?: string;
+  visitorNickname?: string; // Keep for backward compatibility
   reportCount?: number;
   isHidden?: boolean;
   isAdult?: boolean;
@@ -134,12 +135,12 @@ export default function VisitorLogScreen({ route, navigation }: any) {
         <View style={styles.cardHeader}>
           <View style={[styles.avatarCircle, { backgroundColor: mineColor }]}>
             <Text style={styles.avatarText}>
-              {(item.nickname || item.userId).charAt(0).toUpperCase()}
+              {(item.nickname || item.visitorNickname || item.userId).charAt(0).toUpperCase()}
             </Text>
           </View>
           <View style={styles.cardHeaderText}>
             <Text style={styles.visitorName}>
-              @{item.nickname || item.userId}
+              @{item.nickname || item.visitorNickname || item.userId}
             </Text>
             <Text style={styles.timestamp}>{formatTimestamp(item.timestamp)}</Text>
           </View>

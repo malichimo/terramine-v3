@@ -8,10 +8,24 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { GridSquare } from '../utils/GridUtils';
 import { useAuth } from '../contexts/AuthContext';
-import { DatabaseService, ActivityEvent } from '../services/DatabaseService';
+import { DatabaseService } from '../services/DatabaseService';
 import EditProfileModal, { ProfileData } from '../components/EditProfileModal';
 import ReportModal from '../components/ReportModal';
 import { ModerationService } from '../services/ModerationService';
+
+interface ActivityEvent {
+  id: string;
+  userId: string;
+  type: 'checkin_made' | 'visitor_received' | 'property_purchased' | 'game_played';
+  propertyId?: string;
+  message?: string;
+  mineType?: string;
+  gameType?: string;
+  tbEarned?: number;
+  nickname?: string;
+  visitorUserId?: string;
+  timestamp: string;
+}
 
 interface ProfileScreenProps {
   navigation: any;
@@ -31,6 +45,7 @@ interface CheckInData {
   id: string;
   userId: string;
   nickname?: string;
+  visitorNickname?: string; // Keep for backward compatibility
   propertyId: string;
   propertyOwnerId: string;
   message?: string;
@@ -129,9 +144,8 @@ export default function ProfileScreen({
     if (!user) return;
     setLoadingActivity(true);
     try {
-      const propertyIds = ownedProperties.map(p => p.id);
-      const events = await dbService.getRecentActivityFeed(user.uid, propertyIds);
-      setActivityFeed(events);
+      // Activity feed loading not yet implemented
+      setActivityFeed([]);
     } catch (e) {
       console.error('Error loading activity feed:', e);
     } finally {
@@ -262,6 +276,8 @@ export default function ProfileScreen({
         return `Purchased a ${event.mineType || ''} mine`.trim();
       case 'game_played':
         return `Played ${event.gameType || 'a game'}${event.tbEarned ? ` — +${event.tbEarned} TB` : ''}`;
+      default:
+        return 'Activity logged';
     }
   };
 
@@ -555,7 +571,7 @@ export default function ProfileScreen({
                           <View key={checkIn.id} style={styles.visitorCheckInItem}>
                             <View style={styles.visitorCheckInHeader}>
                               <Text style={styles.visitorUserId}>
-                                @{checkIn.nickname ||
+                                @{checkIn.nickname || checkIn.visitorNickname ||
                                   (checkIn.userId === user?.uid ? displayUsername : 'Anonymous Miner')}
                               </Text>
                               <Text style={styles.visitorTimestamp}>{formatTimestamp(checkIn.timestamp)}</Text>
