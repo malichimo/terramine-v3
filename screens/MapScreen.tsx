@@ -225,7 +225,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           lastAdBoostRefillAt: state.lastAdBoostRefillAt,
           // Keep boostTimeRemaining and isBoostActive — timer recalculates these
         }));
-        console.log('📊 Initial boost state loaded:', state);
       } catch (error) {
         console.error('Error loading boost state:', error);
       }
@@ -370,10 +369,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       // Cap offline earnings at 24 hours to prevent runaway accumulation
       const MAX_OFFLINE_SECONDS = 24 * 60 * 60;
       const cappedSeconds = Math.min(offlineSeconds, MAX_OFFLINE_SECONDS);
-      if (offlineSeconds > MAX_OFFLINE_SECONDS) {
-        console.log(`Offline time capped from ${(offlineSeconds/3600).toFixed(1)}h to 24h for earnings`);
-      }
-      console.log(`User was offline for ${(offlineSeconds / 60).toFixed(1)} minutes (earning for ${(cappedSeconds/60).toFixed(1)} min)`);
 
       // Calculate base earnings rate
       const rentRates = {
@@ -414,14 +409,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       await saveLastActiveTime();
 
       if (totalOfflineEarnings > 0) {
-        console.log(`Offline earnings calculated:`, {
-          offlineMinutes: (offlineSeconds / 60).toFixed(1),
-          boostedMinutes: (boostedSeconds / 60).toFixed(1),
-          unboostedMinutes: (unboostedSeconds / 60).toFixed(1),
-          earnings: `$${totalOfflineEarnings.toFixed(8)}`
-        });
-
-        // Save offline earnings to Firebase
         if (onEarningsUpdate) {
           await onEarningsUpdate(totalOfflineEarnings);
         }
@@ -697,13 +684,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const handleFreeBoost = async () => {
     try {
       const newState = await dbService.useFreeBoost(userId, boostState);
-      boostExpiresAtRef.current = newState.boostExpiresAt; // keep ref in sync immediately
-      console.log('🔥 Free boost activated!');
-      console.log('🔥 boostExpiresAt set to:', newState.boostExpiresAt);
-      console.log('🔥 Current time:', new Date().toISOString());
-      console.log('🔥 Diff minutes:', newState.boostExpiresAt 
-        ? ((new Date(newState.boostExpiresAt).getTime() - Date.now()) / 60000).toFixed(2)
-        : 'null');
+      boostExpiresAtRef.current = newState.boostExpiresAt;
       setBoostState(newState);
       onBoostUpdate(newState);
       setShowBoostModal(false);
@@ -715,19 +696,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   };
 
   const handleAdBoost = async () => {
-    // This is now handled by the DatabaseService.useAdBoost() method
-    console.log('🎬 Ad boost clicked. Current state:', {
-      adBoostsRemaining: boostState.adBoostsRemaining,
-      boostExpiresAt: boostState.boostExpiresAt,
-    });
-    
     try {
       const newState = await dbService.useAdBoost(userId, boostState);
-      console.log('✅ Ad boost activated. New state:', {
-        adBoostsRemaining: newState.adBoostsRemaining,
-        boostExpiresAt: newState.boostExpiresAt,
-      });
-      
       boostExpiresAtRef.current = newState.boostExpiresAt; // keep ref in sync immediately
       setBoostState(newState);
       onBoostUpdate(newState);

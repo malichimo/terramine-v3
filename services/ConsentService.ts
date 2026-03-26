@@ -15,7 +15,6 @@
 import {
   AdsConsent,
   AdsConsentStatus,
-  AdsConsentDebugGeography,
   MobileAds,
 } from 'react-native-google-mobile-ads';
 
@@ -39,14 +38,7 @@ export class ConsentService {
 
     try {
       // ── Step 1: Check / request consent info ──────────────────────────────
-      const consentInfo = await AdsConsent.requestInfoUpdate({
-        // debugGeography lets you test the EU consent form in any region during dev.
-        // Remove or comment out before releasing to production.
-        ...((__DEV__) ? {
-          debugGeography: AdsConsentDebugGeography.EEA,
-          testDeviceIdentifiers: [], // add your test device ID from logcat/xcode if needed
-        } : {}),
-      });
+      const consentInfo = await AdsConsent.requestInfoUpdate();
 
       // ── Step 2: Show form if required and available ───────────────────────
       if (
