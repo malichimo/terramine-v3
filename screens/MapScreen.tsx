@@ -30,7 +30,7 @@ interface MapScreenProps {
   allProperties: GridSquare[];
   initialBoostState: BoostState;
   onPropertyPurchase: (property: GridSquare, tbSpent: number) => void;
-  onCheckIn: (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) => Promise<void>;
+  onCheckIn: (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, nickname?: string) => Promise<void>;
   onBoostUpdate: (boostData: any) => void;
   onEarningsUpdate?: (usdAmount: number) => Promise<void>;
   usdEarnings?: number;
@@ -957,7 +957,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           <Text style={styles.infoTitle}>
             {selectedSquare.isOwned
               ? (selectedSquare.customName || (selectedSquare.mineType?.toUpperCase() || 'UNKNOWN') + ' MINE')
-              : (selectedSquare.mineType?.toUpperCase() || 'ROCK') + ' MINE — AVAILABLE'}
+              : 'Mine Available'}
           </Text>
           {selectedSquare.isOwned ? (
             <View>

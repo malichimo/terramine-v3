@@ -29,27 +29,29 @@ export default function LoginScreen() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const { signInWithEmail, signUpWithEmail, signInWithGoogle, resetPassword } = useAuth();
 
-  const validateDOB = (dob: string): boolean => {
-    // Expect MM/DD/YYYY format
+  const validateDOBFormat = (dob: string): boolean => {
     const dobRegex = /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/\d{4}$/;
     if (!dobRegex.test(dob)) return false;
-    // Parse manually to avoid Android JS engine date parsing issues
     const parts = dob.split('/');
     const month = parseInt(parts[0], 10);
     const day = parseInt(parts[1], 10);
     const year = parseInt(parts[2], 10);
     if (year < 1900 || year > new Date().getFullYear()) return false;
-    // Validate day for the given month
     const daysInMonth = new Date(year, month, 0).getDate();
     if (day < 1 || day > daysInMonth) return false;
-    // Must be at least 13 years old
+    return true;
+  };
+
+  const getAgeFromDOB = (dob: string): number => {
+    const parts = dob.split('/');
+    const month = parseInt(parts[0], 10);
+    const day = parseInt(parts[1], 10);
+    const year = parseInt(parts[2], 10);
     const today = new Date();
-    const age = today.getFullYear() - year - (
+    return today.getFullYear() - year - (
       today.getMonth() + 1 < month ||
       (today.getMonth() + 1 === month && today.getDate() < day) ? 1 : 0
     );
-    if (age < 13) return false;
-    return true;
   };
 
   // Convert MM/DD/YYYY to ISO YYYY-MM-DD for safe cross-platform storage
@@ -85,8 +87,16 @@ export default function LoginScreen() {
         Alert.alert('Error', 'Please enter your date of birth');
         return;
       }
-      if (!validateDOB(dateOfBirth)) {
+      if (!validateDOBFormat(dateOfBirth)) {
         Alert.alert('Error', 'Please enter a valid date of birth (MM/DD/YYYY)');
+        return;
+      }
+      const age = getAgeFromDOB(dateOfBirth);
+      if (age < 13) {
+        Alert.alert(
+          'Age Requirement',
+          'You must be at least 13 years old to create a TerraMine account.'
+        );
         return;
       }
     }
@@ -95,8 +105,11 @@ export default function LoginScreen() {
       if (isSignUp) {
         const result = await signUpWithEmail(email, password);
         if (result?.uid) {
-          // Save DOB and adult status using ISO format for cross-platform safety
+          // Save DOB — use small delay to allow auth state + createUser to propagate
+          // ModerationService.saveDateOfBirth uses setDoc merge:true so it's safe even if
+          // the user doc doesn't exist yet, but the delay avoids any write ordering issues
           try {
+            await new Promise(resolve => setTimeout(resolve, 500));
             await ModerationService.saveDateOfBirth(result.uid, dobToISO(dateOfBirth));
           } catch (e) {
             console.warn('DOB save failed (non-fatal):', e);

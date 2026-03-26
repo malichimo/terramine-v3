@@ -14,7 +14,6 @@ import {
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { GridSquare } from '../utils/GridUtils';
 import { getNext4AMEST } from '../utils/TimeUtils';
-import { ReferralService } from './ReferralService';
 
 export interface BoostState {
   freeBoostsRemaining: number;
@@ -73,15 +72,6 @@ export class DatabaseService {
 
     // Deduct TB from user
     await this.updateUserBalance(userId, -tbCost);
-
-    // Check if this is their first purchase — fire referral reward if so
-    const q = query(collection(db, 'properties'), where('ownerId', '==', userId));
-    const existing = await getDocs(q);
-    if (existing.size === 1) {
-      ReferralService.processFirstPurchaseReferral(userId).catch(e =>
-        console.warn('Referral reward failed (non-fatal):', e)
-      );
-    }
   }
 
   async getPropertiesByOwner(userId: string): Promise<GridSquare[]> {
@@ -166,20 +156,8 @@ export class DatabaseService {
   async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) {
     const checkInRef = doc(collection(db, 'checkIns'));
 
+    // photoUri here is already an uploaded download URL — no re-upload needed
     const photoURL = hasPhoto && photoUri ? photoUri : undefined;
-
-    // Determine adult status of the uploader for photo flagging
-    let isAdult = false;
-    if (hasPhoto && photoURL) {
-      try {
-        const userSnap = await getDoc(doc(db, 'users', userId));
-        if (userSnap.exists()) {
-          isAdult = userSnap.data().isAdult ?? false;
-        }
-      } catch {
-        // Non-fatal — default to false (safe)
-      }
-    }
 
     const checkInData: any = {
       userId,
@@ -187,10 +165,7 @@ export class DatabaseService {
       propertyOwnerId,
       hasPhoto: !!photoURL,
       timestamp: new Date().toISOString(),
-      reportCount: 0,
-      isHidden: false,
       ...(visitorNickname ? { visitorNickname } : {}),
-      ...(photoURL ? { isAdult } : {}),
     };
 
     if (message && message.trim() !== '') {
@@ -238,10 +213,14 @@ export class DatabaseService {
         userId: data.userId,
         propertyId: data.propertyId,
         propertyOwnerId: data.propertyOwnerId,
-        message: data.message || undefined, // Convert null to undefined
+        visitorNickname: data.visitorNickname || undefined,
+        message: data.message || undefined,
         hasPhoto: data.hasPhoto || false,
         photoURL: data.photoURL || undefined,
         timestamp: data.timestamp,
+        isAdult: data.isAdult,           // undefined for legacy, true/false for new
+        isHidden: data.isHidden || false,
+        reportCount: data.reportCount || 0,
       };
     });
   }
@@ -270,6 +249,32 @@ export class DatabaseService {
   }
 
   // USD Earnings
+  async updateUserProfile(userId: string, data: {
+    nickname?: string;
+    firstName?: string;
+    lastName?: string;
+    address?: string;
+    avatarUrl?: string;
+  }): Promise<void> {
+    const userRef = doc(db, 'users', userId);
+    const updates: Record<string, any> = {};
+    if (data.nickname !== undefined) updates.nickname = data.nickname;
+    if (data.firstName !== undefined) updates.firstName = data.firstName;
+    if (data.lastName !== undefined) updates.lastName = data.lastName;
+    if (data.address !== undefined) updates.address = data.address;
+    if (data.avatarUrl !== undefined) updates.avatarUrl = data.avatarUrl;
+    await updateDoc(userRef, updates);
+  }
+
+  async uploadAvatar(userId: string, photoUri: string): Promise<string> {
+    const timestamp = Date.now();
+    const storageRef = ref(storage, `avatars/${userId}_${timestamp}.jpg`);
+    const response = await fetch(photoUri);
+    const blob = await response.blob();
+    await uploadBytes(storageRef, blob);
+    return await getDownloadURL(storageRef);
+  }
+
   async updateUSDEarnings(userId: string, amount: number) {
     const userRef = doc(db, 'users', userId);
     await updateDoc(userRef, {

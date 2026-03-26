@@ -30,7 +30,7 @@ interface CheckIn {
   hasPhoto: boolean;
   photoURL?: string;
   timestamp: string;
-  visitorNickname?: string;
+  nickname?: string;
   reportCount?: number;
   isHidden?: boolean;
   isAdult?: boolean;
@@ -108,8 +108,8 @@ export default function VisitorLogScreen({ route, navigation }: any) {
     try {
       setLoading(true);
       const data = await dbService.getCheckInsForProperty(property.id);
-      const sorted = data
-        .filter(ci => !ci.isHidden)
+      const sorted = (data as CheckIn[])
+        .filter(ci => !ci.isHidden || ci.isHidden === undefined)
         .sort((a, b) =>
           new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
         );
@@ -126,7 +126,7 @@ export default function VisitorLogScreen({ route, navigation }: any) {
     if (blockedUsers.includes(item.userId)) return null;
 
     const showPhoto = item.photoURL &&
-      ModerationService.shouldShowPhoto(item.isAdult ?? false, viewerIsAdult);
+      ModerationService.shouldShowPhoto(item.isAdult, viewerIsAdult);
     const photoBlocked = item.photoURL && !showPhoto;
 
     return (
@@ -134,12 +134,12 @@ export default function VisitorLogScreen({ route, navigation }: any) {
         <View style={styles.cardHeader}>
           <View style={[styles.avatarCircle, { backgroundColor: mineColor }]}>
             <Text style={styles.avatarText}>
-              {(item.visitorNickname || item.userId).charAt(0).toUpperCase()}
+              {(item.nickname || item.userId).charAt(0).toUpperCase()}
             </Text>
           </View>
           <View style={styles.cardHeaderText}>
             <Text style={styles.visitorName}>
-              @{item.visitorNickname || item.userId}
+              @{item.nickname || item.userId}
             </Text>
             <Text style={styles.timestamp}>{formatTimestamp(item.timestamp)}</Text>
           </View>

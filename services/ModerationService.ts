@@ -155,18 +155,31 @@ export class ModerationService {
   static async saveDateOfBirth(userId: string, dateOfBirth: string): Promise<void> {
     const isAdult = this.isAdultFromDOB(dateOfBirth);
     const userRef = doc(db, 'users', userId);
-    await updateDoc(userRef, { dateOfBirth, isAdult });
+    // Use setDoc with merge:true so this works even if the user doc
+    // hasn't been created yet by MainNavigator.loadUserData
+    await setDoc(userRef, { dateOfBirth, isAdult }, { merge: true });
   }
 
   /**
    * Determine if a check-in photo should be visible to a viewer.
-   * Hides adult content from minors.
+   *
+   * Rules:
+   * - Adult viewer → sees all photos
+   * - Minor viewer → only sees photos explicitly marked isAdult: false
+   *   (i.e. taken by another minor). Photos with isAdult: true OR
+   *   photos with no isAdult field (legacy, unknown) are hidden from minors.
+   *
+   * @param checkInIsAdult  The isAdult flag on the checkIn doc (undefined = unknown/legacy)
+   * @param viewerIsAdult   Whether the viewing user is 18+
    */
   static shouldShowPhoto(
-    checkInIsAdult: boolean,
+    checkInIsAdult: boolean | undefined,
     viewerIsAdult: boolean
   ): boolean {
-    if (checkInIsAdult && !viewerIsAdult) return false;
-    return true;
+    // Adult viewers see everything
+    if (viewerIsAdult) return true;
+    // Minor viewers only see photos explicitly tagged as non-adult (isAdult === false)
+    // Unknown/legacy photos (undefined) are treated as restricted for safety
+    return checkInIsAdult === false;
   }
 }

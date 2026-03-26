@@ -59,8 +59,13 @@ export default function EditProfileModal({ visible, currentUsername, onClose, on
       return;
     }
     
-    if (nickname.length < 3) {
+    if (nickname.trim().length < 3) {
       Alert.alert('Error', 'Nickname must be at least 3 characters');
+      return;
+    }
+
+    if (nickname.trim().length > 20) {
+      Alert.alert('Error', 'Nickname must be 20 characters or less');
       return;
     }
 
@@ -70,9 +75,9 @@ export default function EditProfileModal({ visible, currentUsername, onClose, on
     try {
       const dbService = new DatabaseService();
       await dbService.updateUserProfile(user.uid, {
+        nickname: nickname.trim(),
         firstName: firstName.trim(),
         lastName: lastName.trim(),
-        nickname: nickname.trim(),
         address: address.trim(),
       });
 
@@ -85,9 +90,9 @@ export default function EditProfileModal({ visible, currentUsername, onClose, on
       
       Alert.alert('Success', 'Profile updated successfully!');
       onClose();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving profile:', error);
-      Alert.alert('Error', 'Failed to update profile');
+      Alert.alert('Error', 'Failed to update profile. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -109,9 +114,23 @@ export default function EditProfileModal({ visible, currentUsername, onClose, on
               <Text style={styles.label}>Email</Text>
               <Text style={styles.emailText}>{user?.email}</Text>
             </View>
-            
+
             <View style={styles.section}>
-              <Text style={styles.label}>First Name</Text>
+              <Text style={styles.label}>Nickname *</Text>
+              <TextInput
+                style={styles.input}
+                value={nickname}
+                onChangeText={setNickname}
+                placeholder="Enter nickname"
+                maxLength={20}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <Text style={styles.hint}>3–20 characters · shown to other players</Text>
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.label}>First Name <Text style={styles.optional}>(optional)</Text></Text>
               <TextInput
                 style={styles.input}
                 value={firstName}
@@ -122,7 +141,7 @@ export default function EditProfileModal({ visible, currentUsername, onClose, on
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.label}>Last Name</Text>
+              <Text style={styles.label}>Last Name <Text style={styles.optional}>(optional)</Text></Text>
               <TextInput
                 style={styles.input}
                 value={lastName}
@@ -131,22 +150,9 @@ export default function EditProfileModal({ visible, currentUsername, onClose, on
                 maxLength={50}
               />
             </View>
-            
-            <View style={styles.section}>
-              <Text style={styles.label}>Nickname *</Text>
-              <TextInput
-                style={styles.input}
-                value={nickname}
-                onChangeText={setNickname}
-                placeholder="Enter nickname"
-                maxLength={20}
-                autoCapitalize="none"
-              />
-              <Text style={styles.hint}>3-20 characters (required)</Text>
-            </View>
 
             <View style={styles.section}>
-              <Text style={styles.label}>Address</Text>
+              <Text style={styles.label}>Address <Text style={styles.optional}>(optional)</Text></Text>
               <TextInput
                 style={styles.input}
                 value={address}
@@ -238,6 +244,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#999',
     marginTop: 4,
+  },
+  optional: {
+    fontSize: 12,
+    color: '#aaa',
+    fontWeight: '400',
   },
   buttons: {
     flexDirection: 'row',

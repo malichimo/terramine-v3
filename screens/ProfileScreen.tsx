@@ -11,6 +11,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { DatabaseService, ActivityEvent } from '../services/DatabaseService';
 import EditProfileModal, { ProfileData } from '../components/EditProfileModal';
 import ReportModal from '../components/ReportModal';
+import { ModerationService } from '../services/ModerationService';
 
 interface ProfileScreenProps {
   navigation: any;
@@ -29,13 +30,15 @@ interface ProfileScreenProps {
 interface CheckInData {
   id: string;
   userId: string;
-  visitorNickname?: string;
+  nickname?: string;
   propertyId: string;
   propertyOwnerId: string;
   message?: string;
   hasPhoto: boolean;
   photoURL?: string;
   timestamp: string;
+  isAdult?: boolean;
+  isHidden?: boolean;
 }
 
 const dbService = new DatabaseService();
@@ -66,12 +69,18 @@ export default function ProfileScreen({
   const [reportModalVisible, setReportModalVisible] = useState(false);
   const [reportingCheckInId, setReportingCheckInId] = useState<string | null>(null);
   const [reportingUserId, setReportingUserId] = useState<string | null>(null);
+  const [viewerIsAdult, setViewerIsAdult] = useState(false);
 
   const { user } = useAuth();
 
   // Load avatar on mount
   useEffect(() => {
-    if (user) loadAvatar();
+    if (user) {
+      loadAvatar();
+      dbService.getUserData(user.uid).then(data => {
+        setViewerIsAdult(data?.isAdult ?? false);
+      }).catch(() => {});
+    }
   }, [user]);
 
   // Keep local displayUsername in sync when prop changes (e.g. after MainNavigator re-renders)
@@ -246,7 +255,7 @@ export default function ProfileScreen({
       case 'checkin_made':
         return `Checked in to a property${event.message ? ' — "' + event.message + '"' : ''}`;
       case 'visitor_received': {
-        const name = event.visitorNickname || event.visitorUserId?.substring(0, 8) || 'Someone';
+        const name = event.nickname || event.visitorUserId?.substring(0, 8) || 'Someone';
         return `@${name} visited your ${event.propertyId ? 'mine' : 'property'}${event.message ? ' — "' + event.message + '"' : ''}`;
       }
       case 'property_purchased':
@@ -546,7 +555,7 @@ export default function ProfileScreen({
                           <View key={checkIn.id} style={styles.visitorCheckInItem}>
                             <View style={styles.visitorCheckInHeader}>
                               <Text style={styles.visitorUserId}>
-                                @{checkIn.visitorNickname ||
+                                @{checkIn.nickname ||
                                   (checkIn.userId === user?.uid ? displayUsername : 'Anonymous Miner')}
                               </Text>
                               <Text style={styles.visitorTimestamp}>{formatTimestamp(checkIn.timestamp)}</Text>
@@ -567,8 +576,13 @@ export default function ProfileScreen({
                             {checkIn.message ? (
                               <Text style={styles.visitorMessage}>"{checkIn.message}"</Text>
                             ) : null}
-                            {checkIn.hasPhoto && checkIn.photoURL ? (
+                            {checkIn.hasPhoto && checkIn.photoURL && ModerationService.shouldShowPhoto(checkIn.isAdult, viewerIsAdult) ? (
                               <Image source={{ uri: checkIn.photoURL }} style={styles.visitorPhoto} resizeMode="cover" />
+                            ) : checkIn.hasPhoto && checkIn.photoURL && !ModerationService.shouldShowPhoto(checkIn.isAdult, viewerIsAdult) ? (
+                              <View style={styles.adultBlockedPhoto}>
+                                <Text style={styles.adultBlockedIcon}>🔞</Text>
+                                <Text style={styles.adultBlockedText}>Age-restricted content</Text>
+                              </View>
                             ) : checkIn.hasPhoto ? (
                               <Text style={styles.photoIndicatorText}>📷 Photo included</Text>
                             ) : null}
@@ -934,6 +948,19 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   photoIndicatorText: { fontSize: 12, color: '#9C27B0', fontWeight: '600' },
+  adultBlockedPhoto: {
+    width: '100%',
+    height: 80,
+    backgroundColor: '#F0E0E0',
+    borderRadius: 8,
+    marginTop: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  adultBlockedIcon: { fontSize: 20 },
+  adultBlockedText: { fontSize: 12, color: '#888' },
 
   // Activity tab
   activityTab: { padding: 15 },

@@ -40,18 +40,18 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
     // Initial load
     loadPropertyDetails();
     
-    // Timer for the reset countdown
+    // Update reset countdown every 30 seconds (not 60) so stale values
+    // don't persist for long after a reset boundary is crossed
     const interval = setInterval(() => {
       setTimeUntilReset(formatTimeUntilReset());
-    }, 60000);
+    }, 30000);
     
     // Reload from Firestore when returning from sub-screens (games, upgrade, daily activity)
-    // Use a mounted ref to skip the focus event that fires on initial mount — we already
-    // call loadPropertyDetails() above, so the focus listener is only for return navigation
     let isMounted = false;
     const unsubscribeFocus = navigation.addListener('focus', () => {
       if (isMounted) {
         loadPropertyDetails();
+        setTimeUntilReset(formatTimeUntilReset()); // recalculate immediately on focus
       } else {
         isMounted = true;
       }
