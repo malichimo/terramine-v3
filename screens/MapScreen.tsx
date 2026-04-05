@@ -134,7 +134,19 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
 
   // Update boost timer — uses ref to always read latest boostExpiresAt
   // without re-creating the interval on every state change
-  const boostExpiresAtRef = useRef(boostState.boostExpiresAt);
+  // ✅ FIX BUG-001: Initialize from initialBoostState, NOT boostState.
+  // boostState starts with the MainNavigator default (null expiry) and only gets
+  // the real Firebase value after loadBoostState() resolves async. If we init
+  // from boostState here, the timer fires its first tick before loadBoostState
+  // completes, sees null, and immediately kills an active boost.
+  const boostExpiresAtRef = useRef(initialBoostState.boostExpiresAt ?? null);
+
+  // Keep a ref for the non-expiry boost fields so the expiry write-back
+  // uses current values instead of stale closure values (BUG-001 part 2)
+  const boostStateRef = useRef(boostState);
+  useEffect(() => {
+    boostStateRef.current = boostState;
+  }, [boostState]);
   useEffect(() => {
     boostExpiresAtRef.current = boostState.boostExpiresAt;
   }, [boostState.boostExpiresAt]);
@@ -164,11 +176,11 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           boostExpiresAt: null 
         }));
         dbService.updateBoostState(userId, {
-          freeBoostsRemaining: boostState.freeBoostsRemaining,
-          adBoostsRemaining: boostState.adBoostsRemaining,
+          freeBoostsRemaining: boostStateRef.current.freeBoostsRemaining,
+          adBoostsRemaining: boostStateRef.current.adBoostsRemaining,
           boostExpiresAt: null,
-          nextFreeBoostResetAt: boostState.nextFreeBoostResetAt,
-          lastAdBoostRefillAt: boostState.lastAdBoostRefillAt,
+          nextFreeBoostResetAt: boostStateRef.current.nextFreeBoostResetAt,
+          lastAdBoostRefillAt: boostStateRef.current.lastAdBoostRefillAt,
         });
       } else {
         setBoostState(prev => ({ 

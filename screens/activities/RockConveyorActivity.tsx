@@ -36,6 +36,7 @@ interface RockConveyorActivityProps {
   property: GridSquare;
   propertyDetails: any;
   navigation: any;
+  onBalanceUpdate?: (amount: number) => void; // ✅ BUG-005: callback to update parent TB display
 }
 
 interface RewardTier {
@@ -58,6 +59,7 @@ export default function RockConveyorActivity({
   property,
   propertyDetails,
   navigation,
+  onBalanceUpdate,
 }: RockConveyorActivityProps) {
   const { user } = useAuth();
   const [isRunning, setIsRunning] = useState(false);
@@ -80,7 +82,8 @@ export default function RockConveyorActivity({
   const rock3X = useRef(new Animated.Value(startXPos)).current;
   const rock3Y = useRef(new Animated.Value(startYPos)).current;
 
-  const dbService = new DatabaseService();
+  // ✅ BUG-005: Wrap in useRef so the same instance is used across re-renders
+  const dbService = useRef(new DatabaseService()).current;
   const adService = useRef(new AdMobService()).current;
 
   const handleWatchAdForDouble = async () => {
@@ -282,6 +285,8 @@ export default function RockConveyorActivity({
       
       if (tbBonusAmount > 0) {
         await dbService.updateUserBalance(user.uid, tbBonusAmount);
+        // ✅ BUG-005: Notify parent so the TB balance display updates immediately
+        onBalanceUpdate?.(tbBonusAmount);
       }
 
       setRewardTier(reward);
@@ -398,15 +403,7 @@ export default function RockConveyorActivity({
           </>
         )}
 
-        {/* Crusher Indicator — only visible while running */}
-        {isRunning && (
-          <View style={[styles.crusherArea, { 
-            top: endYPos - 30,
-            right: width - endXPos - 50,
-          }]}>
-            <Text style={styles.crusherText}>💥 CRUSHER</Text>
-          </View>
-        )}
+        {/* ✅ BUG-004: Removed "CRUSHER" label — it was confusing and off-brand */}
       </View>
 
       {/* Instructions / Buttons */}
@@ -603,12 +600,14 @@ const styles = StyleSheet.create({
     padding: 20,
     alignItems: 'center',
     gap: 10,
+    width: '100%', // ✅ BUG-006: ensures text centering works across all screen sizes
   },
   instructionsText: {
     fontSize: 18,
     color: '#333',
     marginBottom: 10,
     textAlign: 'center',
+    width: '100%', // ✅ BUG-006: explicit width so textAlign: center takes effect
   },
   adButton: {
     backgroundColor: '#9C27B0',

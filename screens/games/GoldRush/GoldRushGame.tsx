@@ -92,6 +92,11 @@ export default function GoldRushGame({ route, navigation }: any) {
   const [newLevel, setNewLevel]   = useState(gameLevel);
   const [adLevelLoading, setAdLevelLoading] = useState(false);
 
+  // ✅ BUG-009 FIX: liveDetails holds the up-to-date property details including XP.
+  // propertyDetails (route param) is a snapshot from navigation — it never updates.
+  // After each game saveResult(), we re-fetch and store here so the XP meter reflects reality.
+  const [liveDetails, setLiveDetails] = useState(propertyDetails);
+
   // ── Animated values ────────────────────────────────────────────────────────
   const lepX         = useRef(new Animated.Value(0)).current;
   const lepY         = useRef(new Animated.Value(0)).current;
@@ -275,12 +280,16 @@ export default function GoldRushGame({ route, navigation }: any) {
       );
       setReward(earned as GameReward);
 
-      // Check if level changed by re-fetching property details
+      // ✅ BUG-009 FIX: Re-fetch and store into liveDetails so the XP meter
+      //    updates immediately — route.params is a stale snapshot and never changes
       const updated = await dbServicePhase2.getPropertyDetails(property.id);
-      if (updated && updated.gameLevel > levelBefore) {
-        setLeveledUp(true);
-        setNewLevel(updated.gameLevel);
-        activeLevelRef.current = updated.gameLevel;
+      if (updated) {
+        setLiveDetails(updated);
+        if (updated.gameLevel > levelBefore) {
+          setLeveledUp(true);
+          setNewLevel(updated.gameLevel);
+          activeLevelRef.current = updated.gameLevel;
+        }
       }
     } catch (e) {
       console.error('Error saving game result:', e);
@@ -372,10 +381,11 @@ export default function GoldRushGame({ route, navigation }: any) {
           <View style={styles.xpMeterRow}>
             <View style={styles.xpMeterBg}>
               <View style={[styles.xpMeterFill, {
-                width: `${Math.min(100, ((propertyDetails?.gameXP ?? 0) / 1000) * 100)}%`
+                // ✅ BUG-009 FIX: read from liveDetails, not propertyDetails (stale snapshot)
+                width: `${Math.min(100, ((liveDetails?.gameXP ?? 0) / 1000) * 100)}%`
               }]} />
             </View>
-            <Text style={styles.xpMeterTxt}>{propertyDetails?.gameXP ?? 0}/1000 XP</Text>
+            <Text style={styles.xpMeterTxt}>{liveDetails?.gameXP ?? 0}/1000 XP</Text>
           </View>
         </View>
         <View style={styles.hRight}>

@@ -388,10 +388,18 @@ export default function MinerMazeScreen({ route, navigation }: any) {
   const gridRef   = useRef(grid);
   const puRef     = useRef(pu);
   const phaseRef  = useRef(phase);
+  // ✅ BUG-002 FIX: refs for score/tLeft/health so doEnd always reads current
+  //    values even when called from inside a stale interval closure
+  const scoreRef  = useRef(score);
+  const tLeftRef  = useRef(tLeft);
+  const healthRef = useRef(health);
   minerRef.current = miner;
   gridRef.current  = grid;
   puRef.current    = pu;
   phaseRef.current = phase;
+  scoreRef.current  = score;
+  tLeftRef.current  = tLeft;
+  healthRef.current = health;
 
   const cfg = DIFFS[diffKey];
 
@@ -403,8 +411,17 @@ export default function MinerMazeScreen({ route, navigation }: any) {
     }
     timerRef.current = setInterval(() => {
       setTLeft(t => {
-        if (t <= 1) { clearInterval(timerRef.current!); doEnd('lost'); return 0; }
-        return t - 1;
+        // ✅ BUG-002 FIX: Use Math.max to guarantee we never go below 0,
+        //    and check tLeftRef (the live value) rather than relying solely
+        //    on the closure value `t` which can lag by one tick after an ad extension
+        const next = t - 1;
+        if (next <= 0) {
+          clearInterval(timerRef.current!);
+          // Small delay so setTLeft(0) renders before doEnd fires
+          setTimeout(() => doEnd('lost'), 50);
+          return 0;
+        }
+        return next;
       });
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
@@ -550,7 +567,14 @@ export default function MinerMazeScreen({ route, navigation }: any) {
 
   const doEnd = (res: 'won'|'lost') => {
     if (timerRef.current) clearInterval(timerRef.current);
-    const finalSc = res === 'won' ? score + tLeft * 5 + health * 2 : score;
+    // ✅ BUG-002 FIX: Read from refs so we always get current values,
+    //    not stale closure values from when the interval was created
+    const currentScore  = scoreRef.current;
+    const currentTLeft  = tLeftRef.current;
+    const currentHealth = healthRef.current;
+    const finalSc = res === 'won'
+      ? currentScore + currentTLeft * 5 + currentHealth * 2
+      : currentScore;
     if (res === 'won') {
       const tb  = Math.max(cfg.tbReward, Math.floor(cfg.tbReward * finalSc / 1000));
       const res2 = Math.floor(50 * cfg.resMult);
@@ -574,18 +598,47 @@ export default function MinerMazeScreen({ route, navigation }: any) {
             {
               text: '📺 Watch Ad (+30s)',
               onPress: async () => {
+                // ✅ BUG-002 FIX: Timeout ensures game ends even if ad never loads.
+                //    Without this, a failed ad load leaves the game frozen but playable.
+                let resolved = false;
+                const adTimeout = setTimeout(() => {
+                  if (!resolved) {
+                    resolved = true;
+                    soundService.play('lose');
+                    setPhase('lost');
+                    saveResult(false, finalSc);
+                  }
+                }, 10000); // 10s timeout — if ad hasn't loaded by then, end the game
+
                 try {
                   await adService.current!.showAd(
                     () => {
+                      if (resolved) return;
+                      resolved = true;
+                      clearTimeout(adTimeout);
+                      // ✅ BUG-002 FIX: Set tLeft via functional update BEFORE
+                      //    setPhase('playing') so the new timer interval starts
+                      //    with 30s already in state, preventing instant re-trigger
                       setTLeft(30);
                       setPhase('playing');
                     },
-                    () => { soundService.play('lose'); setPhase('lost'); saveResult(false, finalSc); }
+                    () => {
+                      if (resolved) return;
+                      resolved = true;
+                      clearTimeout(adTimeout);
+                      soundService.play('lose');
+                      setPhase('lost');
+                      saveResult(false, finalSc);
+                    }
                   );
                 } catch {
-                  soundService.play('lose');
-                  setPhase('lost');
-                  saveResult(false, finalSc);
+                  if (!resolved) {
+                    resolved = true;
+                    clearTimeout(adTimeout);
+                    soundService.play('lose');
+                    setPhase('lost');
+                    saveResult(false, finalSc);
+                  }
                 }
               },
             },
