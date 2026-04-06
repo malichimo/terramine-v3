@@ -75,6 +75,13 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
         setPropertyDetails(newDetails);
       } else {
         setPropertyDetails(details);
+
+        // ✅ FEAT-001 BUG-014 FIX: Pre-action nudges — show prompts BEFORE
+        //    the user takes action, not as a celebration after.
+        if (userId) {
+          // Small delay so the screen renders before any alert appears
+          setTimeout(() => fireMilestoneNudges(details), 800);
+        }
       }
       
       setTimeUntilReset(formatTimeUntilReset());
@@ -83,6 +90,62 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
       Alert.alert('Error', 'Failed to load property details');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fireMilestoneNudges = async (details: any) => {
+    try {
+      const userData = await dbService.getUserData(userId);
+      if (!userData) return;
+
+      // Trigger #2 — nudge to rename mine if it has no custom name yet
+      if (!details.customName && !userData.milestone_renamedTA) {
+        Alert.alert(
+          '🪧 Name Your Mine!',
+          'Give your mine a nickname! Visitors will see it when they check in. Tap the name field above to set one.',
+          [{ text: 'Got it!' }]
+        );
+        return; // Only show one nudge at a time
+      }
+
+      // Trigger #5 — nudge toward daily activity on first visit
+      if (!userData.milestone_firstDailyActivity && details.dailyActivitiesRemaining > 0) {
+        Alert.alert(
+          '⛏️ Daily Activity Available!',
+          'Your mine has a daily activity ready! Tap the activity panel below to earn resources and TB bonuses. Resets every day at 4 AM EST.',
+          [
+            { text: 'Show Me!', onPress: handleDailyActivity },
+            { text: 'Later' },
+          ]
+        );
+        return;
+      }
+
+      // Trigger #4 — nudge toward first upgrade when resources are sufficient
+      if (!userData.milestone_sawUpgradePrompt && details.productionLevel === 1) {
+        const mineKey = `${property.mineType}Resources` as
+          'rockResources' | 'coalResources' | 'goldResources' | 'diamondResources';
+        const pool = userData[mineKey];
+        const cost = dbServicePhase2.getUpgradeCost(1);
+        if (pool &&
+          pool.common >= cost.common &&
+          pool.uncommon >= cost.uncommon &&
+          pool.rare >= cost.rare &&
+          pool.epic >= cost.epic
+        ) {
+          await dbService.checkAndFireMilestone(userId, 'milestone_sawUpgradePrompt');
+          Alert.alert(
+            '⬆️ Ready to Upgrade!',
+            "You've collected enough resources to upgrade your mine to Level 2! Higher levels earn more passive income. Tap the mine office to upgrade.",
+            [
+              { text: 'Upgrade Now', onPress: handleUpgrades },
+              { text: 'Later' },
+            ]
+          );
+        }
+      }
+    } catch {
+      // Non-fatal — never block the screen on a nudge failure
     }
   };
 
@@ -243,7 +306,9 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
       await dbServicePhase2.updatePropertyCustomName(property.id, trimmed);
       setPropertyDetails(prev => prev ? { ...prev, customName: trimmed } : prev);
       setIsEditingName(false);
-      if (onPropertyUpdate) onPropertyUpdate(); // Refresh parent property list
+      if (onPropertyUpdate) onPropertyUpdate();
+      // ✅ FEAT-001: Mark milestone silently — nudge already fired before action
+      dbService.checkAndFireMilestone(userId, 'milestone_renamedTA').catch(() => {});
     } catch (error) {
       Alert.alert('Error', 'Failed to save name. Please try again.');
     } finally {

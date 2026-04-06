@@ -219,7 +219,8 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
         `Matched: ${result.matchedPairs}/${gameState!.totalPairs} pairs\n\n` +
         `Consolation prize:\n` +
         `⭐ ${rewards.xp} XP\n` +
-        `🪨 ${rewards.shards} Shards`,
+        `🪨 ${rewards.common} Common Resources\n` +
+        `💰 ${rewards.tb} TB`,
       [
         {
           text: 'Collect',

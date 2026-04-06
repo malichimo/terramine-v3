@@ -373,37 +373,40 @@ export default function CoalPileActivity({
 
       {/* Mining Area */}
       <View style={styles.miningContainer}>
-        {/* Coal Pile */}
-        <Animated.Image
-          source={require('../../assets/images/coal-pile-no-axe.png')}
-          style={[
-            styles.coalPileImage,
-            {
-              transform: [{ scale: coalPileScale }],
-            },
-          ]}
-          resizeMode="contain"
-        />
-
-        {/* Animated Pickaxe */}
-        {isRunning && (
+        {/* ✅ BUG-013 FIX: Wrap pile + pickaxe together so the pickaxe
+            position is relative to the pile image, not the whole container.
+            This makes alignment consistent across all screen sizes. */}
+        <View style={styles.pileWrapper}>
+          {/* Coal Pile */}
           <Animated.Image
-            source={require('../../assets/images/axe.png')}
+            source={require('../../assets/images/coal-pile-no-axe.png')}
             style={[
-              styles.pickaxeImage,
-              {
-                transform: [
-                  { translateY: pickaxeY },
-                  { rotate: pickaxeRotation.interpolate({
-                    inputRange: [-30, 0],
-                    outputRange: ['-30deg', '0deg'],
-                  })},
-                ],
-              },
+              styles.coalPileImage,
+              { transform: [{ scale: coalPileScale }] },
             ]}
             resizeMode="contain"
           />
-        )}
+
+          {/* Animated Pickaxe — positioned relative to pileWrapper */}
+          {isRunning && (
+            <Animated.Image
+              source={require('../../assets/images/axe.png')}
+              style={[
+                styles.pickaxeImage,
+                {
+                  transform: [
+                    { translateY: pickaxeY },
+                    { rotate: pickaxeRotation.interpolate({
+                      inputRange: [-30, 0],
+                      outputRange: ['-30deg', '0deg'],
+                    })},
+                  ],
+                },
+              ]}
+              resizeMode="contain"
+            />
+          )}
+        </View>
 
         {/* Flying Rewards */}
         {isRunning && (
@@ -578,23 +581,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  coalPileImage: {
+  // ✅ BUG-013 FIX: Wrapper that is exactly the size of the coal pile image.
+  // The pickaxe is absolutely positioned within this wrapper, so coordinates
+  // are relative to the pile itself rather than the whole screen.
+  pileWrapper: {
     width: width * 0.8,
     height: height * 0.4,
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  coalPileImage: {
+    width: '100%',
+    height: '100%',
   },
   pickaxeImage: {
     position: 'absolute',
     width: 130,
     height: 130,
-    // ✅ BUG-003 FIX: Position pickaxe so its tip lands on the top of the coal pile
-    // at translateY: 0 (the strike position). The coal pile is centered in the
-    // container and takes up ~40% of screen height. We place the pickaxe so its
-    // head points at the top-center of the pile.
-    // top: '30%' puts it just above the pile center; left: '50%' + marginLeft
-    // centers it horizontally over the pile peak.
-    top: '28%',
+    // ✅ BUG-013: top: 0 = top of the pile image. The pile peak is roughly
+    // at 20% down from the top of the image. translateY animates from -60
+    // (raised) to 0 (striking). The pickaxe tip lands right on the peak.
+    top: -30,
     left: '50%',
-    marginLeft: -20, // shift left so pickaxe head is over the pile peak
+    marginLeft: -65, // center the 130px image horizontally over the peak
   },
   flyingRewards: {
     position: 'absolute',

@@ -355,6 +355,37 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     }
   }, [ownedProperties.length]);
 
+  // ✅ FEAT-001 BUG-014 FIX: Trigger #1 — nudge new players to buy their first mine.
+  // Fires once after data loads, only if they have no properties yet.
+  const hasShownFirstPurchaseNudge = useRef(false);
+  useEffect(() => {
+    if (hasShownFirstPurchaseNudge.current) return;
+    if (ownedProperties.length > 0) return; // already have properties
+    if (!userId) return;
+
+    const checkFirstPurchaseNudge = async () => {
+      try {
+        const userData = await dbService.getUserData(userId);
+        if (userData && !userData.milestone_firstPurchase) {
+          hasShownFirstPurchaseNudge.current = true;
+          // Small delay so map has time to render first
+          setTimeout(() => {
+            Alert.alert(
+              '⛏️ Welcome to TerraMine!',
+              'Walk to a bright green square on the map and tap it to buy your first mine. You start with 1,000 TB — enough for 10 properties!',
+              [{ text: "Let's Go! 🗺️" }]
+            );
+          }, 2000);
+        }
+      } catch {
+        // Non-fatal
+      }
+    };
+
+    // Only run after ownedProperties has loaded (length is defined, even if 0)
+    checkFirstPurchaseNudge();
+  }, [ownedProperties.length, userId]);
+
   const calculateOfflineEarnings = async () => {
     try {
       // Get the last logout time from Firebase (we'll need to add this field)
@@ -689,17 +720,9 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     
     setSelectedSquare(updatedSquare);
 
-    // ✅ FEAT-001: First purchase milestone
-    const isFirstPurchase = await dbService.checkAndFireMilestone(userId, 'milestone_firstPurchase');
-    if (isFirstPurchase) {
-      Alert.alert(
-        '⛏️ First TerraAcre!',
-        `Welcome to the mine, ${username}! You just purchased your first ${mineType} mine. It's already earning passive income — tap it to explore your new property!`,
-        [{ text: "Let's Go! 🚀" }]
-      );
-    } else {
-      Alert.alert('Success!', `You purchased a ${mineType} mine!`);
-    }
+    // Mark first purchase milestone as done (so nudge doesn't re-show)
+    dbService.checkAndFireMilestone(userId, 'milestone_firstPurchase').catch(() => {});
+    Alert.alert('Success!', `You purchased a ${mineType} mine! Tap it to explore.`);
   };
 
   // Boost handlers

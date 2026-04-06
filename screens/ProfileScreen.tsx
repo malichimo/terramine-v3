@@ -107,7 +107,19 @@ export default function ProfileScreen({
     if (!user) return;
     try {
       const userData = await dbService.getUserData(user.uid);
-      if (userData?.avatarUrl) setAvatarUrl(userData.avatarUrl);
+      if (userData?.avatarUrl) {
+        setAvatarUrl(userData.avatarUrl);
+      } else if (!userData?.milestone_addedPhoto) {
+        // ✅ FEAT-001 BUG-014 FIX: Trigger #3 — nudge to add profile photo
+        //    before they've done it, not celebrate after.
+        setTimeout(() => {
+          Alert.alert(
+            '📸 Add a Profile Photo!',
+            'Visitors see your photo when you check in to their mines. Tap your avatar circle to add one!',
+            [{ text: 'Got it!' }]
+          );
+        }, 1000);
+      }
     } catch (e) {
       console.error('Error loading avatar:', e);
     }
@@ -183,16 +195,8 @@ export default function ProfileScreen({
       const url = await dbService.uploadAvatar(user.uid, result.assets[0].uri);
       await dbService.updateUserProfile(user.uid, { avatarUrl: url });
       setAvatarUrl(url);
-
-      // ✅ FEAT-001: Profile picture milestone
-      const isFirst = await dbService.checkAndFireMilestone(user.uid, 'milestone_addedPhoto');
-      if (isFirst) {
-        Alert.alert(
-          '📸 Looking Good!',
-          'Your profile photo is set! Other players will see it when you check in to their properties.',
-          [{ text: 'Awesome! 🎉' }]
-        );
-      }
+      // ✅ FEAT-001: Mark milestone silently — nudge already fired before action
+      dbService.checkAndFireMilestone(user.uid, 'milestone_addedPhoto').catch(() => {});
     } catch (e) {
       console.error('Avatar upload error:', e);
       Alert.alert('Error', 'Failed to upload photo. Please try again.');

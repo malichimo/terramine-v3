@@ -191,7 +191,10 @@ export function isWithinGridSquare(
 
 /**
  * Check if user is adjacent to (or within) a grid square
- * Used for purchase range validation
+ * Used for PURCHASE range validation only — not check-in.
+ * ✅ BUG-012 FIX: Extended from 1 cell (~10m) to 3 cells (~30m) so the
+ * map's "in range" highlight is actually visible and useful. Check-in
+ * range is handled separately by isWithinGridSquare and stays unchanged.
  */
 export function isAdjacentToUser(
   userLat: number,
@@ -202,11 +205,12 @@ export function isAdjacentToUser(
   const [userX, userY] = userGridId.split('_').map(Number);
   const [squareX, squareY] = square.id.split('_').map(Number);
   
-  // Check if within 1 square distance (including diagonals)
+  // ✅ Extended purchase range: 3 cells in each direction (~30 meters)
+  const PURCHASE_RANGE = 3;
   const xDiff = Math.abs(userX - squareX);
   const yDiff = Math.abs(userY - squareY);
   
-  return xDiff <= 1 && yDiff <= 1;
+  return xDiff <= PURCHASE_RANGE && yDiff <= PURCHASE_RANGE;
 }
 
 /**
