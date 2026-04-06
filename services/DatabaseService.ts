@@ -23,6 +23,15 @@ export interface BoostState {
   lastAdBoostRefillAt: string;
 }
 
+// ── Milestone keys (FEAT-001) ─────────────────────────────────────────────
+// One flag per milestone stored on the user Firestore doc.
+export type MilestoneKey =
+  | 'milestone_firstPurchase'
+  | 'milestone_renamedTA'
+  | 'milestone_addedPhoto'
+  | 'milestone_sawUpgradePrompt'
+  | 'milestone_firstDailyActivity';
+
 export class DatabaseService {
   // User data
   async getUserData(userId: string) {
@@ -410,5 +419,27 @@ export class DatabaseService {
       nextFreeBoostResetAt: null,
       lastAdBoostRefillAt: new Date().toISOString(),
     };
+  }
+
+  // ── Milestone tracking (FEAT-001) ────────────────────────────────────────
+  // Each milestone fires once per user. The flag is stored on the user doc.
+  // Call checkAndFireMilestone() at the relevant trigger point — it reads the
+  // flag, returns true (first time) or false (already seen), and sets the flag.
+
+  async checkAndFireMilestone(userId: string, milestone: MilestoneKey): Promise<boolean> {
+    try {
+      const userRef = doc(db, 'users', userId);
+      const userSnap = await getDoc(userRef);
+      if (!userSnap.exists()) return false;
+
+      const data = userSnap.data();
+      if (data[milestone]) return false; // already fired
+
+      await updateDoc(userRef, { [milestone]: true });
+      return true; // first time — caller should show the celebratory prompt
+    } catch (e) {
+      console.error('Milestone check error:', e);
+      return false;
+    }
   }
 }

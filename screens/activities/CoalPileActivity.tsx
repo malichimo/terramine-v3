@@ -28,6 +28,7 @@ interface CoalPileActivityProps {
   property: GridSquare;
   propertyDetails: any;
   navigation: any;
+  onActivityComplete?: () => void; // ✅ FEAT-001
 }
 
 interface RewardTier {
@@ -50,6 +51,7 @@ export default function CoalPileActivity({
   property,
   propertyDetails,
   navigation,
+  onActivityComplete,
 }: CoalPileActivityProps) {
   const { user } = useAuth();
   const [isRunning, setIsRunning] = useState(false);
@@ -61,8 +63,8 @@ export default function CoalPileActivity({
   const [usedBaseAttempt, setUsedBaseAttempt] = useState(false);
 
   // Animation values
-  const pickaxeRotation = useRef(new Animated.Value(0)).current;
-  const pickaxeY = useRef(new Animated.Value(-50)).current;
+  const pickaxeRotation = useRef(new Animated.Value(-30)).current; // start raised/rotated
+  const pickaxeY = useRef(new Animated.Value(-60)).current;        // start raised above pile
   const coalPileScale = useRef(new Animated.Value(1)).current;
   const rewardOpacity = useRef(new Animated.Value(0)).current;
 
@@ -319,6 +321,7 @@ export default function CoalPileActivity({
       setRewardTier(reward);
       setTbBonus(tbBonusAmount);
       setShowRewards(true);
+      onActivityComplete?.(); // ✅ FEAT-001
       soundService.play('chime');
       
       if (isBaseAttempt) {
@@ -334,8 +337,8 @@ export default function CoalPileActivity({
   const resetActivity = () => {
     setIsRunning(false);
     setShowRewards(false);
-    pickaxeRotation.setValue(0);
-    pickaxeY.setValue(-50);
+    pickaxeRotation.setValue(-30);
+    pickaxeY.setValue(-60);
     coalPileScale.setValue(1);
     rewardOpacity.setValue(0);
   };
@@ -581,10 +584,17 @@ const styles = StyleSheet.create({
   },
   pickaxeImage: {
     position: 'absolute',
-    width: 150,
-    height: 150,
-    top: '25%',
-    right: '20%',
+    width: 130,
+    height: 130,
+    // ✅ BUG-003 FIX: Position pickaxe so its tip lands on the top of the coal pile
+    // at translateY: 0 (the strike position). The coal pile is centered in the
+    // container and takes up ~40% of screen height. We place the pickaxe so its
+    // head points at the top-center of the pile.
+    // top: '30%' puts it just above the pile center; left: '50%' + marginLeft
+    // centers it horizontally over the pile peak.
+    top: '28%',
+    left: '50%',
+    marginLeft: -20, // shift left so pickaxe head is over the pile peak
   },
   flyingRewards: {
     position: 'absolute',

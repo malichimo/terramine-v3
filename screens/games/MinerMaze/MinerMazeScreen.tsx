@@ -333,7 +333,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
   }, []);  // empty deps = runs once on mount
 
   // ── state ──────────────────────────────────────────────────
-  const [phase,   setPhase]   = useState<'menu'|'playing'|'won'|'lost'>('menu');
+  const [phase,   setPhase]   = useState<'menu'|'playing'|'paused'|'won'|'lost'>('menu');
   const [leveledUp, setLeveledUp] = useState(false);
   const [newLevel,  setNewLevel]  = useState(1);
   const [adLevelLoading, setAdLevelLoading] = useState(false);
@@ -616,11 +616,14 @@ export default function MinerMazeScreen({ route, navigation }: any) {
                       if (resolved) return;
                       resolved = true;
                       clearTimeout(adTimeout);
-                      // ✅ BUG-002 FIX: Set tLeft via functional update BEFORE
-                      //    setPhase('playing') so the new timer interval starts
-                      //    with 30s already in state, preventing instant re-trigger
+                      // ✅ BUG-010 FIX: Route through 'paused' before 'playing'.
+                      // If phase is already 'playing' when doEnd fires, setPhase('playing')
+                      // is a no-op — React skips the update and the timer useEffect never
+                      // re-fires, leaving tLeft frozen at 30. Going paused→playing forces
+                      // a genuine phase change that restarts the interval correctly.
                       setTLeft(30);
-                      setPhase('playing');
+                      setPhase('paused');
+                      setTimeout(() => setPhase('playing'), 50);
                     },
                     () => {
                       if (resolved) return;

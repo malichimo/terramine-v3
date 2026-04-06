@@ -37,6 +37,7 @@ interface RockConveyorActivityProps {
   propertyDetails: any;
   navigation: any;
   onBalanceUpdate?: (amount: number) => void; // ✅ BUG-005: callback to update parent TB display
+  onActivityComplete?: () => void;            // ✅ FEAT-001: fires after first activity completes
 }
 
 interface RewardTier {
@@ -60,6 +61,7 @@ export default function RockConveyorActivity({
   propertyDetails,
   navigation,
   onBalanceUpdate,
+  onActivityComplete,
 }: RockConveyorActivityProps) {
   const { user } = useAuth();
   const [isRunning, setIsRunning] = useState(false);
@@ -294,6 +296,7 @@ export default function RockConveyorActivity({
       setShowRewards(true);
       soundService.stop('machine_loop');
       soundService.play('chime');
+      onActivityComplete?.(); // ✅ FEAT-001
       
       // Reset double flag after first use (base attempt)
       if (isBaseAttempt) {

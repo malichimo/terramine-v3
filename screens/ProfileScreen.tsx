@@ -183,6 +183,16 @@ export default function ProfileScreen({
       const url = await dbService.uploadAvatar(user.uid, result.assets[0].uri);
       await dbService.updateUserProfile(user.uid, { avatarUrl: url });
       setAvatarUrl(url);
+
+      // ✅ FEAT-001: Profile picture milestone
+      const isFirst = await dbService.checkAndFireMilestone(user.uid, 'milestone_addedPhoto');
+      if (isFirst) {
+        Alert.alert(
+          '📸 Looking Good!',
+          'Your profile photo is set! Other players will see it when you check in to their properties.',
+          [{ text: 'Awesome! 🎉' }]
+        );
+      }
     } catch (e) {
       console.error('Avatar upload error:', e);
       Alert.alert('Error', 'Failed to upload photo. Please try again.');

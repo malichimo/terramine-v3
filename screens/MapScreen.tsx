@@ -688,8 +688,18 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     });
     
     setSelectedSquare(updatedSquare);
-    
-    Alert.alert('Success!', `You purchased a ${mineType} mine!`);
+
+    // ✅ FEAT-001: First purchase milestone
+    const isFirstPurchase = await dbService.checkAndFireMilestone(userId, 'milestone_firstPurchase');
+    if (isFirstPurchase) {
+      Alert.alert(
+        '⛏️ First TerraAcre!',
+        `Welcome to the mine, ${username}! You just purchased your first ${mineType} mine. It's already earning passive income — tap it to explore your new property!`,
+        [{ text: "Let's Go! 🚀" }]
+      );
+    } else {
+      Alert.alert('Success!', `You purchased a ${mineType} mine!`);
+    }
   };
 
   // Boost handlers
