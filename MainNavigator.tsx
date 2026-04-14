@@ -27,6 +27,8 @@ import DailyActivityScreen from './screens/DailyActivityScreen';
 import VisitorLogScreen from './screens/VisitorLogScreen';
 import ReferralScreen from './screens/ReferralScreen';
 import { ReferralService } from './services/ReferralService';
+import { NotificationService } from './services/NotificationService';
+import * as Notifications from 'expo-notifications';
 
 const Tab = createBottomTabNavigator();
 const MapStack = createStackNavigator();
@@ -199,6 +201,8 @@ export default function MainNavigator() {
     user?.displayName || user?.email?.split('@')[0] || 'User'
   );
   const mapRef = useRef<any>(null);
+  const notificationListener = useRef<any>(null);
+  const responseListener = useRef<any>(null);
 
   useEffect(() => {
     if (user) {
@@ -209,6 +213,21 @@ export default function MainNavigator() {
         .catch(e => console.warn('ConsentService init failed (non-fatal):', e))
         .finally(() => setConsentReady(true));
       soundService.init().catch(e => console.warn('SoundService init failed', e));
+
+      // Listen for notifications received while app is foregrounded
+      notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+        console.log('Notification received:', notification);
+      });
+
+      // Listen for user tapping a notification
+      responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
+        const data = response.notification.request.content.data;
+        if (data?.type === 'checkin') {
+          // Navigate to Profile → Visitors tab on notification tap
+          // Navigation ref not available here — user will see it on next open
+          console.log('Check-in notification tapped');
+        }
+      });
     }
   }, [user]);
 
@@ -251,6 +270,20 @@ export default function MainNavigator() {
 
       ReferralService.getOrCreateReferralCode(user.uid).catch(e =>
         console.warn('Referral code init failed (non-fatal):', e)
+      );
+
+      // Register for push notifications and save token to Firestore
+      NotificationService.registerForPushNotifications().then(token => {
+        if (token) {
+          dbService.savePushToken(user.uid, token).catch(e =>
+            console.warn('Failed to save push token (non-fatal):', e)
+          );
+        }
+      }).catch(e => console.warn('Push registration failed (non-fatal):', e));
+
+      // Schedule daily reminder
+      NotificationService.scheduleDailyReminder().catch(e =>
+        console.warn('Failed to schedule daily reminder (non-fatal):', e)
       );
 
       setDataLoaded(true);

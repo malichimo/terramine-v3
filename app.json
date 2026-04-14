@@ -294,7 +294,10 @@
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.RECORD_AUDIO",
-        "android.permission.INTERNET"
+        "android.permission.INTERNET",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS"
       ],
       "config": {
         "googleMaps": {
@@ -308,6 +311,15 @@
     },
     "plugins": [
       "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/terramine_logo_1024.png",
+          "color": "#FFD700",
+          "sounds": [],
+          "mode": "production"
+        }
+      ],
       [
         "expo-image-picker",
         {
