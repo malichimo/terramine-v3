@@ -70,6 +70,15 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
     }
   }, [isGameStarted, gameState?.isGameOver]);
 
+  // Cleanup timer on unmount to prevent state updates on unmounted component
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, []);
+
   // Handle game state changes
   const handleGameStateChange = (newState: GameState) => {
     const checkedState = checkGameOver(newState);

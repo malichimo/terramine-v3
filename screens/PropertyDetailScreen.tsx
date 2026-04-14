@@ -20,9 +20,12 @@ import {
 import { PropertyDetails } from '../types/PropertyTypes';
 import { GridSquare } from '../utils/GridUtils';
 import { dbServicePhase2 } from '../services/DatabaseServicePhase2';
+import { DatabaseService } from '../services/DatabaseService';
 import { formatTimeUntilReset } from '../utils/TimeUtils';
 import { useAuth } from '../contexts/AuthContext';
 import { getDifficultyConfig as getMemoryMatchDifficulty } from '../utils/MemoryMatchConstants';
+
+const dbService = new DatabaseService();
 
 export default function PropertyDetailScreen({ route, navigation, onPropertyUpdate }: any) {
   const { property} = route.params;
