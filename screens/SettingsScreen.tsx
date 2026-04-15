@@ -14,8 +14,6 @@ import Constants from 'expo-constants';
 import { soundService } from '../services/SoundService';
 import * as Notifications from 'expo-notifications';
 import { NotificationService } from '../services/NotificationService';
-import * as Notifications from 'expo-notifications';
-import { NotificationService } from '../services/NotificationService';
 import { Ionicons } from '@expo/vector-icons';
 
 // ── URLs — swap these once you have real hosted pages ──────────────────────
