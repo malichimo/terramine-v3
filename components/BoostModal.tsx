@@ -161,13 +161,14 @@ export default function BoostModal({
             <Text style={styles.title}>Earning Boost</Text>
           </View>
           
-          <Text style={styles.subtitle}>Get 2x earnings for 30 minutes!</Text>
+          <Text style={styles.subtitle}>Get 20x passive earnings for 30 minutes!</Text>
+          <Text style={[styles.subtitle, { fontSize: 13, marginTop: -10 }]}>Check-ins & resources get 2x.</Text>
 
           {/* Current Boost Status */}
           {boostTimeRemaining > 0 && (
             <View style={styles.activeBoostBanner}>
               <Text style={styles.activeBoostText}>
-                ⚡ Active: {formatTimeRemaining(boostTimeRemaining)} remaining
+                ⚡ Active: {formatTimeRemaining(boostTimeRemaining)} remaining (20x passive / 2x rewards)
               </Text>
             </View>
           )}

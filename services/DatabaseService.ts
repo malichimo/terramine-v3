@@ -79,6 +79,15 @@ export class DatabaseService {
       purchasedAt: new Date().toISOString(),
     });
 
+    // Check user has enough TB before deducting
+    const userSnap = await getDoc(doc(db, 'users', userId));
+    if (userSnap.exists()) {
+      const currentBalance = userSnap.data().tbBalance ?? 0;
+      if (currentBalance < tbCost) {
+        throw new Error('Insufficient TB balance');
+      }
+    }
+
     // Deduct TB from user
     await this.updateUserBalance(userId, -tbCost);
   }
@@ -161,22 +170,6 @@ export class DatabaseService {
     return await getDownloadURL(storageRef);
   }
 
-  // Push tokens
-  async savePushToken(userId: string, token: string): Promise<void> {
-    const userRef = doc(db, 'users', userId);
-    await updateDoc(userRef, { expoPushToken: token });
-  }
-
-  async getPushToken(userId: string): Promise<string | null> {
-    try {
-      const userRef = doc(db, 'users', userId);
-      const userSnap = await getDoc(userRef);
-      return userSnap.exists() ? (userSnap.data().expoPushToken ?? null) : null;
-    } catch {
-      return null;
-    }
-  }
-
   // Check-ins
   async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) {
     const checkInRef = doc(collection(db, 'checkIns'));
@@ -214,27 +207,6 @@ export class DatabaseService {
     await updateDoc(ownerRef, {
       tbBalance: increment(1),
     });
-
-    // Send push notification to property owner (non-fatal if it fails)
-    try {
-      const { NotificationService } = await import('./NotificationService');
-      const ownerToken = await this.getPushToken(propertyOwnerId);
-      if (ownerToken && ownerToken !== await this.getPushToken(userId)) {
-        // Fetch property details for mine name
-        const propDetailsSnap = await getDoc(doc(db, 'propertyDetails', propertyId));
-        const mineName = propDetailsSnap.exists() ? propDetailsSnap.data().customName : undefined;
-        const propSnap = await getDoc(doc(db, 'properties', propertyId));
-        const mineType = propSnap.exists() ? propSnap.data().mineType : 'rock';
-        await NotificationService.sendCheckInNotification(
-          ownerToken,
-          visitorNickname || 'A miner',
-          mineType,
-          mineName
-        );
-      }
-    } catch (notifError) {
-      console.warn('Check-in notification failed (non-fatal):', notifError);
-    }
 
     console.log('Check-in saved to Firebase:', {
       propertyId,

@@ -12,6 +12,10 @@ import { auth, db } from '../firebaseConfig';
 import { useAuth } from '../contexts/AuthContext';
 import Constants from 'expo-constants';
 import { soundService } from '../services/SoundService';
+import * as Notifications from 'expo-notifications';
+import { NotificationService } from '../services/NotificationService';
+import * as Notifications from 'expo-notifications';
+import { NotificationService } from '../services/NotificationService';
 import { Ionicons } from '@expo/vector-icons';
 
 // ── URLs — swap these once you have real hosted pages ──────────────────────
@@ -58,15 +62,35 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
 
   const handleNotificationsToggle = async (value: boolean) => {
     if (value) {
-      Alert.alert(
-        'Notifications',
-        'Push notification setup is coming soon. You\'ll be notified when visitors check in and when you earn TB.',
-        [{ text: 'OK' }]
-      );
+      const token = await NotificationService.registerForPushNotifications();
+      if (token) {
+        setNotificationsEnabled(true);
+        await NotificationService.scheduleDailyReminder();
+        Alert.alert('Notifications Enabled', 'You will be notified when someone visits your mine and each morning at 9 AM.');
+      } else {
+        setNotificationsEnabled(false);
+        Alert.alert(
+          'Permission Denied',
+          'To receive notifications, please enable them in your device Settings > TerraMine > Notifications.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          ]
+        );
+      }
     } else {
       setNotificationsEnabled(false);
+      await NotificationService.cancelDailyReminder();
+      Alert.alert('Notifications Disabled', 'You will no longer receive TerraMine notifications.');
     }
   };
+
+  // Check current notification permission on mount
+  useEffect(() => {
+    Notifications.getPermissionsAsync().then(({ status }) => {
+      setNotificationsEnabled(status === 'granted');
+    }).catch(() => {});
+  }, []);
 
   // ── Sound ────────────────────────────────────────────────────────────────
 

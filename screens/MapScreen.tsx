@@ -297,7 +297,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       return sum + rate;
     }, 0);
 
-    const multiplier = boostState.isBoostActive ? 2 : 1;
+    const multiplier = boostState.isBoostActive ? 20 : 1; // 20x boost on passive USD earnings
     return totalRentPerSecond * 60 * multiplier; // Convert to per minute
   };
 
@@ -442,8 +442,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         }
       }
 
-      // Calculate earnings: boosted time at 2x, rest at 1x
-      const boostedEarnings = totalRentPerSecond * (boostedSeconds / 60) * 60 * 2; // per minute * minutes * 2x
+      // Calculate earnings: boosted time at 20x passive earnings, rest at 1x
+      const boostedEarnings = totalRentPerSecond * (boostedSeconds / 60) * 60 * 20; // per minute * minutes * 20x
       const unboostedEarnings = totalRentPerSecond * (unboostedSeconds / 60) * 60; // per minute * minutes
       const totalOfflineEarnings = boostedEarnings + unboostedEarnings;
 
@@ -733,7 +733,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       setBoostState(newState);
       onBoostUpdate(newState);
       setShowBoostModal(false);
-      Alert.alert('Boost Activated!', '+30 minutes of 2x earnings!');
+      Alert.alert('Boost Activated!', '+30 minutes of 20x passive earnings! Check-in rewards also get 2x.');
     } catch (error) {
       console.error('Error activating free boost:', error);
       Alert.alert('Error', 'Failed to activate boost. Please try again.');
@@ -747,7 +747,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       setBoostState(newState);
       onBoostUpdate(newState);
       setShowBoostModal(false);
-      Alert.alert('Boost Activated!', `+30 minutes of 2x earnings from ad! (${newState.adBoostsRemaining}/12 remaining)`);
+      Alert.alert('Boost Activated!', `+30 minutes of 20x passive earnings from ad! (${newState.adBoostsRemaining}/12 remaining)`);
     } catch (error) {
       console.error('❌ Error activating ad boost:', error);
       Alert.alert('Error', 'Failed to activate boost. Please try again.');
