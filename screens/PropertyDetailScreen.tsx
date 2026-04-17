@@ -38,6 +38,9 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const [savingName, setSavingName] = useState(false);
+  const [greeting, setGreeting] = useState('');
+  const [isEditingGreeting, setIsEditingGreeting] = useState(false);
+  const [savingGreeting, setSavingGreeting] = useState(false);
 
   useEffect(() => {
     // Initial load
@@ -78,6 +81,7 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
         setPropertyDetails(newDetails);
       } else {
         setPropertyDetails(details);
+        setGreeting(details.greeting || '');
 
         // ✅ FEAT-001 BUG-014 FIX: Pre-action nudges — show prompts BEFORE
         //    the user takes action, not as a celebration after.
@@ -324,6 +328,19 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
     setNameInput('');
   };
 
+  const handleSaveGreeting = async () => {
+    setSavingGreeting(true);
+    try {
+      await dbServicePhase2.updatePropertyGreeting(property.id, greeting);
+      setPropertyDetails(prev => prev ? { ...prev, greeting } : prev);
+      setIsEditingGreeting(false);
+    } catch {
+      Alert.alert('Error', 'Failed to save greeting. Please try again.');
+    } finally {
+      setSavingGreeting(false);
+    }
+  };
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -428,6 +445,54 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
         )}
 
         {/* Stats Section */}
+        {/* Greeting Section */}
+        <View style={[styles.statsSection, { marginTop: 0 }]}>
+          <View style={styles.statRow}>
+            <Text style={styles.statLabel}>👋 Visitor Greeting</Text>
+            {!isEditingGreeting && (
+              <TouchableOpacity onPress={() => setIsEditingGreeting(true)}>
+                <Text style={{ color: '#2196F3', fontSize: 14 }}>Edit</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {isEditingGreeting ? (
+            <View style={{ marginTop: 8 }}>
+              <TextInput
+                style={[styles.nameInput, { height: 70 }]}
+                value={greeting}
+                onChangeText={setGreeting}
+                placeholder="Set a greeting for visitors..."
+                placeholderTextColor="#999"
+                maxLength={100}
+                multiline
+              />
+              <Text style={styles.nameCharCount}>{greeting.length}/100</Text>
+              <View style={styles.nameEditButtons}>
+                <TouchableOpacity
+                  style={[styles.nameButton, styles.nameCancelButton]}
+                  onPress={() => { setIsEditingGreeting(false); setGreeting(propertyDetails.greeting || ''); }}
+                >
+                  <Text style={styles.nameCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.nameButton, styles.nameSaveButton, savingGreeting && styles.nameButtonDisabled]}
+                  onPress={handleSaveGreeting}
+                  disabled={savingGreeting}
+                >
+                  {savingGreeting
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <Text style={styles.nameSaveText}>Save</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <Text style={{ marginTop: 6, fontSize: 14, color: greeting ? '#333' : '#999', fontStyle: greeting ? 'normal' : 'italic' }}>
+              {greeting || 'No greeting set — tap Edit to add one'}
+            </Text>
+          )}
+        </View>
+
         <View style={styles.statsSection}>
           <View style={styles.statRow}>
             <Text style={styles.statLabel}>Production Level:</Text>

@@ -27,8 +27,6 @@ import DailyActivityScreen from './screens/DailyActivityScreen';
 import VisitorLogScreen from './screens/VisitorLogScreen';
 import ReferralScreen from './screens/ReferralScreen';
 import { ReferralService } from './services/ReferralService';
-import { NotificationService } from './services/NotificationService';
-import * as Notifications from 'expo-notifications';
 
 const Tab = createBottomTabNavigator();
 const MapStack = createStackNavigator();
@@ -93,7 +91,20 @@ function MapStackNavigator({
       <MapStack.Screen name="PropertyDetail">
         {(props) => <PropertyDetailScreen {...props} onPropertyUpdate={onPropertyUpdate} />}
       </MapStack.Screen>
-      <MapStack.Screen name="DailyActivity" component={DailyActivityScreen as any} />
+      <MapStack.Screen name="DailyActivity">
+        {(props) => (
+          <DailyActivityScreen
+            {...props}
+            route={{
+              ...props.route,
+              params: {
+                ...(props.route.params as any),
+                onBalanceUpdate: (amount: number) => setUserTB(prev => prev + amount),
+              },
+            }}
+          />
+        )}
+      </MapStack.Screen>
       <MapStack.Screen name="Upgrade" component={UpgradeScreen as any} />
       <MapStack.Screen name="MemoryMatch" component={MemoryMatchScreen as any} />
       <MapStack.Screen name="GoldRush" component={GoldRushGame as any} />
@@ -149,7 +160,20 @@ function ProfileStackNavigator({
       <ProfileStack.Screen name="PropertyDetail">
         {(props) => <PropertyDetailScreen {...props} onPropertyUpdate={onPropertyUpdate} />}
       </ProfileStack.Screen>
-      <ProfileStack.Screen name="DailyActivity" component={DailyActivityScreen as any} />
+      <ProfileStack.Screen name="DailyActivity">
+        {(props) => (
+          <DailyActivityScreen
+            {...props}
+            route={{
+              ...props.route,
+              params: {
+                ...(props.route.params as any),
+                onBalanceUpdate: (amount: number) => setUserTB(prev => prev + amount),
+              },
+            }}
+          />
+        )}
+      </ProfileStack.Screen>
       <ProfileStack.Screen name="Upgrade" component={UpgradeScreen as any} />
       <ProfileStack.Screen name="MemoryMatch" component={MemoryMatchScreen as any} />
       <ProfileStack.Screen name="GoldRush" component={GoldRushGame as any} />
@@ -201,8 +225,6 @@ export default function MainNavigator() {
     user?.displayName || user?.email?.split('@')[0] || 'User'
   );
   const mapRef = useRef<any>(null);
-  const notificationListener = useRef<any>(null);
-  const responseListener = useRef<any>(null);
 
   useEffect(() => {
     if (user) {
@@ -213,21 +235,6 @@ export default function MainNavigator() {
         .catch(e => console.warn('ConsentService init failed (non-fatal):', e))
         .finally(() => setConsentReady(true));
       soundService.init().catch(e => console.warn('SoundService init failed', e));
-
-      // Listen for notifications received while app is foregrounded
-      notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
-        console.log('Notification received:', notification);
-      });
-
-      // Listen for user tapping a notification
-      responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
-        const data = response.notification.request.content.data;
-        if (data?.type === 'checkin') {
-          // Navigate to Profile → Visitors tab on notification tap
-          // Navigation ref not available here — user will see it on next open
-          console.log('Check-in notification tapped');
-        }
-      });
     }
   }, [user]);
 
@@ -272,19 +279,22 @@ export default function MainNavigator() {
         console.warn('Referral code init failed (non-fatal):', e)
       );
 
-      // Register for push notifications and save token to Firestore
-      NotificationService.registerForPushNotifications().then(token => {
-        if (token) {
-          dbService.savePushToken(user.uid, token).catch(e =>
-            console.warn('Failed to save push token (non-fatal):', e)
+      // Grant first-session auto-boost to new users
+      dbService.grantFirstSessionBoost(user.uid, {
+        freeBoostsRemaining: boostData.freeBoostsRemaining,
+        adBoostsRemaining: boostData.adBoostsRemaining,
+        boostExpiresAt: boostData.boostExpiresAt,
+        nextFreeBoostResetAt: boostData.nextFreeBoostResetAt,
+        lastAdBoostRefillAt: boostData.lastAdBoostRefillAt,
+      }).then(newBoostState => {
+        if (newBoostState) {
+          setBoostState(prev => ({ ...prev, ...newBoostState }));
+          Alert.alert(
+            '⚡ Welcome Boost Activated!',
+            'You have a free 30-minute 20x earning boost to get you started. Check your earnings counter!'
           );
         }
-      }).catch(e => console.warn('Push registration failed (non-fatal):', e));
-
-      // Schedule daily reminder
-      NotificationService.scheduleDailyReminder().catch(e =>
-        console.warn('Failed to schedule daily reminder (non-fatal):', e)
-      );
+      }).catch(() => {});
 
       setDataLoaded(true);
     } catch (error) {

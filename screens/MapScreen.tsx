@@ -5,6 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { LocationService, Coordinates } from '../services/LocationService';
 import { DatabaseService, BoostState } from '../services/DatabaseService';
 import { generateGridSquare, getVisibleGridSquares, isWithinGridSquare, isAdjacentToUser, GridSquare, gridToLatLng } from '../utils/GridUtils';
+import { createSystemMineNear, isSystemMine, SYSTEM_CHECKIN_REWARD_TB } from './services/SystemMineService';
 import BoostModal from '../components/BoostModal';
 import { soundService } from '../services/SoundService';
 
@@ -226,19 +227,37 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     const loadBoostState = async () => {
       try {
         const state = await dbService.getBoostState(userId);
-        boostExpiresAtRef.current = state.boostExpiresAt;
+
+        // ✅ BOOST-DROP FIX: Only overwrite boostExpiresAtRef if:
+        // (a) Firebase returned a non-null expiry, OR
+        // (b) The ref is already null (no active boost to protect)
+        // This prevents a slow/failed network read from nulling out an active boost.
+        if (state.boostExpiresAt !== null) {
+          boostExpiresAtRef.current = state.boostExpiresAt;
+        } else if (boostExpiresAtRef.current !== null) {
+          // Firebase says null but we have a local expiry — verify it's actually expired
+          const localExpiry = new Date(boostExpiresAtRef.current);
+          if (localExpiry <= new Date()) {
+            // Truly expired — safe to clear
+            boostExpiresAtRef.current = null;
+          }
+          // else: keep local ref intact — network may have returned stale data
+        }
+
         // Preserve display fields — timer will recalculate them on next tick
         setBoostState(prev => ({
           ...prev,
           freeBoostsRemaining: state.freeBoostsRemaining,
           adBoostsRemaining: state.adBoostsRemaining,
-          boostExpiresAt: state.boostExpiresAt,
+          boostExpiresAt: state.boostExpiresAt ?? prev.boostExpiresAt,
           nextFreeBoostResetAt: state.nextFreeBoostResetAt,
           lastAdBoostRefillAt: state.lastAdBoostRefillAt,
           // Keep boostTimeRemaining and isBoostActive — timer recalculates these
         }));
       } catch (error) {
-        console.error('Error loading boost state:', error);
+        // ✅ BOOST-DROP FIX: On network error, do NOT touch boost state at all
+        // The timer continues running from the ref — boost stays active
+        console.error('Error loading boost state (non-fatal, keeping local state):', error);
       }
     };
 
@@ -647,28 +666,47 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
     setLastCheckIns(prev => new Map(prev).set(selectedSquare.id, today));
     
-    let tbEarned = 1;
-    if (checkInMessage.trim()) tbEarned += 2;
-    if (photoUri) tbEarned += 2;
-    
-    // Apply boost multiplier
-    if (boostState.isBoostActive) {
+    // Base TB raised to 3 (was 1)
+    const isSystem = isSystemMine(selectedSquare.ownerId || '');
+    let tbEarned = isSystem ? SYSTEM_CHECKIN_REWARD_TB : 3;
+    if (!isSystem) {
+      if (checkInMessage.trim()) tbEarned += 2;
+      if (photoUri) tbEarned += 2;
+    }
+
+    // Apply boost multiplier (not on system mine first-time bonus)
+    if (boostState.isBoostActive && !isSystem) {
       tbEarned *= 2;
     }
-    
+
     try {
       await onCheckIn(
         selectedSquare.id,
-        tbEarned, 
-        selectedSquare.ownerId, 
+        tbEarned,
+        selectedSquare.ownerId,
         checkInMessage.trim() || undefined,
         !!photoUri,
         photoUrl,
         username
       );
-      
-      const boostText = boostState.isBoostActive ? ' (2x Boost Applied!)' : '';
-      Alert.alert('Success!', `Check-in complete! You earned ${tbEarned} TB${boostText}. The owner earned 1 TB.`);
+
+      // Check-in streak bonus
+      const newStreak = await dbService.incrementCheckInStreak(userId);
+      const streakBonus = dbService.getStreakBonus(newStreak);
+      if (streakBonus > 0) {
+        await dbService.updateUserBalance(userId, streakBonus);
+        tbEarned += streakBonus;
+      }
+
+      const boostText = boostState.isBoostActive && !isSystem ? ' (2x Boost Applied!)' : '';
+      const streakText = streakBonus > 0 ? `
+🔥 Streak bonus: +${streakBonus} TB (${newStreak} mines today!)` : '';
+      const systemText = isSystem ? '
+⚙️ Welcome bonus from TerraMine HQ!' : ` The owner earned 1 TB.`;
+      Alert.alert(
+        isSystem ? '🎉 Welcome to TerraMine!' : 'Check-in Complete!',
+        `You earned ${tbEarned} TB${boostText}!${systemText}${streakText}`
+      );
       setCheckInMessage('');
       setShowCheckInModal(false);
     } catch (error) {
@@ -1088,8 +1126,15 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         <View style={styles.checkInModal}>
           <Text style={styles.modalTitle}>Check In</Text>
           <Text style={styles.modalSubtitle}>
-            Checking in to {selectedSquare.mineType} mine
+            {selectedSquare.customName || (selectedSquare.mineType + ' mine')}
           </Text>
+          {selectedSquare.greeting ? (
+            <View style={{ backgroundColor: '#FFF8E1', borderRadius: 8, padding: 10, marginBottom: 10, borderLeftWidth: 3, borderLeftColor: '#FFD700' }}>
+              <Text style={{ fontSize: 13, color: '#555', fontStyle: 'italic' }}>
+                💬 "{selectedSquare.greeting}"
+              </Text>
+            </View>
+          ) : null}
           
           <TextInput
             style={styles.messageInput}

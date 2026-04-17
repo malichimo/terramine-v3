@@ -30,7 +30,9 @@ export type MilestoneKey =
   | 'milestone_renamedTA'
   | 'milestone_addedPhoto'
   | 'milestone_sawUpgradePrompt'
-  | 'milestone_firstDailyActivity';
+  | 'milestone_firstDailyActivity'
+  | 'milestone_firstCheckIn'
+  | 'milestone_autoBoostGiven';
 
 export class DatabaseService {
   // User data
@@ -170,6 +172,64 @@ export class DatabaseService {
     return await getDownloadURL(storageRef);
   }
 
+  // ── Check-in streak tracking ──────────────────────────────────────────────
+
+  async getCheckInStreakToday(userId: string): Promise<number> {
+    try {
+      const userRef = doc(db, 'users', userId);
+      const userSnap = await getDoc(userRef);
+      if (!userSnap.exists()) return 0;
+      const data = userSnap.data();
+      const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+      if (data.checkInStreakDate !== today) return 0;
+      return data.checkInStreakCount || 0;
+    } catch { return 0; }
+  }
+
+  async incrementCheckInStreak(userId: string): Promise<number> {
+    try {
+      const userRef = doc(db, 'users', userId);
+      const userSnap = await getDoc(userRef);
+      if (!userSnap.exists()) return 0;
+      const data = userSnap.data();
+      const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+
+      let newCount = 1;
+      if (data.checkInStreakDate === today) {
+        newCount = (data.checkInStreakCount || 0) + 1;
+      }
+
+      await updateDoc(userRef, {
+        checkInStreakDate: today,
+        checkInStreakCount: newCount,
+      });
+
+      return newCount;
+    } catch { return 0; }
+  }
+
+  // Streak bonus TB amounts
+  getStreakBonus(streakCount: number): number {
+    if (streakCount === 3) return 10;
+    if (streakCount === 5) return 25;
+    if (streakCount === 10) return 50;
+    return 0;
+  }
+
+  // ── Auto-boost for first session ────────────────────────────────────────────
+
+  async grantFirstSessionBoost(userId: string, currentBoostState: BoostState): Promise<BoostState | null> {
+    try {
+      const alreadyGiven = await this.checkAndFireMilestone(userId, 'milestone_autoBoostGiven');
+      if (!alreadyGiven) return null; // already given
+      // Auto-activate 30 min boost
+      return await this.useFreeBoost(userId, currentBoostState);
+    } catch (e) {
+      console.warn('Auto-boost grant failed (non-fatal):', e);
+      return null;
+    }
+  }
+
   // Check-ins
   async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) {
     const checkInRef = doc(collection(db, 'checkIns'));
@@ -202,11 +262,15 @@ export class DatabaseService {
       totalCheckIns: increment(1),
     });
 
-    // Reward property owner with 1 TB
-    const ownerRef = doc(db, 'users', propertyOwnerId);
-    await updateDoc(ownerRef, {
-      tbBalance: increment(1),
-    });
+    // Reward property owner with 1 TB (skip for system mine — no real owner)
+    const SYSTEM_UID = 'terramine-system';
+    if (propertyOwnerId !== SYSTEM_UID) {
+      const ownerRef = doc(db, 'users', propertyOwnerId);
+      await updateDoc(ownerRef, {
+        tbBalance: increment(1),
+        totalTBEarned: increment(1),
+      });
+    }
 
     console.log('Check-in saved to Firebase:', {
       propertyId,
@@ -428,6 +492,20 @@ export class DatabaseService {
       nextFreeBoostResetAt: null,
       lastAdBoostRefillAt: new Date().toISOString(),
     };
+  }
+
+  // Push tokens
+  async savePushToken(userId: string, token: string): Promise<void> {
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, { expoPushToken: token });
+  }
+
+  async getPushToken(userId: string): Promise<string | null> {
+    try {
+      const userRef = doc(db, 'users', userId);
+      const userSnap = await getDoc(userRef);
+      return userSnap.exists() ? (userSnap.data().expoPushToken ?? null) : null;
+    } catch { return null; }
   }
 
   // ── Milestone tracking (FEAT-001) ────────────────────────────────────────

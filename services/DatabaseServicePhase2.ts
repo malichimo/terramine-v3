@@ -391,8 +391,19 @@ export class DatabaseServicePhase2 {
   }
 
   getUpgradeCost(currentLevel: number): UpgradeCost {
+    // Level 1→2 is intentionally cheap to give new players an early win
+    if (currentLevel === 1) {
+      return {
+        level: 2,
+        common: 500,
+        uncommon: 50,
+        rare: 10,
+        epic: 1,
+        requiresAd: false,
+      };
+    }
+    // Level 2+ follows the standard doubling curve
     const multiplier = Math.pow(2, currentLevel - 1);
-    
     return {
       level: currentLevel + 1,
       common: 10000 * multiplier,
@@ -424,6 +435,40 @@ export class DatabaseServicePhase2 {
   // MATCHING GAME SYSTEM
   // ============================================
 
+  // ── Daily game play tracking ─────────────────────────────────────────────
+  // First 3 plays per property per day get 2x rewards (resets at 4 AM EST)
+
+  async getDailyGamesPlayed(propertyId: string): Promise<number> {
+    try {
+      const detailsRef = doc(db, 'propertyDetails', propertyId);
+      const snap = await getDoc(detailsRef);
+      if (!snap.exists()) return 0;
+      const data = snap.data();
+      const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+      if (data.dailyGamesDate !== today) return 0;
+      return data.dailyGamesPlayed || 0;
+    } catch { return 0; }
+  }
+
+  async incrementDailyGamesPlayed(propertyId: string): Promise<number> {
+    try {
+      const detailsRef = doc(db, 'propertyDetails', propertyId);
+      const snap = await getDoc(detailsRef);
+      if (!snap.exists()) return 1;
+      const data = snap.data();
+      const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+      let newCount = 1;
+      if (data.dailyGamesDate === today) {
+        newCount = (data.dailyGamesPlayed || 0) + 1;
+      }
+      await updateDoc(detailsRef, {
+        dailyGamesDate: today,
+        dailyGamesPlayed: newCount,
+      });
+      return newCount;
+    } catch { return 1; }
+  }
+
   async recordGameResult(
     userId: string,
     propertyId: string,
@@ -438,12 +483,26 @@ export class DatabaseServicePhase2 {
       const details = await this.getPropertyDetails(propertyId);
       if (!details) throw new Error('Property details not found');
 
+      // Check if this play gets the daily boost (first 3 plays of the day)
+      const dailyPlaysToday = await this.getDailyGamesPlayed(propertyId);
+      const isDailyBoosted = dailyPlaysToday < 3;
+      await this.incrementDailyGamesPlayed(propertyId);
+
       const reward = this.calculateGameReward(
         details.gameLevel,
         mineType,
         won,
         perfectGame
       );
+
+      // Apply daily boost — 2x resources and XP for first 3 plays
+      if (isDailyBoosted && won) {
+        reward.common   = Math.floor(reward.common * 2);
+        reward.uncommon = Math.floor(reward.uncommon * 2);
+        reward.rare     = Math.floor(reward.rare * 2);
+        reward.epic     = Math.floor(reward.epic * 2);
+        reward.propertyXP = Math.floor(reward.propertyXP * 2);
+      }
 
       // Update game stats
       const detailsRef = doc(db, 'propertyDetails', propertyId);
@@ -467,8 +526,23 @@ export class DatabaseServicePhase2 {
           epic: reward.epic,
         });
 
-        // Add TB (would need to import DatabaseService for this)
-        // await dbService.updateUserBalance(userId, reward.tb);
+        // Add TB directly via Firestore increment — no DatabaseService import needed
+        if (reward.tb > 0) {
+          const userRef = doc(db, 'users', userId);
+          await updateDoc(userRef, {
+            tbBalance: increment(reward.tb),
+            totalTBEarned: increment(reward.tb),
+          });
+        }
+      } else {
+        // Consolation TB for losses (reward.tb is 1 for losses per calculateGameReward)
+        if (reward.tb > 0) {
+          const userRef = doc(db, 'users', userId);
+          await updateDoc(userRef, {
+            tbBalance: increment(reward.tb),
+            totalTBEarned: increment(reward.tb),
+          });
+        }
       }
 
       // Always add XP (wins get full reward.propertyXP, losses get 10)
@@ -724,7 +798,23 @@ export class DatabaseServicePhase2 {
       }
     }
   }
+
+  async updatePropertyGreeting(propertyId: string, greeting: string): Promise<void> {
+    const detailsRef = doc(db, 'propertyDetails', propertyId);
+    await updateDoc(detailsRef, {
+      greeting: greeting.trim(),
+      lastUpdated: new Date().toISOString(),
+    });
+  }
+
+  async getPropertyGreeting(propertyId: string): Promise<string | null> {
+    try {
+      const detailsRef = doc(db, 'propertyDetails', propertyId);
+      const snap = await getDoc(detailsRef);
+      if (!snap.exists()) return null;
+      return snap.data().greeting || null;
+    } catch { return null; }
+  }
 }
 
-// Export singleton instance
 export const dbServicePhase2 = new DatabaseServicePhase2();
