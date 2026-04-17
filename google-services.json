@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "183143680304-2hd0afquph0m4l62g7ntm7hr6oela8fp.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.terramine.app",
+            "certificate_hash": "e332d408d46830efa604ca9266eddb9ab128d02f"
+          }
+        },
+        {
           "client_id": "183143680304-qqeo3j5s920dq1jkq8mrvb1khgqjdkbq.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
