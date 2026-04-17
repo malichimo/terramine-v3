@@ -4,7 +4,7 @@
 
 import { db } from '../firebaseConfig';
 import { doc, setDoc, getDoc, collection, getDocs, query, where } from 'firebase/firestore';
-import { GridSquare, latLngToGridId, getGridSquare } from '../utils/GridUtils';
+import { GridSquare, latLngToGridId } from '../utils/GridUtils';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
