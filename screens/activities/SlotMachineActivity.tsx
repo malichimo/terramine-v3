@@ -29,6 +29,7 @@ interface SlotMachineActivityProps {
   property: GridSquare;
   propertyDetails: any;
   navigation: any;
+  onActivityComplete?: () => void; // ✅ FEAT-001
 }
 
 interface RewardTier {
@@ -61,6 +62,7 @@ export default function SlotMachineActivity({
   property,
   propertyDetails,
   navigation,
+  onActivityComplete,
 }: SlotMachineActivityProps) {
   const { user } = useAuth();
   const [isRunning, setIsRunning] = useState(false);
@@ -350,6 +352,7 @@ export default function SlotMachineActivity({
       setRewardTier(reward);
       setTbBonus(tbBonusAmount);
       setShowRewards(true);
+      onActivityComplete?.(); // ✅ FEAT-001
       soundService.stop('reel_spin');
       // Play reward sound for jackpot, chime for smaller wins
       const allMatch = reward.tier === 'epic' || reward.tier === 'rare';

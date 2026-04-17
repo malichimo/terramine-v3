@@ -18,13 +18,14 @@ interface DailyActivityScreenProps {
     params: {
       property: GridSquare;
       propertyDetails: any;
+      onBalanceUpdate?: (amount: number) => void;
     };
   };
   navigation: any;
 }
 
 export default function DailyActivityScreen({ route, navigation }: any) {
-  const { property, propertyDetails } = route.params;
+  const { property, propertyDetails, onBalanceUpdate } = route.params;
   const { user } = useAuth();
 
   // ✅ FEAT-001: Trigger #5 — fires once after any daily activity completes
@@ -53,6 +54,7 @@ export default function DailyActivityScreen({ route, navigation }: any) {
             property={property}
             propertyDetails={propertyDetails}
             navigation={navigation}
+            onBalanceUpdate={onBalanceUpdate}
             onActivityComplete={handleActivityComplete}
           />
         );
@@ -62,6 +64,7 @@ export default function DailyActivityScreen({ route, navigation }: any) {
             property={property}
             propertyDetails={propertyDetails}
             navigation={navigation}
+            onBalanceUpdate={onBalanceUpdate}
             onActivityComplete={handleActivityComplete}
           />
         );
@@ -71,6 +74,7 @@ export default function DailyActivityScreen({ route, navigation }: any) {
             property={property}
             propertyDetails={propertyDetails}
             navigation={navigation}
+            onBalanceUpdate={onBalanceUpdate}
             onActivityComplete={handleActivityComplete}
           />
         );
@@ -80,6 +84,7 @@ export default function DailyActivityScreen({ route, navigation }: any) {
             property={property}
             propertyDetails={propertyDetails}
             navigation={navigation}
+            onBalanceUpdate={onBalanceUpdate}
             onActivityComplete={handleActivityComplete}
           />
         );

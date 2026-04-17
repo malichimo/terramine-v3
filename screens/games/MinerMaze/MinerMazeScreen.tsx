@@ -110,8 +110,8 @@ const HAZARD_DEFS: Record<HazardType, HazardDef> = {
 const HAZARD_TYPES: HazardType[] = ['water', 'fire', 'gas', 'collapse'];
 
 const DIFFS: Record<string, DiffCfg> = {
-  easy:   { label:'Easy',   emoji:'🟢', cols:15, rows:19, timeLimit:180, hazardCount:4,  coneLen:3.5, coneAngle:100, tbReward:15, resMult:1   },
-  medium: { label:'Medium', emoji:'🟡', cols:19, rows:25, timeLimit:120, hazardCount:10, coneLen:2.8, coneAngle:80,  tbReward:30, resMult:1.5 },
+  easy:   { label:'Easy',   emoji:'🟢', cols:8,  rows:10, timeLimit:240, hazardCount:2,  coneLen:4.0, coneAngle:120, tbReward:15, resMult:1   },
+  medium: { label:'Medium', emoji:'🟡', cols:15, rows:19, timeLimit:150, hazardCount:6,  coneLen:2.8, coneAngle:80,  tbReward:30, resMult:1.5 },
   hard:   { label:'Hard',   emoji:'🔴', cols:25, rows:33, timeLimit:90,  hazardCount:20, coneLen:2.2, coneAngle:65,  tbReward:60, resMult:2.5 },
 };
 

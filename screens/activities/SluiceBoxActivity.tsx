@@ -29,6 +29,7 @@ interface SluiceBoxActivityProps {
   property: GridSquare;
   propertyDetails: any;
   navigation: any;
+  onActivityComplete?: () => void; // ✅ FEAT-001
 }
 
 interface RewardTier {
@@ -51,6 +52,7 @@ export default function SluiceBoxActivity({
   property,
   propertyDetails,
   navigation,
+  onActivityComplete,
 }: SluiceBoxActivityProps) {
   const { user } = useAuth();
   const [isRunning, setIsRunning] = useState(false);
@@ -301,6 +303,7 @@ export default function SluiceBoxActivity({
       setRewardTier(reward);
       setTbBonus(tbBonusAmount);
       setShowRewards(true);
+      onActivityComplete?.(); // ✅ FEAT-001
       soundService.stop('water_flow');
       soundService.play('chime');
       

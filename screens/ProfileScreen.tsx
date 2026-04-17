@@ -73,6 +73,8 @@ export default function ProfileScreen({
 }: ProfileScreenProps) {
   const [activeTab, setActiveTab] = useState<'portfolio' | 'properties' | 'visitors' | 'activity'>('portfolio');
   const [mineTypeFilter, setMineTypeFilter] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<'name' | 'type' | 'earnings'>('type');
+  const [sortAsc, setSortAsc] = useState(true);
   const [propertyCheckIns, setPropertyCheckIns] = useState<{ [key: string]: CheckInData[] }>({});
   const [loadingCheckIns, setLoadingCheckIns] = useState(false);
   const [activityFeed, setActivityFeed] = useState<ActivityEvent[]>([]);
@@ -465,6 +467,31 @@ export default function ProfileScreen({
               </View>
             )}
 
+            {/* Sort Bar */}
+            {ownedProperties.length > 0 && (
+              <View style={styles.sortBar}>
+                <Text style={styles.sortLabel}>Sort:</Text>
+                {([
+                  { key: 'name',     label: 'Name' },
+                  { key: 'type',     label: 'Type' },
+                  { key: 'earnings', label: 'Earnings' },
+                ] as const).map(({ key, label }) => (
+                  <TouchableOpacity
+                    key={key}
+                    style={[styles.sortButton, sortKey === key && styles.sortButtonActive]}
+                    onPress={() => {
+                      if (sortKey === key) setSortAsc(a => !a);
+                      else { setSortKey(key); setSortAsc(true); }
+                    }}
+                  >
+                    <Text style={[styles.sortButtonText, sortKey === key && styles.sortButtonTextActive]}>
+                      {label}{sortKey === key ? (sortAsc ? ' ↑' : ' ↓') : ''}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
             {ownedProperties.length === 0 ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyStateIcon}>🗺️</Text>
@@ -480,17 +507,34 @@ export default function ProfileScreen({
                 </TouchableOpacity>
               </View>
             ) : (() => {
+              const mineOrder = { rock: 0, coal: 1, gold: 2, diamond: 3 };
               const filtered = mineTypeFilter
                 ? ownedProperties.filter(p => p.mineType === mineTypeFilter)
                 : ownedProperties;
-              if (filtered.length === 0) {
+              const sorted = [...filtered].sort((a, b) => {
+                let cmp = 0;
+                if (sortKey === 'name') {
+                  const nameA = (a.customName || a.mineType || '').toLowerCase();
+                  const nameB = (b.customName || b.mineType || '').toLowerCase();
+                  cmp = nameA.localeCompare(nameB);
+                } else if (sortKey === 'type') {
+                  cmp = (mineOrder[a.mineType as keyof typeof mineOrder] ?? 0) -
+                        (mineOrder[b.mineType as keyof typeof mineOrder] ?? 0);
+                } else if (sortKey === 'earnings') {
+                  const rateA = rentRates[a.mineType as keyof typeof rentRates] ?? 0;
+                  const rateB = rentRates[b.mineType as keyof typeof rentRates] ?? 0;
+                  cmp = rateA - rateB;
+                }
+                return sortAsc ? cmp : -cmp;
+              });
+              if (sorted.length === 0) {
                 return (
                   <View style={styles.emptyState}>
                     <Text style={styles.emptyStateTitle}>No {mineTypeFilter} mines yet</Text>
                   </View>
                 );
               }
-              return filtered.map(property => {
+              return sorted.map(property => {
                 const rate = rentRates[property.mineType as keyof typeof rentRates] ?? 0;
                 return (
                   <TouchableOpacity
@@ -1011,6 +1055,32 @@ const styles = StyleSheet.create({
   activityFeedInfo: { flex: 1 },
   activityFeedLabel: { fontSize: 14, color: '#333', lineHeight: 20 },
   activityFeedTime: { fontSize: 12, color: '#999', marginTop: 3 },
+
+  // Sort bar
+  sortBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+    gap: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  sortLabel: { fontSize: 13, color: '#666', fontWeight: '600', marginRight: 4 },
+  sortButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#f0f0f0',
+  },
+  sortButtonActive: { backgroundColor: '#2196F3' },
+  sortButtonText: { fontSize: 13, color: '#555', fontWeight: '600' },
+  sortButtonTextActive: { color: 'white' },
 
   // Empty state
   emptyState: { alignItems: 'center', padding: 40 },
