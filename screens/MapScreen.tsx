@@ -6,6 +6,7 @@ import { LocationService, Coordinates } from '../services/LocationService';
 import { DatabaseService, BoostState } from '../services/DatabaseService';
 import { generateGridSquare, getVisibleGridSquares, isWithinGridSquare, isAdjacentToUser, GridSquare, gridToLatLng } from '../utils/GridUtils';
 import { createSystemMineNear, isSystemMine, SYSTEM_CHECKIN_REWARD_TB } from '../services/SystemMineService';
+import { createSystemMineNear, isSystemMine, SYSTEM_CHECKIN_REWARD_TB } from '../services/SystemMineService';
 import BoostModal from '../components/BoostModal';
 import { soundService } from '../services/SoundService';
 
@@ -760,6 +761,15 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
 
     // Mark first purchase milestone as done (so nudge doesn't re-show)
     dbService.checkAndFireMilestone(userId, 'milestone_firstPurchase').catch(() => {});
+
+      // Create system mine on first purchase
+      if (ownedProperties.length === 0) {
+        createSystemMineNear(updatedSquare).then(systemMine => {
+          if (systemMine) {
+            setAllProperties(prev => prev.some(p => p.id === systemMine.id) ? prev : [...prev, systemMine]);
+          }
+        }).catch(e => console.warn('System mine (non-fatal):', e));
+      }
     Alert.alert('Success!', `You purchased a ${mineType} mine! Tap it to explore.`);
   };
 
