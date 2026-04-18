@@ -5,7 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { LocationService, Coordinates } from '../services/LocationService';
 import { DatabaseService, BoostState } from '../services/DatabaseService';
 import { generateGridSquare, getVisibleGridSquares, isWithinGridSquare, isAdjacentToUser, GridSquare, gridToLatLng } from '../utils/GridUtils';
-import { createSystemMineNear, isSystemMine, SYSTEM_CHECKIN_REWARD_TB } from \x27../services/SystemMineService\x27;
+import { createSystemMineNear, isSystemMine, SYSTEM_CHECKIN_REWARD_TB } from '../services/SystemMineService';
 import BoostModal from '../components/BoostModal';
 import { soundService } from '../services/SoundService';
 
