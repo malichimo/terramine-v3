@@ -666,7 +666,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
     setLastCheckIns(prev => new Map(prev).set(selectedSquare.id, today));
     
-    // Base TB raised to 3 (was 1)
+    // Base TB raised to 3
     const isSystem = isSystemMine(selectedSquare.ownerId || '');
     let tbEarned = isSystem ? SYSTEM_CHECKIN_REWARD_TB : 3;
     if (!isSystem) {
@@ -674,7 +674,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       if (photoUri) tbEarned += 2;
     }
 
-    // Apply boost multiplier (not on system mine first-time bonus)
+    // Apply boost multiplier (not on system mine bonus)
     if (boostState.isBoostActive && !isSystem) {
       tbEarned *= 2;
     }
@@ -699,12 +699,10 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       }
 
       const boostText = boostState.isBoostActive && !isSystem ? ' (2x Boost Applied!)' : '';
-      const streakText = streakBonus > 0 ? `
-🔥 Streak bonus: +${streakBonus} TB (${newStreak} mines today!)` : '';
-      const systemText = isSystem ? '
-⚙️ Welcome bonus from TerraMine HQ!' : ` The owner earned 1 TB.`;
+      const streakText = streakBonus > 0 ? `\n\uD83D\uDD25 Streak bonus: +${streakBonus} TB (${newStreak} mines today!)` : '';
+      const systemText = isSystem ? '\n Welcome bonus from TerraMine HQ!' : ' The owner earned 1 TB.';
       Alert.alert(
-        isSystem ? '🎉 Welcome to TerraMine!' : 'Check-in Complete!',
+        isSystem ? 'Welcome to TerraMine!' : 'Check-in Complete!',
         `You earned ${tbEarned} TB${boostText}!${systemText}${streakText}`
       );
       setCheckInMessage('');
@@ -761,7 +759,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     // Mark first purchase milestone as done (so nudge doesn't re-show)
     dbService.checkAndFireMilestone(userId, 'milestone_firstPurchase').catch(() => {});
 
-      // Create system mine on first purchase
+      // Create system mine on first property purchase
       if (ownedProperties.length === 0) {
         createSystemMineNear(updatedSquare).then(systemMine => {
           if (systemMine) {
@@ -1140,7 +1138,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           {selectedSquare.greeting ? (
             <View style={{ backgroundColor: '#FFF8E1', borderRadius: 8, padding: 10, marginBottom: 10, borderLeftWidth: 3, borderLeftColor: '#FFD700' }}>
               <Text style={{ fontSize: 13, color: '#555', fontStyle: 'italic' }}>
-                💬 "{selectedSquare.greeting}"
+                {'"' + selectedSquare.greeting + '"'}
               </Text>
             </View>
           ) : null}
