@@ -1,15 +1,17 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { auth } from '../firebaseConfig';
-import { 
+import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   GoogleAuthProvider,
+  OAuthProvider,
   signInWithCredential,
   sendPasswordResetEmail,
-  User 
+  User
 } from 'firebase/auth';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import {
   GoogleSignin,
   statusCodes,
@@ -28,6 +30,7 @@ interface AuthContextType {
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<{ uid: string } | void>;
   signInWithGoogle: () => Promise<void>;
+  signInWithApple: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   signOut: (onBeforeSignOut?: () => Promise<void>) => Promise<void>;
 }
@@ -38,6 +41,7 @@ const AuthContext = createContext<AuthContextType>({
   signInWithEmail: async () => {},
   signUpWithEmail: async () => {},
   signInWithGoogle: async () => {},
+  signInWithApple: async () => {},
   resetPassword: async () => {},
   signOut: async () => {},
 });
@@ -110,6 +114,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const signInWithApple = async () => {
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      const provider = new OAuthProvider('apple.com');
+      const oAuthCredential = provider.credential({
+        idToken: credential.identityToken!,
+        rawNonce: credential.authorizationCode ?? undefined,
+      });
+      await signInWithCredential(auth, oAuthCredential);
+    } catch (error: any) {
+      if (error.code === 'ERR_REQUEST_CANCELED') {
+        return;
+      }
+      console.error('Apple Sign-In Error:', error);
+      throw new Error(error.message || 'Apple Sign-In failed. Please try again.');
+    }
+  };
+
   const resetPassword = async (email: string) => {
     try {
       await sendPasswordResetEmail(auth, email);
@@ -146,7 +173,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, signInWithEmail, signUpWithEmail, signInWithGoogle, resetPassword, signOut }}>
+    <AuthContext.Provider value={{ user, loading, signInWithEmail, signUpWithEmail, signInWithGoogle, signInWithApple, resetPassword, signOut }}>
       {children}
     </AuthContext.Provider>
   );

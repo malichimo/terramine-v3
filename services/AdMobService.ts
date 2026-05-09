@@ -11,7 +11,7 @@ import { Platform } from 'react-native';
 // Test ads always fill — iOS testers won't see blank screens while AdMob reviews
 // the account. Flip to false before submitting to production.
 // ⚠️  REMEMBER: Set BETA_MODE = false before production release.
-const BETA_MODE = true;
+const BETA_MODE = false;
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class AdMobService {
@@ -26,13 +26,12 @@ export class AdMobService {
 
   constructor() {
     if (__DEV__ || BETA_MODE) {
-      // Use Google's official test rewarded ad — always fills, never charges
       this.adUnitId = TestIds.REWARDED;
       console.log('AdMob: using TEST ad unit (DEV or BETA_MODE)');
     } else {
       this.adUnitId = Platform.OS === 'android'
-        ? 'ca-app-pub-4502698429383902/1899831956'  // Android production rewarded
-        : 'ca-app-pub-4502698429383902/4156946740'; // iOS production rewarded
+        ? 'ca-app-pub-4502698429383902/1899831956'
+        : 'ca-app-pub-4502698429383902/4156946740';
       console.log('AdMob: using PRODUCTION ad unit:', this.adUnitId);
     }
 
@@ -69,6 +68,9 @@ export class AdMobService {
           console.error('❌ Rewarded ad error:', error);
           this.isLoading = false;
           this.isLoaded = false;
+          // ✅ FIX: Retry after 10 seconds on error rather than giving up entirely.
+          // On iOS during AdMob review, production ads may fail to fill initially.
+          setTimeout(() => this.loadAd(), 10_000);
         }
       );
 
@@ -112,7 +114,10 @@ export class AdMobService {
       console.error('❌ Error loading rewarded ad:', error);
       this.isLoading = false;
       this.isLoaded = false;
-      throw error;
+      // ✅ FIX: Retry after 10 seconds instead of throwing and giving up.
+      // Previously this threw, leaving the ad permanently unloaded until the
+      // next initializeAd() call. Now it self-heals silently.
+      setTimeout(() => this.loadAd(), 10_000);
     }
   }
 

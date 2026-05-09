@@ -353,6 +353,13 @@ export default function SlotMachineActivity({
       setTbBonus(tbBonusAmount);
       setShowRewards(true);
       onActivityComplete?.(); // ✅ FEAT-001
+      // ✅ Mini-game completion resets TA inactivity clock
+      try {
+        const _db = new DatabaseService();
+        await _db.touchPropertyActivity(property.id);
+      } catch (e) {
+        // Non-fatal
+      }
       soundService.stop('reel_spin');
       // Play reward sound for jackpot, chime for smaller wins
       const allMatch = reward.tier === 'epic' || reward.tier === 'rare';

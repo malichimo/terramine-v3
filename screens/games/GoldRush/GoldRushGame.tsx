@@ -113,6 +113,9 @@ export default function GoldRushGame({ route, navigation }: any) {
   const puzzleRef       = useRef<PuzzleConfig | null>(null);
   const adService       = useRef<AdMobService | null>(null);
 
+  // ✅ FIX: Track mounted state to prevent setState/navigation calls after unmount
+  const isMounted = useRef(true);
+
   const [outOfMoves, setOutOfMoves] = useState(false);
   const [adLoading, setAdLoading]   = useState(false);
 
@@ -120,6 +123,11 @@ export default function GoldRushGame({ route, navigation }: any) {
   useEffect(() => {
     initNewPuzzle();
     adService.current = new AdMobService();
+
+    // ✅ FIX: Mark unmounted on cleanup so async callbacks don't fire after exit
+    return () => {
+      isMounted.current = false;
+    };
   }, []);
 
   function initNewPuzzle() {
@@ -278,11 +286,13 @@ export default function GoldRushGame({ route, navigation }: any) {
         user.uid, property.id, property.mineType,
         won, perfect, finalScore, finalTimeLeft, finalTaps
       );
+      if (!isMounted.current) return;
       setReward(earned as GameReward);
 
       // ✅ BUG-009 FIX: Re-fetch and store into liveDetails so the XP meter
       //    updates immediately — route.params is a stale snapshot and never changes
       const updated = await dbServicePhase2.getPropertyDetails(property.id);
+      if (!isMounted.current) return;
       if (updated) {
         setLiveDetails(updated);
         if (updated.gameLevel > levelBefore) {
@@ -299,43 +309,100 @@ export default function GoldRushGame({ route, navigation }: any) {
   // ── Ad for extra moves ────────────────────────────────────────────────────
   async function handleAdForMoves() {
     if (!adService.current) return;
+
+    // ✅ FIX: Check ad readiness before attempting to show
+    if (!adService.current.isAdReady()) {
+      Alert.alert(
+        'Ad Not Ready',
+        'The ad is still loading. Please wait a moment and try again.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     setAdLoading(true);
     try {
-      await adService.current.showAd(
+      const shown = await adService.current.showAd(
         () => {
           // Rewarded: grant 3 extra moves
+          if (!isMounted.current) return;
           setOutOfMoves(false);
           setAdLoading(false);
-          // Temporarily bump movesLimit by extending tapsUsed back by 3
-          // We do this by just reducing tapsUsed by 3 (can't mutate movesLimit const)
+          // Reduce tapsUsed by 3 to effectively grant 3 extra moves
           setTapsUsed(prev => Math.max(0, prev - 3));
         },
         () => {
           // Ad closed without reward
+          if (!isMounted.current) return;
           setAdLoading(false);
         }
       );
+
+      if (!shown) {
+        // showAd returned false — ad wasn't ready despite our check (race condition)
+        if (!isMounted.current) return;
+        setAdLoading(false);
+        Alert.alert(
+          'Ad Unavailable',
+          'Could not load an ad right now. Please try again in a moment.',
+          [{ text: 'OK' }]
+        );
+      }
     } catch {
+      if (!isMounted.current) return;
       setAdLoading(false);
     }
   }
 
-
   // ── Ad to play next level ─────────────────────────────────────────────────
   async function handlePlayNextLevel() {
     if (!adService.current) return;
+
+    // ✅ FIX: Check ad readiness before attempting to show — prevents crash
+    // when user taps immediately after level-up before ad has loaded
+    if (!adService.current.isAdReady()) {
+      Alert.alert(
+        'Ad Not Ready',
+        'The ad is still loading. Please wait a moment and try again.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     setAdLevelLoading(true);
     try {
-      await adService.current.showAd(
+      const shown = await adService.current.showAd(
         async () => {
           // Rewarded: fetch fresh propertyDetails and replace screen
           const updated = await dbServicePhase2.getPropertyDetails(property.id);
+          // ✅ FIX: Guard navigation — component may have unmounted during async Firestore fetch
+          if (!isMounted.current) return;
           setAdLevelLoading(false);
-          navigation.replace('GoldRush', { property, userId: user?.uid ?? '', propertyDetails: updated ?? propertyDetails });
+          navigation.replace('GoldRush', {
+            property,
+            userId: user?.uid ?? '',
+            propertyDetails: updated ?? propertyDetails,
+          });
         },
-        () => { setAdLevelLoading(false); }
+        () => {
+          // Ad closed without reward
+          if (!isMounted.current) return;
+          setAdLevelLoading(false);
+        }
       );
+
+      if (!shown) {
+        // showAd returned false — ad wasn't ready despite our check (race condition)
+        if (!isMounted.current) return;
+        setAdLevelLoading(false);
+        Alert.alert(
+          'Ad Unavailable',
+          'Could not load an ad right now. Please try again in a moment.',
+          [{ text: 'OK' }]
+        );
+      }
     } catch {
+      if (!isMounted.current) return;
       setAdLevelLoading(false);
     }
   }

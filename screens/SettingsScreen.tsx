@@ -15,6 +15,7 @@ import { soundService } from '../services/SoundService';
 import * as Notifications from 'expo-notifications';
 import { NotificationService } from '../services/NotificationService';
 import { Ionicons } from '@expo/vector-icons';
+import FeedbackModal from '../components/FeedbackModal';
 
 // ── URLs — swap these once you have real hosted pages ──────────────────────
 const PRIVACY_POLICY_URL = 'https://terramine.app/privacy';
@@ -31,6 +32,7 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
   const [sfxEnabled,   setSfxEnabled]   = useState(true);
   const [musicEnabled, setMusicEnabled] = useState(true);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [feedbackVisible, setFeedbackVisible] = useState(false);
 
   // Change Password modal state
   const [changePasswordVisible, setChangePasswordVisible] = useState(false);
@@ -60,6 +62,20 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
 
   const handleNotificationsToggle = async (value: boolean) => {
     if (value) {
+      // ✅ FIX: Check current status first — if already granted, enable directly
+      // without re-requesting (Android won't re-prompt after a previous denial)
+      const { status: currentStatus } = await Notifications.getPermissionsAsync();
+
+      if (currentStatus === 'granted') {
+        // Permission already granted — just register token and schedule
+        const token = await NotificationService.registerForPushNotifications();
+        setNotificationsEnabled(true);
+        await NotificationService.scheduleDailyReminder();
+        Alert.alert('Notifications Enabled', 'You will be notified when someone visits your mine and each morning at 9 AM.');
+        return;
+      }
+
+      // Permission not yet granted — request it
       const token = await NotificationService.registerForPushNotifications();
       if (token) {
         setNotificationsEnabled(true);
@@ -318,6 +334,23 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
         <View style={styles.card}>
           <TouchableOpacity
             style={styles.row}
+            onPress={() => setFeedbackVisible(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.rowLeft}>
+              <Text style={styles.rowIcon}>💬</Text>
+              <View>
+                <Text style={styles.rowTitle}>Send Feedback</Text>
+                <Text style={styles.rowSubtitle}>Bug reports, ideas, suggestions</Text>
+              </View>
+            </View>
+            <Text style={styles.rowChevron}>›</Text>
+          </TouchableOpacity>
+
+          <View style={styles.divider} />
+
+          <TouchableOpacity
+            style={styles.row}
             onPress={() => openLink(PRIVACY_POLICY_URL, 'Privacy Policy')}
             activeOpacity={0.7}
           >
@@ -382,6 +415,13 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
       </ScrollView>
 
       {/* ── Change Password Modal ── */}
+      <FeedbackModal
+        visible={feedbackVisible}
+        userId={user?.uid ?? ''}
+        userEmail={user?.email ?? ''}
+        onClose={() => setFeedbackVisible(false)}
+      />
+
       <Modal
         visible={changePasswordVisible}
         animationType="slide"

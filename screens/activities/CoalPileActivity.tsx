@@ -322,6 +322,13 @@ export default function CoalPileActivity({
       setTbBonus(tbBonusAmount);
       setShowRewards(true);
       onActivityComplete?.(); // ✅ FEAT-001
+      // ✅ Mini-game completion resets TA inactivity clock
+      try {
+        const _db = new DatabaseService();
+        await _db.touchPropertyActivity(property.id);
+      } catch (e) {
+        // Non-fatal
+      }
       soundService.play('chime');
       
       if (isBaseAttempt) {

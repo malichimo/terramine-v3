@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -13,21 +13,37 @@ import {
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { useAuth } from '../contexts/AuthContext';
 import { ModerationService } from '../services/ModerationService';
+import { DeepLinkService } from '../services/DeepLinkService';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [referralCode, setReferralCode] = useState('');
+  const [referralAutoFilled, setReferralAutoFilled] = useState(false);
   const [dateOfBirth, setDateOfBirth] = useState('');
   const [dobError, setDobError] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const { signInWithEmail, signUpWithEmail, signInWithGoogle, resetPassword } = useAuth();
+  const [appleLoading, setAppleLoading] = useState(false);
+  const { signInWithEmail, signUpWithEmail, signInWithGoogle, signInWithApple, resetPassword } = useAuth();
+
+  // Auto-fill referral code if app was opened via a terramine.app/join?ref=TM-XXXXX link.
+  // DeepLinkService saves the code to AsyncStorage on cold/warm start; we read it here.
+  useEffect(() => {
+    DeepLinkService.getPendingCode().then(code => {
+      if (code && !referralCode) {
+        setReferralCode(code);
+        setReferralAutoFilled(true);
+        setIsSignUp(true); // show sign-up form so the referral field is visible
+      }
+    });
+  }, []);
 
   const validateDOBFormat = (dob: string): boolean => {
     const dobRegex = /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/\d{4}$/;
@@ -106,8 +122,6 @@ export default function LoginScreen() {
         const result = await signUpWithEmail(email, password);
         if (result?.uid) {
           // Save DOB — use small delay to allow auth state + createUser to propagate
-          // ModerationService.saveDateOfBirth uses setDoc merge:true so it's safe even if
-          // the user doc doesn't exist yet, but the delay avoids any write ordering issues
           try {
             await new Promise(resolve => setTimeout(resolve, 500));
             await ModerationService.saveDateOfBirth(result.uid, dobToISO(dateOfBirth));
@@ -118,7 +132,10 @@ export default function LoginScreen() {
           if (referralCode.trim()) {
             try {
               const { ReferralService } = require('../services/ReferralService');
-              await ReferralService.applyReferralCode(result.uid, referralCode.trim());
+              const applied = await ReferralService.applyReferralCode(result.uid, referralCode.trim());
+              if (applied) {
+                await DeepLinkService.clearPendingCode(); // clear saved deep link code
+              }
             } catch (e) {
               console.warn('Referral code apply failed (non-fatal):', e);
             }
@@ -160,11 +177,26 @@ export default function LoginScreen() {
     }
   };
 
+  const handleAppleSignIn = async () => {
+    try {
+      setAppleLoading(true);
+      await signInWithApple();
+    } catch (error: any) {
+      // ERR_REQUEST_CANCELED means the user dismissed — not an error worth alerting
+      if (error.code !== 'ERR_REQUEST_CANCELED') {
+        Alert.alert('Apple Sign-In Failed', error.message);
+      }
+    } finally {
+      setAppleLoading(false);
+    }
+  };
+
   const handleSwitchMode = () => {
     setIsSignUp(!isSignUp);
     setPassword('');
     setConfirmPassword('');
-    setReferralCode('');
+    // Note: intentionally NOT clearing referralCode here —
+    // any auto-filled deep link code should persist when switching between sign-in and sign-up
     setDateOfBirth('');
     setDobError('');
     setShowPassword(false);
@@ -181,7 +213,7 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* Logo — no background color so black square doesn't show */}
+        {/* Logo */}
         <View style={styles.logoContainer}>
           <Image
             source={require('../assets/terramine_logo_clear.png')}
@@ -274,17 +306,25 @@ export default function LoginScreen() {
             </View>
           )}
 
-          {/* Referral Code — sign-up only, optional */}
+          {/* Referral Code — sign-up only, optional; auto-filled from deep link */}
           {isSignUp && (
-            <TextInput
-              style={[styles.input, { borderColor: referralCode ? '#FFD700' : '#5CB3E6' }]}
-              placeholder="Referral Code (optional)"
-              placeholderTextColor="#999"
-              value={referralCode}
-              onChangeText={t => setReferralCode(t.toUpperCase())}
-              autoCapitalize="characters"
-              maxLength={8}
-            />
+            <View>
+              <TextInput
+                style={[styles.input, { borderColor: referralCode ? '#FFD700' : '#5CB3E6' }]}
+                placeholder="Referral Code (optional)"
+                placeholderTextColor="#999"
+                value={referralCode}
+                onChangeText={t => {
+                  setReferralCode(t.toUpperCase());
+                  setReferralAutoFilled(false); // user is manually editing now
+                }}
+                autoCapitalize="characters"
+                maxLength={8}
+              />
+              {referralAutoFilled && (
+                <Text style={styles.autoFillHint}>✓ Referral code applied automatically</Text>
+              )}
+            </View>
           )}
 
           <TouchableOpacity style={styles.button} onPress={handleSubmit}>
@@ -314,6 +354,17 @@ export default function LoginScreen() {
           <Text style={styles.dividerText}>or</Text>
           <View style={styles.dividerLine} />
         </View>
+
+        {/* Sign in with Apple — iOS only, shown first per Apple guidelines */}
+        {Platform.OS === 'ios' && (
+          <AppleAuthentication.AppleAuthenticationButton
+            buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+            cornerRadius={10}
+            style={styles.appleButton}
+            onPress={handleAppleSignIn}
+          />
+        )}
 
         {/* Google Sign-In */}
         <TouchableOpacity
@@ -354,7 +405,6 @@ const styles = StyleSheet.create({
   },
   logoContainer: {
     marginBottom: 20,
-    // No backgroundColor — prevents black square around logo
   },
   logo: {
     width: 120,
@@ -446,6 +496,14 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     paddingHorizontal: 4,
   },
+  autoFillHint: {
+    color: '#B8860B',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: -10,
+    marginBottom: 10,
+    paddingHorizontal: 4,
+  },
   dividerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -462,6 +520,12 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     color: '#999',
     fontSize: 14,
+  },
+  appleButton: {
+    width: '100%',
+    maxWidth: 400,
+    height: 50,
+    marginBottom: 12,
   },
   googleButton: {
     flexDirection: 'row',

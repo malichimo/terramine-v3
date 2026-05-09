@@ -27,12 +27,16 @@ import DailyActivityScreen from './screens/DailyActivityScreen';
 import VisitorLogScreen from './screens/VisitorLogScreen';
 import ReferralScreen from './screens/ReferralScreen';
 import { ReferralService } from './services/ReferralService';
+import { NotificationService } from './services/NotificationService';
+import * as StoreReview from 'expo-store-review';
 
 const Tab = createBottomTabNavigator();
 const MapStack = createStackNavigator();
 const ProfileStack = createStackNavigator();
 const SettingsStack = createStackNavigator(); // ✅ Added
 const dbService = new DatabaseService();
+const REVIEW_PROMPTED_KEY = 'terramine_review_prompted';
+const REVIEW_CHECKIN_THRESHOLD = 5;
 
 // ─── Map Stack ────────────────────────────────────────────────────────────────
 interface MapStackProps {
@@ -297,6 +301,13 @@ export default function MainNavigator() {
       }).catch(() => {});
 
       setDataLoaded(true);
+
+      // ✅ Re-schedule daily reminder on every login so it picks up
+      // the latest message from Firestore (remote notification feature)
+      NotificationService.scheduleDailyReminder().catch(e =>
+        console.warn('Daily reminder reschedule failed (non-fatal):', e)
+      );
+
     } catch (error) {
       console.error('Error loading data:', error);
       setDataLoaded(true); // ✅ Always unblock the app even on error
@@ -318,18 +329,51 @@ export default function MainNavigator() {
 
   const handleCheckIn = async (
     propertyId: string, tbEarned: number, propertyOwnerId: string,
-    message?: string, hasPhoto?: boolean, photoUri?: string, nickname?: string
+    message?: string, hasPhoto?: boolean, photoUri?: string, nickname?: string,
+    mineType?: string
   ) => {
     if (!user) return;
     try {
-      await dbService.createCheckIn(user.uid, propertyId, propertyOwnerId, message, hasPhoto, photoUri, nickname);
+      await dbService.createCheckIn(user.uid, propertyId, propertyOwnerId, message, hasPhoto, photoUri, nickname, mineType);
       await dbService.updateUserBalance(user.uid, tbEarned);
       setUserTB(prev => prev + tbEarned);
-      setTotalCheckIns(prev => prev + 1);
+      setTotalCheckIns(prev => {
+        const newCount = prev + 1;
+        // ✅ Rate prompt: trigger after REVIEW_CHECKIN_THRESHOLD check-ins, once per install
+        if (newCount >= REVIEW_CHECKIN_THRESHOLD) {
+          maybeRequestReview();
+        }
+        return newCount;
+      });
       setTotalTBEarned(prev => prev + tbEarned);
     } catch (error) {
       console.error('Error during check-in:', error);
       throw error;
+    }
+  };
+
+  // ✅ Rate This App: shows native store review prompt after meaningful use.
+  // Only fires once per install (guarded by AsyncStorage flag).
+  // Non-fatal — review failure should never affect the user experience.
+  const maybeRequestReview = async () => {
+    try {
+      const alreadyPrompted = await AsyncStorage.getItem(REVIEW_PROMPTED_KEY);
+      if (alreadyPrompted === 'true') return;
+
+      const isAvailable = await StoreReview.isAvailableAsync();
+      if (!isAvailable) return;
+
+      // Small delay so the check-in success UI can settle first
+      setTimeout(async () => {
+        try {
+          await StoreReview.requestReview();
+          await AsyncStorage.setItem(REVIEW_PROMPTED_KEY, 'true');
+        } catch (e) {
+          console.warn('StoreReview.requestReview failed (non-fatal):', e);
+        }
+      }, 1500);
+    } catch (e) {
+      console.warn('maybeRequestReview failed (non-fatal):', e);
     }
   };
 

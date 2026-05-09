@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   View,
@@ -16,17 +16,17 @@ interface BoostModalProps {
   onFreeBoost: () => void;
   onAdBoost: () => void;
   freeBoostsRemaining: number;
-  adBoostsRemaining: number; // CHANGED: from adBoostsUsed to adBoostsRemaining
+  adBoostsRemaining: number;
   boostTimeRemaining: number; // in minutes
   maxTotalBoostMinutes: number; // 480 (8 hours)
   nextResetTime: string | null;
-  lastAdBoostRefillAt: string | null; // NEW: for showing refill countdown
+  lastAdBoostRefillAt: string | null;
 }
 
 const MAX_AD_BOOSTS = 12;
 const MINUTES_PER_BOOST = 30;
 const MAX_FREE_BOOSTS = 4;
-const REFILL_INTERVAL_MINUTES = 30; // NEW: refill rate
+const REFILL_INTERVAL_MINUTES = 30;
 
 export default function BoostModal({
   visible,
@@ -34,16 +34,19 @@ export default function BoostModal({
   onFreeBoost,
   onAdBoost,
   freeBoostsRemaining,
-  adBoostsRemaining, // CHANGED
+  adBoostsRemaining,
   boostTimeRemaining,
   maxTotalBoostMinutes,
   nextResetTime,
-  lastAdBoostRefillAt, // NEW
+  lastAdBoostRefillAt,
 }: BoostModalProps) {
   const [adService] = useState(() => new AdMobService());
   const [isAdLoading, setIsAdLoading] = useState(false);
   const [isAdReady, setIsAdReady] = useState(false);
-  const [nextAdBoostIn, setNextAdBoostIn] = useState(''); // NEW: refill countdown
+  const [nextAdBoostIn, setNextAdBoostIn] = useState('');
+
+  // ✅ FIX: Guard flag to prevent double-taps / rapid ad requests causing crash/logout
+  const isShowingAd = useRef(false);
 
   useEffect(() => {
     if (visible) {
@@ -52,24 +55,26 @@ export default function BoostModal({
   }, [visible]);
 
   useEffect(() => {
-    // Check ad status and update refill timer every second
+    // Poll ad status and refill timer every second
     const interval = setInterval(() => {
-      setIsAdReady(adService.isAdReady());
-      setIsAdLoading(adService.isAdLoading());
-      updateRefillTimer(); // NEW
+      // Only update isAdReady from the service if we're not currently showing an ad
+      if (!isShowingAd.current) {
+        setIsAdReady(adService.isAdReady());
+        setIsAdLoading(adService.isAdLoading());
+      }
+      updateRefillTimer();
     }, 1000);
 
     return () => clearInterval(interval);
   }, [lastAdBoostRefillAt, adBoostsRemaining]);
 
-  // NEW: Calculate time until next ad boost refill
   const updateRefillTimer = () => {
     if (adBoostsRemaining < MAX_AD_BOOSTS && lastAdBoostRefillAt) {
       const now = new Date();
       const lastRefill = new Date(lastAdBoostRefillAt);
       const nextRefill = new Date(lastRefill.getTime() + REFILL_INTERVAL_MINUTES * 60 * 1000);
       const diff = nextRefill.getTime() - now.getTime();
-      
+
       if (diff > 0) {
         const minutes = Math.floor(diff / (1000 * 60));
         const seconds = Math.floor((diff % (1000 * 60)) / 1000);
@@ -83,36 +88,43 @@ export default function BoostModal({
   };
 
   const loadAd = async () => {
+    if (isShowingAd.current) return; // Don't reload while showing
     try {
       setIsAdLoading(true);
+      setIsAdReady(false);
       await adService.loadAd();
-      setIsAdReady(true);
+      // ✅ FIX: Don't set isAdReady here — let the 1s polling interval pick it up
+      // from adService.isAdReady() so we stay in sync with the actual ad state
     } catch (error) {
       console.error('Error loading ad:', error);
-      Alert.alert('Ad Error', 'Failed to load ad. Please try again later.');
     } finally {
       setIsAdLoading(false);
     }
   };
 
   const handleWatchAd = async () => {
+    // ✅ FIX: Hard guard — if already showing, do nothing
+    if (isShowingAd.current) return;
+
     if (!isAdReady) {
       Alert.alert('Ad Not Ready', 'Please wait for the ad to load.');
       return;
     }
 
+    // ✅ FIX: Lock immediately before any async work
+    isShowingAd.current = true;
+    setIsAdReady(false); // Prevent button from being tappable while ad is open
+
     try {
       const success = await adService.showAd(
         () => {
-          // User watched the ad and earned reward
-          console.log('User earned reward from ad!');
+          // User watched the full ad and earned reward
+          console.log('✅ User earned reward from ad');
           onAdBoost();
         },
         () => {
-          // Ad closed (whether completed or not)
-          console.log('Ad closed');
-          // Reload the next ad
-          loadAd();
+          // Ad closed without reward
+          console.log('📱 Ad closed without reward');
         }
       );
 
@@ -120,8 +132,14 @@ export default function BoostModal({
         Alert.alert('Error', 'Failed to show ad. Please try again.');
       }
     } catch (error) {
-      console.error('Error showing ad:', error);
+      console.error('Error showing rewarded ad:', error);
       Alert.alert('Error', 'Failed to show ad. Please try again.');
+    } finally {
+      // ✅ FIX: Release lock and reload next ad with a safe delay
+      isShowingAd.current = false;
+      setTimeout(() => {
+        loadAd();
+      }, 1000);
     }
   };
 
@@ -145,7 +163,7 @@ export default function BoostModal({
   };
 
   const canAddMoreBoost = boostTimeRemaining < maxTotalBoostMinutes;
-  const canWatchAd = canAddMoreBoost && adBoostsRemaining > 0;
+  const canWatchAd = canAddMoreBoost && adBoostsRemaining > 0 && !isShowingAd.current;
 
   return (
     <Modal
@@ -160,7 +178,7 @@ export default function BoostModal({
             <Text style={styles.headerIcon}>⚡</Text>
             <Text style={styles.title}>Earning Boost</Text>
           </View>
-          
+
           <Text style={styles.subtitle}>Get 20x passive earnings for 30 minutes!</Text>
           <Text style={[styles.subtitle, { fontSize: 13, marginTop: -10 }]}>Check-ins & resources get 2x.</Text>
 
@@ -213,7 +231,6 @@ export default function BoostModal({
             <Text style={styles.adBoostsInfo}>
               {adBoostsRemaining}/{MAX_AD_BOOSTS} ad boosts available
             </Text>
-            {/* NEW: Show refill countdown */}
             {adBoostsRemaining < MAX_AD_BOOSTS && nextAdBoostIn && (
               <Text style={styles.refillInfo}>
                 Next boost in: {nextAdBoostIn}
@@ -226,15 +243,17 @@ export default function BoostModal({
             <TouchableOpacity
               style={[
                 styles.adButton,
-                (!canWatchAd || isAdLoading) && styles.disabledButton,
+                (!canWatchAd || isAdLoading || isShowingAd.current) && styles.disabledButton,
               ]}
               onPress={handleWatchAd}
-              disabled={!canWatchAd || isAdLoading}
+              disabled={!canWatchAd || isAdLoading || isShowingAd.current}
             >
-              {isAdLoading ? (
+              {isAdLoading || isShowingAd.current ? (
                 <View style={styles.loadingContainer}>
                   <ActivityIndicator color="white" size="small" />
-                  <Text style={[styles.buttonText, styles.loadingText]}>Loading Ad...</Text>
+                  <Text style={[styles.buttonText, styles.loadingText]}>
+                    {isShowingAd.current ? 'Ad Playing...' : 'Loading Ad...'}
+                  </Text>
                 </View>
               ) : (
                 <Text style={styles.buttonText}>
@@ -242,12 +261,14 @@ export default function BoostModal({
                     ? 'Max Boost Reached'
                     : adBoostsRemaining === 0
                     ? 'No Ad Boosts Available'
+                    : !isAdReady
+                    ? 'Loading Ad...'
                     : `📺 Watch Ad (+${MINUTES_PER_BOOST} min)`}
                 </Text>
               )}
             </TouchableOpacity>
 
-            {!isAdReady && !isAdLoading && canWatchAd && (
+            {!isAdReady && !isAdLoading && !isShowingAd.current && canWatchAd && (
               <Text style={styles.adStatusText}>
                 Ad is loading, please wait...
               </Text>

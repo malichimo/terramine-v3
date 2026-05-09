@@ -4,6 +4,8 @@
 
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import { db } from '../firebaseConfig';
+import { doc, getDoc } from 'firebase/firestore';
 
 // Configure how notifications appear when the app is in the foreground
 Notifications.setNotificationHandler({
@@ -13,6 +15,11 @@ Notifications.setNotificationHandler({
     shouldSetBadge: true,
   }),
 });
+
+// ── Default notification content (fallback if Firestore is unreachable) ─────
+const DEFAULT_NOTIFICATION_TITLE = '⛏️ Your mines are waiting!';
+const DEFAULT_NOTIFICATION_BODY = 'Log in to collect resources, run daily activities, and check on your properties.';
+const NOTIFICATION_CONFIG_DOC = 'config/dailyNotification';
 
 export class NotificationService {
 
@@ -133,15 +140,39 @@ export class NotificationService {
    * Schedule a daily local notification at 9 AM local time.
    * Cancels any existing daily reminder first to avoid duplicates.
    */
+  /**
+   * Fetch the current notification config from Firestore.
+   * Returns default values if the doc doesn't exist or fetch fails.
+   */
+  static async getNotificationConfig(): Promise<{ title: string; body: string }> {
+    try {
+      const docRef = doc(db, 'config', 'dailyNotification');
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        return {
+          title: data.title?.trim() || DEFAULT_NOTIFICATION_TITLE,
+          body: data.body?.trim() || DEFAULT_NOTIFICATION_BODY,
+        };
+      }
+    } catch (e) {
+      console.warn('Failed to fetch notification config from Firestore (using defaults):', e);
+    }
+    return { title: DEFAULT_NOTIFICATION_TITLE, body: DEFAULT_NOTIFICATION_BODY };
+  }
+
   static async scheduleDailyReminder(): Promise<void> {
     try {
       // Cancel existing daily reminder if any
       await this.cancelDailyReminder();
 
+      // ✅ Fetch title and body from Firestore — falls back to defaults if unreachable
+      const { title, body } = await this.getNotificationConfig();
+
       await Notifications.scheduleNotificationAsync({
         content: {
-          title: '⛏️ Your mines are waiting!',
-          body: 'Log in to collect resources, run daily activities, and check on your properties.',
+          title,
+          body,
           sound: 'default',
         },
         trigger: {
@@ -151,7 +182,7 @@ export class NotificationService {
         },
       });
 
-      console.log('Daily reminder scheduled at 9 AM');
+      console.log('Daily reminder scheduled at 9 AM with title:', title);
     } catch (error) {
       console.error('Failed to schedule daily reminder:', error);
     }

@@ -297,6 +297,13 @@ export default function RockConveyorActivity({
       soundService.stop('machine_loop');
       soundService.play('chime');
       onActivityComplete?.(); // ✅ FEAT-001
+      // ✅ Mini-game completion resets TA inactivity clock
+      try {
+        const _db = new DatabaseService();
+        await _db.touchPropertyActivity(property.id);
+      } catch (e) {
+        // Non-fatal
+      }
       
       // Reset double flag after first use (base attempt)
       if (isBaseAttempt) {

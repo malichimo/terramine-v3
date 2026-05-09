@@ -14,6 +14,7 @@ import {
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { GridSquare } from '../utils/GridUtils';
 import { getNext4AMEST } from '../utils/TimeUtils';
+import { NotificationService } from './NotificationService';
 
 export interface BoostState {
   freeBoostsRemaining: number;
@@ -71,6 +72,7 @@ export class DatabaseService {
     }
 
     // Save property
+    const now = new Date().toISOString();
     await setDoc(propertyRef, {
       id: property.id,
       ownerId: userId,
@@ -78,7 +80,8 @@ export class DatabaseService {
       centerLat: property.centerLat,
       centerLng: property.centerLng,
       corners: property.corners,
-      purchasedAt: new Date().toISOString(),
+      purchasedAt: now,
+      lastActivityAt: now, // ✅ inactivity clock starts at purchase
     });
 
     // Check user has enough TB before deducting
@@ -231,7 +234,7 @@ export class DatabaseService {
   }
 
   // Check-ins
-  async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string) {
+  async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string, mineType?: string) {
     const checkInRef = doc(collection(db, 'checkIns'));
 
     // photoUri here is already an uploaded download URL — no re-upload needed
@@ -262,7 +265,7 @@ export class DatabaseService {
       totalCheckIns: increment(1),
     });
 
-    // Reward property owner with 1 TB (skip for system mine — no real owner)
+    // Reward property owner with 1 TB and notify them (skip for system mine — no real owner)
     const SYSTEM_UID = 'terramine-system';
     if (propertyOwnerId !== SYSTEM_UID) {
       const ownerRef = doc(db, 'users', propertyOwnerId);
@@ -270,6 +273,39 @@ export class DatabaseService {
         tbBalance: increment(1),
         totalTBEarned: increment(1),
       });
+
+      // ✅ Send push notification to property owner — non-fatal if it fails
+      try {
+        const ownerSnap = await getDoc(ownerRef);
+        if (ownerSnap.exists()) {
+          const ownerData = ownerSnap.data();
+          const ownerPushToken: string | null = ownerData.expoPushToken ?? null;
+          const mineName: string | undefined = ownerData.customName ?? undefined;
+
+          if (ownerPushToken && propertyOwnerId !== userId) {
+            // Only notify if owner is not the visitor (no self-notifications)
+            await NotificationService.sendCheckInNotification(
+              ownerPushToken,
+              visitorNickname || 'Someone',
+              mineType || 'rock',
+              mineName,
+            );
+          }
+        }
+      } catch (notifError) {
+        // Non-fatal — notification failure should never break the check-in flow
+        console.warn('Check-in notification failed (non-fatal):', notifError);
+      }
+    }
+
+    // ✅ Stamp lastActivityAt on the property — visitor check-in resets the TA inactivity clock
+    try {
+      const propertyRef = doc(db, 'properties', propertyId);
+      await updateDoc(propertyRef, {
+        lastActivityAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn('Failed to stamp lastActivityAt on property (non-fatal):', e);
     }
 
     console.log('Check-in saved to Firebase:', {
@@ -492,6 +528,66 @@ export class DatabaseService {
       nextFreeBoostResetAt: null,
       lastAdBoostRefillAt: new Date().toISOString(),
     };
+  }
+
+  // ── TB Trade-In ──────────────────────────────────────────────────────────
+
+  /**
+   * Trade accumulated USD earnings for TerraBucks.
+   * Atomically deducts usdAmount from usdEarnings and credits tbAmount to tbBalance.
+   * Throws if the user doesn't have enough earnings.
+   */
+  async tradeEarningsForTB(userId: string, usdAmount: number, tbAmount: number): Promise<void> {
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+
+    if (!userSnap.exists()) throw new Error('User not found');
+
+    const data = userSnap.data();
+    const currentEarnings = data.usdEarnings ?? 0;
+
+    if (currentEarnings < usdAmount) {
+      throw new Error('Insufficient earnings balance');
+    }
+
+    await updateDoc(userRef, {
+      usdEarnings: currentEarnings - usdAmount,
+      tbBalance: increment(tbAmount),
+      totalTBEarned: increment(tbAmount),
+    });
+  }
+
+  // ── TA Activity stamping ─────────────────────────────────────────────────
+
+  /**
+   * Stamp lastActivityAt on a property to reset its inactivity clock.
+   * Call this when the owner views the visitor log, plays a mini-game,
+   * or edits the property. Non-fatal — never blocks the user action.
+   */
+  async touchPropertyActivity(propertyId: string): Promise<void> {
+    try {
+      const propertyRef = doc(db, 'properties', propertyId);
+      await updateDoc(propertyRef, {
+        lastActivityAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn('touchPropertyActivity failed (non-fatal):', e);
+    }
+  }
+
+  /**
+   * Update property details (name, photo) and stamp lastActivityAt.
+   */
+  async updatePropertyDetails(propertyId: string, updates: {
+    customName?: string;
+    photoURL?: string;
+  }): Promise<void> {
+    const detailsRef = doc(db, 'propertyDetails', propertyId);
+    const now = new Date().toISOString();
+    await setDoc(detailsRef, { ...updates, updatedAt: now }, { merge: true });
+
+    // ✅ Also stamp lastActivityAt on the property doc — editing resets inactivity clock
+    await this.touchPropertyActivity(propertyId);
   }
 
   // Push tokens

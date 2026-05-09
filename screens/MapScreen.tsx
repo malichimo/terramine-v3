@@ -7,6 +7,7 @@ import { DatabaseService, BoostState } from '../services/DatabaseService';
 import { generateGridSquare, getVisibleGridSquares, isWithinGridSquare, isAdjacentToUser, GridSquare, gridToLatLng } from '../utils/GridUtils';
 import { createSystemMineNear, isSystemMine, SYSTEM_CHECKIN_REWARD_TB } from '../services/SystemMineService';
 import BoostModal from '../components/BoostModal';
+import TBTradeInModal from '../components/TBTradeInModal';
 import { soundService } from '../services/SoundService';
 
 // Extend BoostState with computed properties used locally in MapScreen
@@ -31,7 +32,7 @@ interface MapScreenProps {
   allProperties: GridSquare[];
   initialBoostState: BoostState;
   onPropertyPurchase: (property: GridSquare, tbSpent: number) => void;
-  onCheckIn: (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, nickname?: string) => Promise<void>;
+  onCheckIn: (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, nickname?: string, mineType?: string) => Promise<void>;
   onBoostUpdate: (boostData: any) => void;
   onEarningsUpdate?: (usdAmount: number) => Promise<void>;
   usdEarnings?: number;
@@ -57,6 +58,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   onNavigateToReferral,
 }, ref) => {
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
+  const [showTradeInModal, setShowTradeInModal] = useState(false);
+  const [findingNearestTA, setFindingNearestTA] = useState(false);
   const [gridSquares, setGridSquares] = useState<Map<string, GridSquare>>(new Map());
   const [selectedSquare, setSelectedSquare] = useState<GridSquare | null>(null);
   const [showCheckInModal, setShowCheckInModal] = useState(false);
@@ -663,9 +666,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       }
     }
     
-    const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
-    setLastCheckIns(prev => new Map(prev).set(selectedSquare.id, today));
-    
     // Base TB raised to 3
     const isSystem = isSystemMine(selectedSquare.ownerId || '');
     let tbEarned = isSystem ? SYSTEM_CHECKIN_REWARD_TB : 3;
@@ -687,15 +687,29 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         checkInMessage.trim() || undefined,
         !!photoUri,
         photoUrl,
-        username
+        username,
+        selectedSquare.mineType  // ✅ pass mineType for check-in notification
       );
 
-      // Check-in streak bonus
-      const newStreak = await dbService.incrementCheckInStreak(userId);
-      const streakBonus = dbService.getStreakBonus(newStreak);
-      if (streakBonus > 0) {
-        await dbService.updateUserBalance(userId, streakBonus);
-        tbEarned += streakBonus;
+      // ✅ BUG FIX: Only set the daily guard AFTER a successful Firestore write.
+      // Previously this was set before the try block, so a post-save error would
+      // show "Failed to save check-in" even though the check-in saved correctly.
+      const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+      setLastCheckIns(prev => new Map(prev).set(selectedSquare.id, today));
+
+      // ✅ BUG FIX: Post-save side effects are isolated in their own try/catch.
+      // A streak update failure will NOT surface as "Failed to save check-in".
+      let streakBonus = 0;
+      let newStreak = 0;
+      try {
+        newStreak = await dbService.incrementCheckInStreak(userId);
+        streakBonus = dbService.getStreakBonus(newStreak);
+        if (streakBonus > 0) {
+          await dbService.updateUserBalance(userId, streakBonus);
+          tbEarned += streakBonus;
+        }
+      } catch (streakError) {
+        console.warn('Streak update failed (non-fatal):', streakError);
       }
 
       const boostText = boostState.isBoostActive && !isSystem ? ' (2x Boost Applied!)' : '';
@@ -705,11 +719,15 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         isSystem ? 'Welcome to TerraMine!' : 'Check-in Complete!',
         `You earned ${tbEarned} TB${boostText}!${systemText}${streakText}`
       );
-      setCheckInMessage('');
-      setShowCheckInModal(false);
     } catch (error) {
       console.error('Check-in error:', error);
       Alert.alert('Error', 'Failed to save check-in');
+    } finally {
+      // ✅ BUG FIX: Always close the modal and clear the message, whether the
+      // check-in succeeded or failed. Previously the modal stayed open on error,
+      // allowing the user to submit a duplicate check-in.
+      setCheckInMessage('');
+      setShowCheckInModal(false);
     }
   };
 
@@ -872,6 +890,85 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     return `${mins}m`;
   };
 
+  // ── Find Nearest TA ──────────────────────────────────────────────────────
+
+  const handleFindNearestTA = () => {
+    if (!userLocation) {
+      Alert.alert('Location Unavailable', 'We need your location to find the nearest property.');
+      return;
+    }
+
+    // Filter to only TAs owned by other players (not the current user, not unowned, not system)
+    const visitableTAs = allProperties.filter(p =>
+      p.isOwned &&
+      p.ownerId &&
+      p.ownerId !== userId &&
+      !isSystemMine(p.ownerId)
+    );
+
+    if (visitableTAs.length === 0) {
+      Alert.alert('No Nearby Mines', 'No other players have mines in this area yet. Check back as more players join!');
+      return;
+    }
+
+    setFindingNearestTA(true);
+
+    let nearest: GridSquare | null = null;
+    let nearestDistKm = Infinity;
+
+    for (const prop of visitableTAs) {
+      const dLat = (prop.centerLat - userLocation.latitude) * Math.PI / 180;
+      const dLng = (prop.centerLng - userLocation.longitude) * Math.PI / 180;
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(userLocation.latitude * Math.PI / 180) *
+        Math.cos(prop.centerLat * Math.PI / 180) *
+        Math.sin(dLng / 2) ** 2;
+      const dist = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      if (dist < nearestDistKm) {
+        nearestDistKm = dist;
+        nearest = prop;
+      }
+    }
+
+    setFindingNearestTA(false);
+    if (!nearest) return;
+
+    mapRef.current?.animateToRegion({
+      latitude: nearest.centerLat,
+      longitude: nearest.centerLng,
+      latitudeDelta: 0.002,
+      longitudeDelta: 0.002,
+    }, 800);
+
+    const distMiles = nearestDistKm * 0.621371;
+    const distLabel = distMiles < 0.1
+      ? `${Math.round(distMiles * 5280)} ft away`
+      : `${distMiles.toFixed(1)} mi away`;
+
+    const ownerName = ownerNicknames.get(nearest.ownerId || '') || 'another player';
+    const mineName = `${nearest.mineType.charAt(0).toUpperCase() + nearest.mineType.slice(1)} Mine`;
+
+    setTimeout(() => {
+      Alert.alert(
+        `⛏️ ${mineName}`,
+        `Owned by ${ownerName} — ${distLabel}. Get directions to check in?`,
+        [
+          { text: 'No Thanks', style: 'cancel' },
+          {
+            text: 'Get Directions',
+            onPress: () => {
+              const url = `https://www.google.com/maps/dir/?api=1&destination=${nearest!.centerLat},${nearest!.centerLng}&travelmode=walking`;
+              Linking.openURL(url).catch(() =>
+                Alert.alert('Error', 'Could not open Maps.')
+              );
+            },
+          },
+        ]
+      );
+    }, 900);
+  };
+
   return (
     <View style={styles.container}>
       <MapView
@@ -917,14 +1014,32 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         <Text style={styles.welcomeText}>Welcome, {username}!</Text>
       </View>
 
-      {/* Earnings Counter */}
-      <View style={styles.earningsDisplay}>
+      {/* Earnings Counter — tap to open TB trade-in */}
+      <TouchableOpacity
+        style={styles.earningsDisplay}
+        onPress={() => setShowTradeInModal(true)}
+        activeOpacity={0.85}
+      >
         <View style={styles.earningsInner}>
           <Text style={styles.earningsText}>
             ${(usdEarnings + currentEarnings).toFixed(6)} 📈
           </Text>
+          <Text style={styles.earningsTapHint}>Tap to trade for TB</Text>
         </View>
-      </View>
+      </TouchableOpacity>
+
+      {/* TB Trade-In Modal */}
+      <TBTradeInModal
+        visible={showTradeInModal}
+        onClose={() => setShowTradeInModal(false)}
+        usdEarnings={usdEarnings + currentEarnings}
+        userId={userId}
+        onTradeComplete={(tbGained, usdSpent) => {
+          // Deduct from local currentEarnings so display updates immediately
+          setCurrentEarnings(prev => Math.max(0, prev - usdSpent));
+          setShowTradeInModal(false);
+        }}
+      />
 
       {/* Boost Button */}
       <TouchableOpacity 
@@ -980,6 +1095,20 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       >
         <Text style={styles.referralButtonText}>🤝 Refer</Text>
       </TouchableOpacity>
+
+      {/* Find Nearest TA Button */}
+      {ownedProperties.length > 0 && (
+        <TouchableOpacity
+          style={styles.findTAButton}
+          onPress={handleFindNearestTA}
+          activeOpacity={0.85}
+          disabled={findingNearestTA}
+        >
+          <Text style={styles.findTAButtonText}>
+            {findingNearestTA ? '⏳' : '📍 Visit Mine'}
+          </Text>
+        </TouchableOpacity>
+      )}
 
       {/* Legend Overlay */}
       {showLegend && (
@@ -1243,6 +1372,13 @@ const styles = StyleSheet.create({
     color: 'white',
     textAlign: 'center',
   },
+  earningsTapHint: {
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.75)',
+    textAlign: 'center',
+    marginTop: 2,
+    letterSpacing: 0.3,
+  },
   boostButton: {
     position: 'absolute',
     top: 160,
@@ -1468,6 +1604,25 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#333',
+  },
+  findTAButton: {
+    position: 'absolute',
+    bottom: 244,
+    right: 16,
+    backgroundColor: '#1565C0',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  findTAButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: 'white',
   },
   referralButton: {
     position: 'absolute',

@@ -294,6 +294,8 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
   };
 
   const handleVisitors = () => {
+    // ✅ Viewing visitor log resets TA inactivity clock
+    dbService.touchPropertyActivity(property.id).catch(() => {});
     navigation.navigate('VisitorLog', { property });
   };
 
@@ -316,6 +318,8 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
       if (onPropertyUpdate) onPropertyUpdate();
       // ✅ FEAT-001: Mark milestone silently — nudge already fired before action
       dbService.checkAndFireMilestone(userId, 'milestone_renamedTA').catch(() => {});
+      // ✅ Editing mine name resets TA inactivity clock
+      dbService.touchPropertyActivity(property.id).catch(() => {});
     } catch (error) {
       Alert.alert('Error', 'Failed to save name. Please try again.');
     } finally {
@@ -334,6 +338,8 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
       await dbServicePhase2.updatePropertyGreeting(property.id, greeting);
       setPropertyDetails(prev => prev ? { ...prev, greeting } : prev);
       setIsEditingGreeting(false);
+      // ✅ Editing greeting resets TA inactivity clock
+      dbService.touchPropertyActivity(property.id).catch(() => {});
     } catch {
       Alert.alert('Error', 'Failed to save greeting. Please try again.');
     } finally {
