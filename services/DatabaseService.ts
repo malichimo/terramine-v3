@@ -257,25 +257,41 @@ export class DatabaseService {
       checkInData.photoURL = photoURL;
     }
 
+    // ✅ CRITICAL: This is the only write that MUST succeed.
+    // All subsequent writes are non-fatal side effects — they must never
+    // throw back to the caller, otherwise the visitor sees "Failed to save
+    // check-in" even though the document saved, AND their TB is never awarded
+    // because MainNavigator's updateUserBalance never runs.
     await setDoc(checkInRef, checkInData);
 
-    // Update visitor stats
-    const userRef = doc(db, 'users', userId);
-    await updateDoc(userRef, {
-      totalCheckIns: increment(1),
-    });
+    // ✅ FIX: Wrapped in try/catch — a stats update failure must not abort
+    // the check-in flow or prevent TB from being awarded to the visitor.
+    try {
+      const userRef = doc(db, 'users', userId);
+      await updateDoc(userRef, {
+        totalCheckIns: increment(1),
+      });
+    } catch (e) {
+      console.warn('Failed to increment visitor totalCheckIns (non-fatal):', e);
+    }
 
-    // Reward property owner with 1 TB and notify them (skip for system mine — no real owner)
+    // ✅ FIX: Wrapped in try/catch — owner TB award failure must not abort
+    // the check-in flow. Owner TB is a side effect, not the core transaction.
     const SYSTEM_UID = 'terramine-system';
     if (propertyOwnerId !== SYSTEM_UID) {
-      const ownerRef = doc(db, 'users', propertyOwnerId);
-      await updateDoc(ownerRef, {
-        tbBalance: increment(1),
-        totalTBEarned: increment(1),
-      });
-
-      // ✅ Send push notification to property owner — non-fatal if it fails
       try {
+        const ownerRef = doc(db, 'users', propertyOwnerId);
+        await updateDoc(ownerRef, {
+          tbBalance: increment(1),
+          totalTBEarned: increment(1),
+        });
+      } catch (ownerTBError) {
+        console.warn('Failed to award owner TB (non-fatal):', ownerTBError);
+      }
+
+      // Send push notification to property owner — already non-fatal
+      try {
+        const ownerRef = doc(db, 'users', propertyOwnerId);
         const ownerSnap = await getDoc(ownerRef);
         if (ownerSnap.exists()) {
           const ownerData = ownerSnap.data();
@@ -283,7 +299,6 @@ export class DatabaseService {
           const mineName: string | undefined = ownerData.customName ?? undefined;
 
           if (ownerPushToken && propertyOwnerId !== userId) {
-            // Only notify if owner is not the visitor (no self-notifications)
             await NotificationService.sendCheckInNotification(
               ownerPushToken,
               visitorNickname || 'Someone',
@@ -293,12 +308,11 @@ export class DatabaseService {
           }
         }
       } catch (notifError) {
-        // Non-fatal — notification failure should never break the check-in flow
         console.warn('Check-in notification failed (non-fatal):', notifError);
       }
     }
 
-    // ✅ Stamp lastActivityAt on the property — visitor check-in resets the TA inactivity clock
+    // ✅ Stamp lastActivityAt on the property — already non-fatal
     try {
       const propertyRef = doc(db, 'properties', propertyId);
       await updateDoc(propertyRef, {

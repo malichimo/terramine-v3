@@ -9,6 +9,7 @@ import { createSystemMineNear, isSystemMine, SYSTEM_CHECKIN_REWARD_TB } from '..
 import BoostModal from '../components/BoostModal';
 import TBTradeInModal from '../components/TBTradeInModal';
 import { soundService } from '../services/SoundService';
+import LeaderboardModal from '../components/LeaderboardModal';
 
 // Extend BoostState with computed properties used locally in MapScreen
 interface MapScreenBoostState extends BoostState {
@@ -39,6 +40,7 @@ interface MapScreenProps {
   onNavigateToPropertyDetail?: (property: GridSquare) => void;
   onNavigateToVisitorLog?: (property: GridSquare) => void;
   onNavigateToReferral?: () => void;
+  onNavigateToLeaderboard?: () => void;
 }
 
 const MapScreen = React.forwardRef<any, MapScreenProps>(({ 
@@ -69,6 +71,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const [propertyCheckIns, setPropertyCheckIns] = useState<Map<string, CheckIn[]>>(new Map());
   const [ownerNicknames, setOwnerNicknames] = useState<Map<string, string>>(new Map());
   const [showLegend, setShowLegend] = useState(false);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
   
   // Boost state
   const [boostState, setBoostState] = useState<MapScreenBoostState>({
@@ -1110,6 +1113,22 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         </TouchableOpacity>
       )}
 
+      {/* Leaderboard Modal */}
+      <LeaderboardModal
+        visible={showLeaderboard}
+        onClose={() => setShowLeaderboard(false)}
+        currentUserId={userId}
+      />
+
+      {/* Leaderboard Button */}
+      <TouchableOpacity
+        style={styles.leaderboardButton}
+        onPress={() => setShowLeaderboard(true)}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.leaderboardButtonText}>🏆 Top 10</Text>
+      </TouchableOpacity>
+
       {/* Legend Overlay */}
       {showLegend && (
         <View style={styles.legendPanel}>
@@ -1623,6 +1642,25 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: 'white',
+  },
+  leaderboardButton: {
+    position: 'absolute',
+    bottom: 296,
+    right: 16,
+    backgroundColor: '#1a3a1a',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  leaderboardButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFD700',
   },
   referralButton: {
     position: 'absolute',
