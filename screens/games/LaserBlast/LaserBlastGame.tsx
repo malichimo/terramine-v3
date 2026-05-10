@@ -12,6 +12,7 @@ import {
   Animated,
   Dimensions,
   SafeAreaView,
+  Alert,
   Platform,
   StatusBar,
 } from 'react-native';
@@ -114,24 +115,33 @@ export default function LaserBlastGame({ route, navigation }: any) {
   const beamOpacity      = useRef(new Animated.Value(0)).current;
   const celebrateScale   = useRef(new Animated.Value(0)).current;
   const diamondSparkleOp = useRef(new Animated.Value(0)).current;
-  // Per-mirror flip animation (0 = slash, 1 = backslash in terms of visual state)
   const mirrorAnims = useRef<Record<string, Animated.Value>>({});
 
   // ── Refs ───────────────────────────────────────────────────────────────────
-  const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-  const resultSaved   = useRef(false);
-  const puzzleRef     = useRef<PuzzleConfig | null>(null);
-  const adService     = useRef<AdMobService | null>(null);
+  const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
+  const resultSaved     = useRef(false);
+  const puzzleRef       = useRef<PuzzleConfig | null>(null);
+  const adService       = useRef<AdMobService | null>(null);
+  const activeLevelRef  = useRef(gameLevel);
+
   // Track live copies of state in refs for use inside closures
-  const livesRef      = useRef(MAX_LIVES);
-  const timeLeftRef   = useRef(timeLimit);
-  const tapsUsedRef   = useRef(0);
+  const livesRef        = useRef(MAX_LIVES);
+  const timeLeftRef     = useRef(timeLimit);
+  const tapsUsedRef     = useRef(0);
   const fireAttemptsRef = useRef(0);
+
+  // ✅ FIX: Track mounted state to prevent setState calls after unmount
+  const isMounted = useRef(true);
 
   // ── Init ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     initNewPuzzle();
     adService.current = new AdMobService();
+
+    // ✅ FIX: Mark unmounted on cleanup
+    return () => {
+      isMounted.current = false;
+    };
   }, []);
 
   function initNewPuzzle() {
@@ -182,7 +192,6 @@ export default function LaserBlastGame({ route, navigation }: any) {
 
     if (tapLimit !== null && tapsUsedRef.current >= tapLimit) return;
 
-    // Animate the mirror flip
     const k = `${row},${col}`;
     const anim = mirrorAnims.current[k];
     if (anim) {
@@ -216,27 +225,22 @@ export default function LaserBlastGame({ route, navigation }: any) {
     fireAttemptsRef.current += 1;
     setFireAttempts(fireAttemptsRef.current);
 
-    // Build beam segments for rendering
     const segments = buildBeamSegments(fireResult.results);
     setBeamSegs(segments);
     setHitResults(fireResult.results);
 
-    // Animate beams in
     beamOpacity.setValue(0);
     Animated.timing(beamOpacity, {
       toValue: 1,
       duration: 400,
       useNativeDriver: true,
     }).start(() => {
-      // Show hit/miss state on coal
       const updatedGrid = applyHitStates(grid, fireResult.results);
       setGrid(updatedGrid);
 
       if (fireResult.allHit) {
-        // Win!
         setTimeout(() => handleWin(), 600);
       } else {
-        // Miss — fade beams then check lives
         setTimeout(() => {
           Animated.timing(beamOpacity, {
             toValue: 0,
@@ -250,14 +254,12 @@ export default function LaserBlastGame({ route, navigation }: any) {
             if (newLives <= 0) {
               setShowAdOffer(true);
             } else {
-              // Reset grid hit states, resume puzzle
               const resetGrid = cloneGrid(grid).map(row =>
                 row.map(cell => ({ ...cell, isHit: false }))
               );
               setGrid(resetGrid);
               setBeamSegs([]);
               setPhase('puzzle');
-              // Restart timer with remaining time
               timeLeftRef.current = Math.max(1, timeLeftRef.current);
             }
           });
@@ -273,26 +275,17 @@ export default function LaserBlastGame({ route, navigation }: any) {
 
     for (const result of results) {
       const hexColor = LASER_COLOR_HEX[result.color];
-
       for (const seg of result.segments) {
-        // Grid-relative center of this cell
         const cx = seg.col * TILE_SIZE + TILE_SIZE / 2;
         const cy = seg.row * TILE_SIZE + TILE_SIZE / 2;
-
-        // The laser enters the cell from the opposite side of its travel direction
         const entryEdge = edgePoint(cx, cy, opposite(seg.entryDir), TILE_SIZE);
 
         if (!seg.exitDir) {
-          // Terminal cell (coal hit): entry edge → center
           segs.push(makeSegment(entryEdge.x, entryEdge.y, cx, cy, BEAM_W, hexColor));
         } else if (seg.entryDir === seg.exitDir) {
-          // Straight pass-through: entry edge → exit edge as a single aligned segment
           const exitEdge = edgePoint(cx, cy, seg.exitDir, TILE_SIZE);
           segs.push(makeSegment(entryEdge.x, entryEdge.y, exitEdge.x, exitEdge.y, BEAM_W, hexColor));
         } else {
-          // Mirror cell — direction changes: split into two perpendicular segments
-          // Segment 1: entry edge → cell center (incoming direction)
-          // Segment 2: cell center → exit edge (outgoing direction)
           const exitEdge = edgePoint(cx, cy, seg.exitDir, TILE_SIZE);
           segs.push(makeSegment(entryEdge.x, entryEdge.y, cx, cy, BEAM_W, hexColor));
           segs.push(makeSegment(cx, cy, exitEdge.x, exitEdge.y, BEAM_W, hexColor));
@@ -302,7 +295,6 @@ export default function LaserBlastGame({ route, navigation }: any) {
     return segs;
   }
 
-  /** Returns the point on the cell edge in a given direction from center */
   function edgePoint(cx: number, cy: number, dir: string, size: number): { x: number; y: number } {
     const half = size / 2;
     switch (dir) {
@@ -314,7 +306,6 @@ export default function LaserBlastGame({ route, navigation }: any) {
     }
   }
 
-  /** Flips a direction to its opposite */
   function opposite(dir: string): string {
     switch (dir) {
       case 'right': return 'left';
@@ -325,7 +316,6 @@ export default function LaserBlastGame({ route, navigation }: any) {
     }
   }
 
-  /** Create a rect segment between two points */
   function makeSegment(
     x1: number, y1: number,
     x2: number, y2: number,
@@ -335,7 +325,6 @@ export default function LaserBlastGame({ route, navigation }: any) {
     const dx = x2 - x1;
     const dy = y2 - y1;
     const isHoriz = Math.abs(dx) >= Math.abs(dy);
-
     if (isHoriz) {
       const left = Math.min(x1, x2);
       return { x: left, y: y1 - beamW / 2, width: Math.abs(dx), height: beamW, color };
@@ -387,15 +376,17 @@ export default function LaserBlastGame({ route, navigation }: any) {
     if (resultSaved.current || !user) return;
     resultSaved.current = true;
     try {
-      const perfect    = won && fireAttemptsRef.current === 1;
+      const perfect     = won && fireAttemptsRef.current === 1;
       const levelBefore = propertyDetails?.gameLevel ?? gameLevel;
       const earned = await dbServicePhase2.recordGameResult(
         user.uid, property.id, property.mineType,
         won, perfect, finalScore, finalTimeLeft, finalTaps,
       );
+      if (!isMounted.current) return;
       setReward(earned);
 
       const updated = await dbServicePhase2.getPropertyDetails(property.id);
+      if (!isMounted.current) return;
       if (updated && updated.gameLevel > levelBefore) {
         setLeveledUp(true);
         setNewLevel(updated.gameLevel);
@@ -409,11 +400,23 @@ export default function LaserBlastGame({ route, navigation }: any) {
   // ── Ad for extra life ─────────────────────────────────────────────────────
   async function handleAdForLife() {
     if (!adService.current) return;
+
+    // ✅ FIX: Check ad readiness before attempting to show
+    if (!adService.current.isAdReady()) {
+      Alert.alert(
+        'Ad Not Ready',
+        'The ad is still loading. Please wait a moment and try again.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     setAdLoading(true);
     try {
-      await adService.current.showAd(
+      const shown = await adService.current.showAd(
         () => {
           // Rewarded: give 1 life, resume
+          if (!isMounted.current) return;
           livesRef.current = 1;
           setLivesLeft(1);
           setAdLoading(false);
@@ -427,6 +430,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
         },
         () => {
           // No reward — game over
+          if (!isMounted.current) return;
           setAdLoading(false);
           setShowAdOffer(false);
           soundService.play('lose');
@@ -434,7 +438,19 @@ export default function LaserBlastGame({ route, navigation }: any) {
           saveResult(false, 0, tapsUsedRef.current, 0);
         }
       );
+
+      // ✅ FIX: Handle case where showAd returns false (race condition)
+      if (!shown) {
+        if (!isMounted.current) return;
+        setAdLoading(false);
+        Alert.alert(
+          'Ad Unavailable',
+          'Could not load an ad right now. Please try again in a moment.',
+          [{ text: 'OK' }]
+        );
+      }
     } catch {
+      if (!isMounted.current) return;
       setAdLoading(false);
       setShowAdOffer(false);
       soundService.play('lose');
@@ -446,10 +462,23 @@ export default function LaserBlastGame({ route, navigation }: any) {
   // ── Play Next Level (after level-up ad) ───────────────────────────────────
   async function handlePlayNextLevelAd() {
     if (!adService.current) return;
+
+    // ✅ FIX: Check ad readiness before attempting to show
+    if (!adService.current.isAdReady()) {
+      Alert.alert(
+        'Ad Not Ready',
+        'The ad is still loading. Please wait a moment and try again.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     setAdLevelLoading(true);
     try {
-      await adService.current.showAd(
+      const shown = await adService.current.showAd(
         () => {
+          // ✅ FIX: Guard all setState calls with isMounted
+          if (!isMounted.current) return;
           setAdLevelLoading(false);
           setLeveledUp(false);
           const lvl  = activeLevelRef.current;
@@ -464,7 +493,9 @@ export default function LaserBlastGame({ route, navigation }: any) {
           beamOpacity.setValue(0);
           celebrateScale.setValue(0);
           diamondSparkleOp.setValue(0);
-          setGrid(p.grid);
+          puzzleRef.current = p;
+          setGrid(cloneGrid(p.grid));
+          initMirrorAnims(p.grid);
           setBeamSegs([]);
           setPhase('puzzle');
           setTimeLeft(diff.timeLimit);
@@ -473,10 +504,26 @@ export default function LaserBlastGame({ route, navigation }: any) {
           setLivesLeft(MAX_LIVES);
           setScore(0);
           setShowAdOffer(false);
+          setReward(null);
         },
-        () => { setAdLevelLoading(false); }
+        () => {
+          if (!isMounted.current) return;
+          setAdLevelLoading(false);
+        }
       );
+
+      // ✅ FIX: Handle case where showAd returns false (race condition)
+      if (!shown) {
+        if (!isMounted.current) return;
+        setAdLevelLoading(false);
+        Alert.alert(
+          'Ad Unavailable',
+          'Could not load an ad right now. Please try again in a moment.',
+          [{ text: 'OK' }]
+        );
+      }
     } catch {
+      if (!isMounted.current) return;
       setAdLevelLoading(false);
     }
   }
@@ -484,11 +531,11 @@ export default function LaserBlastGame({ route, navigation }: any) {
   // ── Restart ────────────────────────────────────────────────────────────────
   function restart() {
     if (timerRef.current) clearInterval(timerRef.current);
-    resultSaved.current  = false;
-    livesRef.current     = MAX_LIVES;
-    tapsUsedRef.current  = 0;
+    resultSaved.current     = false;
+    livesRef.current        = MAX_LIVES;
+    tapsUsedRef.current     = 0;
     fireAttemptsRef.current = 0;
-    timeLeftRef.current  = timeLimit;
+    timeLeftRef.current     = timeLimit;
 
     beamOpacity.setValue(0);
     celebrateScale.setValue(0);
@@ -510,7 +557,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
-  const GRID_OFFSET = TILE_SIZE; // 1-tile margin for miners on edges
+  const GRID_OFFSET = TILE_SIZE;
   const GRID_PX     = gridSize * TILE_SIZE;
   const TOTAL_PX    = GRID_PX + GRID_OFFSET * 2;
 
@@ -528,10 +575,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
 
       {/* ── Header ── */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backBtn}
-        >
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backBtnTxt}>← Back</Text>
         </TouchableOpacity>
 
@@ -540,7 +584,6 @@ export default function LaserBlastGame({ route, navigation }: any) {
           <Text style={styles.hSub}>
             Level {leveledUp ? newLevel : gameLevel} · {getDifficultyLabel(gameLevel)}
           </Text>
-          {/* XP meter */}
           <View style={styles.xpMeterRow}>
             <View style={styles.xpMeterBg}>
               <View style={[styles.xpMeterFill, {
@@ -553,7 +596,6 @@ export default function LaserBlastGame({ route, navigation }: any) {
 
         <View style={styles.hRight}>
           <Text style={[styles.timerTxt, { color: timerColor }]}>⏱ {timeLeft}s</Text>
-          {/* Lives */}
           <Text style={styles.livesTxt}>
             {Array.from({ length: MAX_LIVES }, (_, i) => i < livesLeft ? '❤️' : '🖤').join('')}
           </Text>
@@ -581,7 +623,6 @@ export default function LaserBlastGame({ route, navigation }: any) {
               zIndex: 10,
             };
 
-            // Position miner outside the grid based on edge + position
             switch (miner.edge) {
               case 'left':
                 minerStyle.left = TILE_SIZE * 0.075;
@@ -625,7 +666,6 @@ export default function LaserBlastGame({ route, navigation }: any) {
                 const k = `${r},${c}`;
                 const isInteractive = cell.type === 'mirror-/' || cell.type === 'mirror-\\';
 
-                // Coal always shows its assigned miner color — COAL_HIT is the default state
                 const coalMinerColor: LaserColor | null = (() => {
                   if (cell.type !== 'coal' || cell.coalIndex === undefined) return null;
                   return p.miners[cell.coalIndex]?.color ?? null;
@@ -653,25 +693,14 @@ export default function LaserBlastGame({ route, navigation }: any) {
                       top:    r * TILE_SIZE,
                     }]}
                   >
-                    {/* Cave floor base */}
                     <Image source={CAVE_FLOOR} style={styles.tileImg} />
 
-                    {/* Cell content image — swap coal for diamond sparkle on win */}
                     {cell.type === 'coal' && phase === 'celebrating' ? (
-                      <Image
-                        source={DIAMOND_SPARKLE}
-                        style={styles.tileImg}
-                        resizeMode="contain"
-                      />
+                      <Image source={DIAMOND_SPARKLE} style={styles.tileImg} resizeMode="contain" />
                     ) : cellImg ? (
-                      <Image
-                        source={cellImg}
-                        style={styles.tileImg}
-                        resizeMode="contain"
-                      />
+                      <Image source={cellImg} style={styles.tileImg} resizeMode="contain" />
                     ) : null}
 
-                    {/* Mirror tap indicator ring */}
                     {isInteractive && phase === 'puzzle' && (
                       <View style={[styles.mirrorRing, {
                         width:  TILE_SIZE - 4,
@@ -679,7 +708,6 @@ export default function LaserBlastGame({ route, navigation }: any) {
                         borderRadius: (TILE_SIZE - 4) / 2,
                       }]} />
                     )}
-
                   </TouchableOpacity>
                 );
               })
@@ -706,18 +734,16 @@ export default function LaserBlastGame({ route, navigation }: any) {
               ))}
             </Animated.View>
 
-          </View>{/* end gridBox */}
-        </View>{/* end gridContainer */}
-      </View>{/* end gridOuter */}
+          </View>
+        </View>
+      </View>
 
       {/* ── Footer ── */}
       <View style={styles.footer}>
 
         {phase === 'puzzle' && (
           <>
-            <Text style={styles.hint}>
-              🔄 Tap mirrors to rotate · Press FIRE when ready
-            </Text>
+            <Text style={styles.hint}>🔄 Tap mirrors to rotate · Press FIRE when ready</Text>
             <TouchableOpacity style={styles.fireBtn} onPress={handleFire}>
               <Text style={styles.fireBtnTxt}>🔴 FIRE</Text>
             </TouchableOpacity>
@@ -780,10 +806,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
               <TouchableOpacity style={styles.btn} onPress={restart}>
                 <Text style={styles.btnTxt}>🔄 Play Again</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnBlue]}
-                onPress={() => navigation.goBack()}
-              >
+              <TouchableOpacity style={[styles.btn, styles.btnBlue]} onPress={() => navigation.goBack()}>
                 <Text style={styles.btnTxt}>🚪 Exit</Text>
               </TouchableOpacity>
             </View>
@@ -805,10 +828,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
               <TouchableOpacity style={styles.btn} onPress={restart}>
                 <Text style={styles.btnTxt}>🔄 Try Again</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnBlue]}
-                onPress={() => navigation.goBack()}
-              >
+              <TouchableOpacity style={[styles.btn, styles.btnBlue]} onPress={() => navigation.goBack()}>
                 <Text style={styles.btnTxt}>🚪 Exit</Text>
               </TouchableOpacity>
             </View>
@@ -863,8 +883,6 @@ const styles = StyleSheet.create({
     resizeMode: 'cover',
     opacity: 0.45,
   },
-
-  // Header
   header: {
     height: HEADER_H,
     flexDirection: 'row',
@@ -895,16 +913,8 @@ const styles = StyleSheet.create({
   xpMeterBg:   { flex: 1, height: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 3, overflow: 'hidden' },
   xpMeterFill: { height: '100%', backgroundColor: '#B9F2FF', borderRadius: 3 },
   xpMeterTxt:  { color: '#B9F2FF', fontSize: 9, fontWeight: 'bold', minWidth: 52, textAlign: 'right' },
-
-  // Grid
-  gridOuter: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  gridContainer: {
-    position: 'relative',
-  },
+  gridOuter:   { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  gridContainer: { position: 'relative' },
   gridBox: {
     position: 'absolute',
     borderWidth: 2,
@@ -916,15 +926,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5,
     shadowRadius: 10,
   },
-  tile: {
-    position: 'absolute',
-    overflow: 'hidden',
-  },
-  tileImg: {
-    position: 'absolute',
-    width: '100%',
-    height: '100%',
-  },
+  tile:      { position: 'absolute', overflow: 'hidden' },
+  tileImg:   { position: 'absolute', width: '100%', height: '100%' },
   mirrorRing: {
     position: 'absolute',
     borderWidth: 1,
@@ -932,12 +935,7 @@ const styles = StyleSheet.create({
     top: 2,
     left: 2,
   },
-  coalGlow: {
-    position: 'absolute',
-    top: 0, left: 0,
-  },
-
-  // Footer
+  coalGlow:  { position: 'absolute', top: 0, left: 0 },
   footer: {
     minHeight: FOOTER_H,
     justifyContent: 'center',
@@ -950,8 +948,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   hint: { color: '#ccc', fontSize: 13, textAlign: 'center', lineHeight: 18 },
-
-  // Fire button
   fireBtn: {
     backgroundColor: '#FF3B30',
     paddingHorizontal: 40,
@@ -964,20 +960,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.7,
     shadowRadius: 8,
   },
-  fireBtnTxt: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 18,
-    letterSpacing: 2,
-  },
-
-  // Result panels
+  fireBtnTxt: { color: '#fff', fontWeight: 'bold', fontSize: 18, letterSpacing: 2 },
   resultPanel:    { alignItems: 'center', width: '100%', gap: 4 },
   winTitle:       { color: '#B9F2FF', fontSize: 18, fontWeight: 'bold' },
   winScore:       { color: '#eee', fontSize: 12 },
   loseTitle:      { color: '#F44336', fontSize: 18, fontWeight: 'bold' },
   consolationTxt: { color: '#aaa', fontSize: 12 },
-
   levelUpBanner: {
     backgroundColor: '#B9F2FF',
     borderRadius: 8,
@@ -985,8 +973,9 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     marginBottom: 4,
   },
-  levelUpTxt: { color: '#0a0a1a', fontWeight: 'bold', fontSize: 14 },
-
+  levelUpTxt:    { color: '#0a0a1a', fontWeight: 'bold', fontSize: 14 },
+  levelUpAdBtn:  { marginTop: 6, backgroundColor: '#1565C0', borderRadius: 6, paddingHorizontal: 14, paddingVertical: 6 },
+  levelUpAdTxt:  { color: 'white', fontWeight: 'bold', fontSize: 13 },
   rewardRow: {
     flexDirection: 'row',
     gap: 8,
@@ -1006,8 +995,7 @@ const styles = StyleSheet.create({
   },
   rewardVal: { color: '#B9F2FF', fontSize: 14, fontWeight: 'bold' },
   rewardLbl: { color: '#aaa', fontSize: 10 },
-
-  btnRow: { flexDirection: 'row', gap: 12, marginTop: 4 },
+  btnRow:    { flexDirection: 'row', gap: 12, marginTop: 4 },
   btn: {
     backgroundColor: '#B9F2FF',
     paddingHorizontal: 18,
@@ -1017,8 +1005,6 @@ const styles = StyleSheet.create({
   btnBlue: { backgroundColor: '#1a3a5a' },
   btnGold: { backgroundColor: '#F9A825' },
   btnTxt:  { color: '#0a0a1a', fontWeight: 'bold', fontSize: 14 },
-
-  // Ad offer overlay
   adOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.88)',
