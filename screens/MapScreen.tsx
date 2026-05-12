@@ -734,30 +734,38 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     }
   };
 
+  // ✅ FIX: Prevent double-tap race condition
+  const isPurchasing = useRef(false);
+
   const handlePurchaseProperty = async () => {
     if (!selectedSquare || !userLocation) return;
-    
+
+    // ✅ FIX: Block re-entrant calls (double-tap)
+    if (isPurchasing.current) return;
+
     if (userTB < 100) {
       Alert.alert('Insufficient TB', 'You need 100 TB to purchase a property.');
       return;
     }
-    
+
     if (selectedSquare.isOwned) {
       Alert.alert('Already Owned', 'This property is already owned.');
       return;
     }
-    
+
     const alreadyOwned = ownedProperties.some(p => p.id === selectedSquare.id);
     if (alreadyOwned) {
       Alert.alert('Already Owned', 'You already own this property.');
       return;
     }
-    
+
     if (!isAdjacentToUser(userLocation.latitude, userLocation.longitude, selectedSquare)) {
       Alert.alert('Too Far', 'You must be within or adjacent to the property to purchase it.');
       return;
     }
-    
+
+    isPurchasing.current = true;
+
     const mineType = assignMineType();
     const updatedSquare = {
       ...selectedSquare,
@@ -765,20 +773,26 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       ownerId: userId,
       mineType,
     };
-    
-    onPropertyPurchase(updatedSquare, 100);
-    soundService.play('purchase');
-    
-    setGridSquares(prev => {
-      const updated = new Map(prev);
-      updated.set(selectedSquare.id, updatedSquare);
-      return updated;
-    });
-    
-    setSelectedSquare(updatedSquare);
 
-    // Mark first purchase milestone as done (so nudge doesn't re-show)
-    dbService.checkAndFireMilestone(userId, 'milestone_firstPurchase').catch(() => {});
+    try {
+      // ✅ FIX: Await the Firestore write BEFORE updating UI.
+      // Previously onPropertyPurchase() was called without await, so the UI
+      // updated optimistically even if the write failed or the balance check
+      // threw — allowing unlimited free purchases.
+      await onPropertyPurchase(updatedSquare, 100);
+
+      soundService.play('purchase');
+
+      setGridSquares(prev => {
+        const updated = new Map(prev);
+        updated.set(selectedSquare.id, updatedSquare);
+        return updated;
+      });
+
+      setSelectedSquare(updatedSquare);
+
+      // Mark first purchase milestone as done (so nudge doesn't re-show)
+      dbService.checkAndFireMilestone(userId, 'milestone_firstPurchase').catch(() => {});
 
       // Create system mine on first property purchase
       if (ownedProperties.length === 0) {
@@ -788,7 +802,17 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           }
         }).catch(e => console.warn('System mine (non-fatal):', e));
       }
-    Alert.alert('Success!', `You purchased a ${mineType} mine! Tap it to explore.`);
+
+      Alert.alert('Success!', `You purchased a ${mineType} mine! Tap it to explore.`);
+    } catch (error: any) {
+      // ✅ FIX: Surface the error to the user — TB was NOT deducted if this throws
+      Alert.alert(
+        'Purchase Failed',
+        error?.message || 'Could not complete purchase. Please try again.',
+      );
+    } finally {
+      isPurchasing.current = false;
+    }
   };
 
   // Boost handlers

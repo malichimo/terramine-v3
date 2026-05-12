@@ -64,37 +64,48 @@ export class DatabaseService {
   // Properties
   async purchaseProperty(userId: string, property: GridSquare, tbCost: number) {
     const propertyRef = doc(db, 'properties', property.id);
-    
+
+    // ✅ FIX: Check balance FIRST — before any Firestore writes.
+    // Previously the property was saved before the balance check, allowing
+    // unlimited free purchases if the balance check threw or was skipped.
+    const userSnap = await getDoc(doc(db, 'users', userId));
+    if (!userSnap.exists()) {
+      throw new Error('User account not found. Please sign out and sign back in.');
+    }
+    const currentBalance = userSnap.data().tbBalance ?? 0;
+    if (currentBalance < tbCost) {
+      throw new Error('Insufficient TB balance');
+    }
+
     // Check if already owned
     const propertySnap = await getDoc(propertyRef);
     if (propertySnap.exists()) {
       throw new Error('Property already owned');
     }
 
-    // Save property
-    const now = new Date().toISOString();
-    await setDoc(propertyRef, {
-      id: property.id,
-      ownerId: userId,
-      mineType: property.mineType,
-      centerLat: property.centerLat,
-      centerLng: property.centerLng,
-      corners: property.corners,
-      purchasedAt: now,
-      lastActivityAt: now, // ✅ inactivity clock starts at purchase
-    });
-
-    // Check user has enough TB before deducting
-    const userSnap = await getDoc(doc(db, 'users', userId));
-    if (userSnap.exists()) {
-      const currentBalance = userSnap.data().tbBalance ?? 0;
-      if (currentBalance < tbCost) {
-        throw new Error('Insufficient TB balance');
-      }
-    }
-
-    // Deduct TB from user
+    // ✅ Deduct TB first, then save property.
+    // If deduction succeeds but setDoc fails, the user loses 100 TB without
+    // getting the property — recoverable via support. The inverse (free property)
+    // is not recoverable, so this ordering is intentional.
     await this.updateUserBalance(userId, -tbCost);
+
+    try {
+      const now = new Date().toISOString();
+      await setDoc(propertyRef, {
+        id: property.id,
+        ownerId: userId,
+        mineType: property.mineType,
+        centerLat: property.centerLat,
+        centerLng: property.centerLng,
+        corners: property.corners,
+        purchasedAt: now,
+        lastActivityAt: now,
+      });
+    } catch (e) {
+      // ✅ Refund TB if property save fails
+      await this.updateUserBalance(userId, tbCost).catch(() => {});
+      throw new Error('Failed to save property. Your TB has been refunded.');
+    }
   }
 
   async getPropertiesByOwner(userId: string): Promise<GridSquare[]> {
