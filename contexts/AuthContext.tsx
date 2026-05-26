@@ -1,5 +1,7 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import { auth } from '../firebaseConfig';
+import { Alert } from 'react-native';
+import { auth, db } from '../firebaseConfig';
+import { doc, getDoc } from 'firebase/firestore';
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -53,8 +55,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // Check if user is banned before allowing access
+        try {
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          if (userDoc.exists() && userDoc.data().isBanned === true) {
+            // Sign out immediately — don't let them into the app
+            await firebaseSignOut(auth);
+            setUser(null);
+            setLoading(false);
+            Alert.alert(
+              'Account Suspended',
+              'Your account has been suspended for violating our Terms of Service. Please contact support at scott@terramine.app if you believe this is an error.',
+              [{ text: 'OK' }]
+            );
+            return;
+          }
+        } catch (e) {
+          console.warn('Ban check failed (non-fatal):', e);
+          // On error, allow login — better than locking out legitimate users
+        }
+      }
+      setUser(firebaseUser);
       setLoading(false);
     });
     return unsubscribe;

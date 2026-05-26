@@ -43,12 +43,17 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
   const [isSavingResult, setIsSavingResult] = useState(false);
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const isMounted = useRef(true);
   const adService = useRef(new AdMobService()).current;
 
   // Initialize game
   useEffect(() => {
+    isMounted.current = true;
     const initialState = initializeGame(propertyDetails.gameLevel, property.mineType);
     setGameState(initialState);
+    return () => {
+      isMounted.current = false;
+    };
   }, []);
 
   // Start timer when game starts
@@ -157,6 +162,7 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
       const success = await adService.showAd(
         () => {
           // Ad watched - add 30 seconds
+          if (!isMounted.current) return;
           setGameState(prev => {
             if (!prev) return prev;
             return {
@@ -188,6 +194,7 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
       const success = await adService.showAd(
         () => {
           // Ad watched - add bonus moves
+          if (!isMounted.current) return;
           setGameState(prev => {
             if (!prev) return prev;
             return {
@@ -247,6 +254,7 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
     if (!user) return;
 
     try {
+      if (!isMounted.current) return;
       setIsSavingResult(true);
 
       const levelBefore = propertyDetails?.gameLevel ?? 1;
@@ -267,6 +275,7 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
       const updated = await dbServicePhase2.getPropertyDetails(property.id);
       const leveledUp = updated && updated.gameLevel > levelBefore;
 
+      if (!isMounted.current) return;
       setIsSavingResult(false);
 
       if (result.won) {
@@ -328,6 +337,7 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
       }
     } catch (error) {
       console.error('Error saving game result:', error);
+      if (!isMounted.current) return;
       Alert.alert('Error', 'Failed to save game result');
       setIsSavingResult(false);
     }

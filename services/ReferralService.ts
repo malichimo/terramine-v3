@@ -108,6 +108,23 @@ export class ReferralService {
    * Called when a user purchases their first TerraAcre.
    * Awards 1,000 TB to both the new user and their referrer.
    * Only fires once per user.
+   *
+   * ✅ BUG FIX: Previously the referrer's existence was checked AFTER marking
+   * hasCompletedReferral and awarding the new user's TB. Any failure between
+   * those two writes (network error, referrer doc missing, Firestore rules
+   * rejection) would silently consume the referral — the new user was marked
+   * complete so it could never retry, but the referrer never got their TB.
+   *
+   * Fix: verify referrer exists BEFORE any writes. Then wrap the referrer
+   * update in its own try/catch so a rules rejection or network error is
+   * logged for manual recovery rather than silently dropped.
+   *
+   * ✅ RULES FIX (deploy separately): The referrer update writes tbBalance +
+   * referralCount + tbEarnedFromReferrals to a doc the caller doesn't own.
+   * The old isVisitorTBReward() only allowed ['tbBalance'], so referralCount
+   * and tbEarnedFromReferrals caused the entire write to be rejected by
+   * Firestore. Add isReferralReward() to the users update rule — see
+   * firestore.rules comment block.
    */
   static async processFirstPurchaseReferral(userId: string): Promise<void> {
     const userRef = doc(db, 'users', userId);
@@ -121,37 +138,69 @@ export class ReferralService {
 
     const referrerId = data.referredBy;
 
-    // Mark as completed first to prevent double-firing
+    // ✅ FIX: Verify referrer exists BEFORE marking complete or awarding anything.
+    // Previously this check happened after the new user was already marked complete,
+    // so a missing referrer doc would silently consume the referral with no retry.
+    const referrerRef = doc(db, 'users', referrerId);
+    const referrerSnap = await getDoc(referrerRef);
+    if (!referrerSnap.exists()) {
+      console.warn('Referral: referrer doc not found, aborting without marking complete:', referrerId);
+      return;
+    }
+
+    const referrerNickname = referrerSnap.data().nickname || 'Unknown';
+    const newUserNickname = data.nickname || 'Someone';
+
+    // Award new user and mark complete — this is the idempotency gate.
+    // Do this first so a crash after this point doesn't cause double-award
+    // on retry (better to manually compensate a missed referrer than to
+    // double-award both sides).
     await updateDoc(userRef, {
       hasCompletedReferral: true,
       tbBalance: increment(REFERRAL_REWARD_TB),
     });
 
-    // Reward the referrer
-    const referrerRef = doc(db, 'users', referrerId);
-    const referrerSnap = await getDoc(referrerRef);
-    if (!referrerSnap.exists()) return;
+    // ✅ FIX: Wrap referrer update in try/catch.
+    // Previously this was a bare await — any failure (Firestore rules rejection,
+    // network error) would throw, leave the referrer unrewarded, and since
+    // hasCompletedReferral was already true, no retry was ever possible.
+    // Now we log the failure for manual recovery instead of silently dropping it.
+    try {
+      await updateDoc(referrerRef, {
+        tbBalance: increment(REFERRAL_REWARD_TB),
+        referralCount: increment(1),
+        tbEarnedFromReferrals: increment(REFERRAL_REWARD_TB),
+      });
+    } catch (e) {
+      console.error(
+        '❌ Referral: referrer TB award failed — manual recovery needed for referrerId:',
+        referrerId,
+        'referredUserId:',
+        userId,
+        e,
+      );
+      // Non-fatal: new user already got their TB and is marked complete.
+      // Referrer can be compensated manually via admin dashboard.
+      // Once the Firestore isReferralReward() rule is deployed, this path
+      // should no longer be hit.
+      return;
+    }
 
-    const referrerNickname = referrerSnap.data().nickname || 'Unknown';
-    const newUserNickname = data.nickname || 'Someone';
-
-    await updateDoc(referrerRef, {
-      tbBalance: increment(REFERRAL_REWARD_TB),
-      referralCount: increment(1),
-      tbEarnedFromReferrals: increment(REFERRAL_REWARD_TB),
-    });
-
-    // Log the referral entry
-    const referralLogRef = doc(collection(db, 'referralLogs'));
-    await setDoc(referralLogRef, {
-      referrerId,
-      referredUserId: userId,
-      referredNickname: newUserNickname,
-      referrerNickname,
-      code: data.referredByCode || '',
-      tbAwarded: REFERRAL_REWARD_TB,
-      completedAt: new Date().toISOString(),
-    });
+    // Log the referral entry — non-fatal if this fails
+    try {
+      const referralLogRef = doc(collection(db, 'referralLogs'));
+      await setDoc(referralLogRef, {
+        referrerId,
+        referredUserId: userId,
+        referredNickname: newUserNickname,
+        referrerNickname,
+        code: data.referredByCode || '',
+        tbAwarded: REFERRAL_REWARD_TB,
+        completedAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn('Referral: log write failed (non-fatal):', e);
+    }
 
     console.log(`✅ Referral reward: ${REFERRAL_REWARD_TB} TB awarded to both ${referrerId} and ${userId}`);
   }

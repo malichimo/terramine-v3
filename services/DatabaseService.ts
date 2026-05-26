@@ -572,7 +572,7 @@ export class DatabaseService {
     const currentEarnings = data.usdEarnings ?? 0;
 
     if (currentEarnings < usdAmount) {
-      throw new Error('Insufficient earnings balance');
+      throw new Error('Earnings not yet synced. If your display shows enough funds, please wait 30–60 seconds and try again.');
     }
 
     await updateDoc(userRef, {

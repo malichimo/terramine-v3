@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useImperativeHandle } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, Alert, ScrollView, TextInput, Linking } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, Alert, ScrollView, TextInput } from 'react-native';
 import MapView, { Polygon, PROVIDER_GOOGLE, Marker } from 'react-native-maps';
 import * as ImagePicker from 'expo-image-picker';
 import { LocationService, Coordinates } from '../services/LocationService';
@@ -7,10 +7,7 @@ import { DatabaseService, BoostState } from '../services/DatabaseService';
 import { generateGridSquare, getVisibleGridSquares, isWithinGridSquare, isAdjacentToUser, GridSquare, gridToLatLng } from '../utils/GridUtils';
 import { createSystemMineNear, isSystemMine, SYSTEM_CHECKIN_REWARD_TB } from '../services/SystemMineService';
 import BoostModal from '../components/BoostModal';
-import TBTradeInModal from '../components/TBTradeInModal';
 import { soundService } from '../services/SoundService';
-import LeaderboardModal from '../components/LeaderboardModal';
-import { ReferralService } from '../services/ReferralService';
 
 // Extend BoostState with computed properties used locally in MapScreen
 interface MapScreenBoostState extends BoostState {
@@ -34,15 +31,13 @@ interface MapScreenProps {
   allProperties: GridSquare[];
   initialBoostState: BoostState;
   onPropertyPurchase: (property: GridSquare, tbSpent: number) => void;
-  onCheckIn: (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, nickname?: string, mineType?: string) => Promise<void>;
+  onCheckIn: (propertyId: string, tbEarned: number, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, nickname?: string) => Promise<void>;
   onBoostUpdate: (boostData: any) => void;
   onEarningsUpdate?: (usdAmount: number) => Promise<void>;
-  onTBUpdate?: (tbDelta: number) => void;
   usdEarnings?: number;
   onNavigateToPropertyDetail?: (property: GridSquare) => void;
   onNavigateToVisitorLog?: (property: GridSquare) => void;
   onNavigateToReferral?: () => void;
-  onNavigateToLeaderboard?: () => void;
 }
 
 const MapScreen = React.forwardRef<any, MapScreenProps>(({ 
@@ -56,15 +51,12 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   onCheckIn,
   onBoostUpdate,
   onEarningsUpdate,
-  onTBUpdate,
   usdEarnings = 0,
   onNavigateToPropertyDetail,
   onNavigateToVisitorLog,
   onNavigateToReferral,
 }, ref) => {
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
-  const [showTradeInModal, setShowTradeInModal] = useState(false);
-  const [findingNearestTA, setFindingNearestTA] = useState(false);
   const [gridSquares, setGridSquares] = useState<Map<string, GridSquare>>(new Map());
   const [selectedSquare, setSelectedSquare] = useState<GridSquare | null>(null);
   const [showCheckInModal, setShowCheckInModal] = useState(false);
@@ -74,7 +66,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const [propertyCheckIns, setPropertyCheckIns] = useState<Map<string, CheckIn[]>>(new Map());
   const [ownerNicknames, setOwnerNicknames] = useState<Map<string, string>>(new Map());
   const [showLegend, setShowLegend] = useState(false);
-  const [showLeaderboard, setShowLeaderboard] = useState(false);
   
   // Boost state
   const [boostState, setBoostState] = useState<MapScreenBoostState>({
@@ -649,13 +640,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
 
   const submitCheckIn = async (withPhoto: boolean) => {
     if (!selectedSquare || !selectedSquare.ownerId) return;
-
-    // ✅ BUG-025 FIX: Block re-entrant calls caused by double-tap or rapid taps.
-    // Using a ref means the guard is evaluated synchronously before any await,
-    // so a second tap that arrives while the first is in-flight is rejected immediately.
-    if (isSubmittingCheckIn.current) return;
-    isSubmittingCheckIn.current = true;
-
+    
     let photoUri = null;
     let photoUrl = undefined;
     
@@ -678,7 +663,10 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       }
     }
     
-    // Base TB raised to 3
+    const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+    setLastCheckIns(prev => new Map(prev).set(selectedSquare.id, today));
+    
+    // Base TB raised to 3 (was 1)
     const isSystem = isSystemMine(selectedSquare.ownerId || '');
     let tbEarned = isSystem ? SYSTEM_CHECKIN_REWARD_TB : 3;
     if (!isSystem) {
@@ -686,7 +674,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       if (photoUri) tbEarned += 2;
     }
 
-    // Apply boost multiplier (not on system mine bonus)
+    // Apply boost multiplier (not on system mine first-time bonus)
     if (boostState.isBoostActive && !isSystem) {
       tbEarned *= 2;
     }
@@ -699,91 +687,58 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         checkInMessage.trim() || undefined,
         !!photoUri,
         photoUrl,
-        username,
-        selectedSquare.mineType  // ✅ pass mineType for check-in notification
+        username
       );
 
-      // ✅ BUG FIX: Only set the daily guard AFTER a successful Firestore write.
-      // Previously this was set before the try block, so a post-save error would
-      // show "Failed to save check-in" even though the check-in saved correctly.
-      const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
-      setLastCheckIns(prev => new Map(prev).set(selectedSquare.id, today));
-
-      // ✅ BUG FIX: Post-save side effects are isolated in their own try/catch.
-      // A streak update failure will NOT surface as "Failed to save check-in".
-      let streakBonus = 0;
-      let newStreak = 0;
-      try {
-        newStreak = await dbService.incrementCheckInStreak(userId);
-        streakBonus = dbService.getStreakBonus(newStreak);
-        if (streakBonus > 0) {
-          await dbService.updateUserBalance(userId, streakBonus);
-          tbEarned += streakBonus;
-        }
-      } catch (streakError) {
-        console.warn('Streak update failed (non-fatal):', streakError);
+      // Check-in streak bonus
+      const newStreak = await dbService.incrementCheckInStreak(userId);
+      const streakBonus = dbService.getStreakBonus(newStreak);
+      if (streakBonus > 0) {
+        await dbService.updateUserBalance(userId, streakBonus);
+        tbEarned += streakBonus;
       }
 
       const boostText = boostState.isBoostActive && !isSystem ? ' (2x Boost Applied!)' : '';
-      const streakText = streakBonus > 0 ? `\n\uD83D\uDD25 Streak bonus: +${streakBonus} TB (${newStreak} mines today!)` : '';
-      const systemText = isSystem ? '\n Welcome bonus from TerraMine HQ!' : ' The owner earned 1 TB.';
+      const streakText = streakBonus > 0 ? `
+🔥 Streak bonus: +${streakBonus} TB (${newStreak} mines today!)` : '';
+      const systemText = isSystem ? '
+⚙️ Welcome bonus from TerraMine HQ!' : ` The owner earned 1 TB.`;
       Alert.alert(
-        isSystem ? 'Welcome to TerraMine!' : 'Check-in Complete!',
+        isSystem ? '🎉 Welcome to TerraMine!' : 'Check-in Complete!',
         `You earned ${tbEarned} TB${boostText}!${systemText}${streakText}`
       );
+      setCheckInMessage('');
+      setShowCheckInModal(false);
     } catch (error) {
       console.error('Check-in error:', error);
       Alert.alert('Error', 'Failed to save check-in');
-    } finally {
-      // ✅ BUG-025 FIX: Release the submission lock so the user can check in again
-      // (to a different property, or after a genuine error).
-      isSubmittingCheckIn.current = false;
-
-      // ✅ BUG FIX: Always close the modal and clear the message, whether the
-      // check-in succeeded or failed. Previously the modal stayed open on error,
-      // allowing the user to submit a duplicate check-in.
-      setCheckInMessage('');
-      setShowCheckInModal(false);
     }
   };
 
-  // ✅ FIX: Prevent double-tap race condition
-  const isPurchasing = useRef(false);
-
-  // ✅ BUG-025 FIX: Prevent duplicate check-in submissions on double-tap or rapid taps.
-  // Same pattern as isPurchasing — a ref (not state) so it blocks re-entry synchronously
-  // without triggering a re-render that could itself race.
-  const isSubmittingCheckIn = useRef(false);
-
   const handlePurchaseProperty = async () => {
     if (!selectedSquare || !userLocation) return;
-
-    // ✅ FIX: Block re-entrant calls (double-tap)
-    if (isPurchasing.current) return;
-
+    
     if (userTB < 100) {
       Alert.alert('Insufficient TB', 'You need 100 TB to purchase a property.');
       return;
     }
-
+    
     if (selectedSquare.isOwned) {
       Alert.alert('Already Owned', 'This property is already owned.');
       return;
     }
-
+    
     const alreadyOwned = ownedProperties.some(p => p.id === selectedSquare.id);
     if (alreadyOwned) {
       Alert.alert('Already Owned', 'You already own this property.');
       return;
     }
-
+    
     if (!isAdjacentToUser(userLocation.latitude, userLocation.longitude, selectedSquare)) {
       Alert.alert('Too Far', 'You must be within or adjacent to the property to purchase it.');
       return;
     }
-
-    isPurchasing.current = true;
-
+    
     const mineType = assignMineType();
     const updatedSquare = {
       ...selectedSquare,
@@ -791,53 +746,21 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       ownerId: userId,
       mineType,
     };
+    
+    onPropertyPurchase(updatedSquare, 100);
+    soundService.play('purchase');
+    
+    setGridSquares(prev => {
+      const updated = new Map(prev);
+      updated.set(selectedSquare.id, updatedSquare);
+      return updated;
+    });
+    
+    setSelectedSquare(updatedSquare);
 
-    try {
-      // ✅ FIX: Await the Firestore write BEFORE updating UI.
-      // Previously onPropertyPurchase() was called without await, so the UI
-      // updated optimistically even if the write failed or the balance check
-      // threw — allowing unlimited free purchases.
-      await onPropertyPurchase(updatedSquare, 100);
-
-      soundService.play('purchase');
-
-      setGridSquares(prev => {
-        const updated = new Map(prev);
-        updated.set(selectedSquare.id, updatedSquare);
-        return updated;
-      });
-
-      setSelectedSquare(updatedSquare);
-
-      // Mark first purchase milestone as done (so nudge doesn't re-show)
-      dbService.checkAndFireMilestone(userId, 'milestone_firstPurchase').catch(() => {});
-
-      // Fire referral reward if this is the user's first purchase and they were referred
-      if (ownedProperties.length === 0) {
-        ReferralService.processFirstPurchaseReferral(userId).catch(e =>
-          console.warn('Referral reward (non-fatal):', e)
-        );
-      }
-
-      // Create system mine on first property purchase
-      if (ownedProperties.length === 0) {
-        createSystemMineNear(updatedSquare).then(systemMine => {
-          if (systemMine) {
-            setAllProperties(prev => prev.some(p => p.id === systemMine.id) ? prev : [...prev, systemMine]);
-          }
-        }).catch(e => console.warn('System mine (non-fatal):', e));
-      }
-
-      Alert.alert('Success!', `You purchased a ${mineType} mine! Tap it to explore.`);
-    } catch (error: any) {
-      // ✅ FIX: Surface the error to the user — TB was NOT deducted if this throws
-      Alert.alert(
-        'Purchase Failed',
-        error?.message || 'Could not complete purchase. Please try again.',
-      );
-    } finally {
-      isPurchasing.current = false;
-    }
+    // Mark first purchase milestone as done (so nudge doesn't re-show)
+    dbService.checkAndFireMilestone(userId, 'milestone_firstPurchase').catch(() => {});
+    Alert.alert('Success!', `You purchased a ${mineType} mine! Tap it to explore.`);
   };
 
   // Boost handlers
@@ -942,85 +865,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     return `${mins}m`;
   };
 
-  // ── Find Nearest TA ──────────────────────────────────────────────────────
-
-  const handleFindNearestTA = () => {
-    if (!userLocation) {
-      Alert.alert('Location Unavailable', 'We need your location to find the nearest property.');
-      return;
-    }
-
-    // Filter to only TAs owned by other players (not the current user, not unowned, not system)
-    const visitableTAs = allProperties.filter(p =>
-      p.isOwned &&
-      p.ownerId &&
-      p.ownerId !== userId &&
-      !isSystemMine(p.ownerId)
-    );
-
-    if (visitableTAs.length === 0) {
-      Alert.alert('No Nearby Mines', 'No other players have mines in this area yet. Check back as more players join!');
-      return;
-    }
-
-    setFindingNearestTA(true);
-
-    let nearest: GridSquare | null = null;
-    let nearestDistKm = Infinity;
-
-    for (const prop of visitableTAs) {
-      const dLat = (prop.centerLat - userLocation.latitude) * Math.PI / 180;
-      const dLng = (prop.centerLng - userLocation.longitude) * Math.PI / 180;
-      const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(userLocation.latitude * Math.PI / 180) *
-        Math.cos(prop.centerLat * Math.PI / 180) *
-        Math.sin(dLng / 2) ** 2;
-      const dist = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      if (dist < nearestDistKm) {
-        nearestDistKm = dist;
-        nearest = prop;
-      }
-    }
-
-    setFindingNearestTA(false);
-    if (!nearest) return;
-
-    mapRef.current?.animateToRegion({
-      latitude: nearest.centerLat,
-      longitude: nearest.centerLng,
-      latitudeDelta: 0.002,
-      longitudeDelta: 0.002,
-    }, 800);
-
-    const distMiles = nearestDistKm * 0.621371;
-    const distLabel = distMiles < 0.1
-      ? `${Math.round(distMiles * 5280)} ft away`
-      : `${distMiles.toFixed(1)} mi away`;
-
-    const ownerName = ownerNicknames.get(nearest.ownerId || '') || 'another player';
-    const mineName = `${nearest.mineType.charAt(0).toUpperCase() + nearest.mineType.slice(1)} Mine`;
-
-    setTimeout(() => {
-      Alert.alert(
-        `⛏️ ${mineName}`,
-        `Owned by ${ownerName} — ${distLabel}. Get directions to check in?`,
-        [
-          { text: 'No Thanks', style: 'cancel' },
-          {
-            text: 'Get Directions',
-            onPress: () => {
-              const url = `https://www.google.com/maps/dir/?api=1&destination=${nearest!.centerLat},${nearest!.centerLng}&travelmode=walking`;
-              Linking.openURL(url).catch(() =>
-                Alert.alert('Error', 'Could not open Maps.')
-              );
-            },
-          },
-        ]
-      );
-    }, 900);
-  };
-
   return (
     <View style={styles.container}>
       <MapView
@@ -1066,34 +910,14 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         <Text style={styles.welcomeText}>Welcome, {username}!</Text>
       </View>
 
-      {/* Earnings Counter — tap to open TB trade-in */}
-      <TouchableOpacity
-        style={styles.earningsDisplay}
-        onPress={() => setShowTradeInModal(true)}
-        activeOpacity={0.85}
-      >
+      {/* Earnings Counter */}
+      <View style={styles.earningsDisplay}>
         <View style={styles.earningsInner}>
           <Text style={styles.earningsText}>
             ${(usdEarnings + currentEarnings).toFixed(6)} 📈
           </Text>
-          <Text style={styles.earningsTapHint}>Tap to trade for TB</Text>
         </View>
-      </TouchableOpacity>
-
-      {/* TB Trade-In Modal */}
-      <TBTradeInModal
-        visible={showTradeInModal}
-        onClose={() => setShowTradeInModal(false)}
-        usdEarnings={usdEarnings + currentEarnings}
-        userId={userId}
-        onTradeComplete={(tbGained, usdSpent) => {
-          // Deduct from local currentEarnings so display updates immediately
-          setCurrentEarnings(prev => Math.max(0, prev - usdSpent));
-          // Notify parent so the TB header updates immediately
-          onTBUpdate?.(tbGained);
-          setShowTradeInModal(false);
-        }}
-      />
+      </View>
 
       {/* Boost Button */}
       <TouchableOpacity 
@@ -1148,36 +972,6 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         activeOpacity={0.85}
       >
         <Text style={styles.referralButtonText}>🤝 Refer</Text>
-      </TouchableOpacity>
-
-      {/* Find Nearest TA Button */}
-      {ownedProperties.length > 0 && (
-        <TouchableOpacity
-          style={styles.findTAButton}
-          onPress={handleFindNearestTA}
-          activeOpacity={0.85}
-          disabled={findingNearestTA}
-        >
-          <Text style={styles.findTAButtonText}>
-            {findingNearestTA ? '⏳' : '📍 Visit Mine'}
-          </Text>
-        </TouchableOpacity>
-      )}
-
-      {/* Leaderboard Modal */}
-      <LeaderboardModal
-        visible={showLeaderboard}
-        onClose={() => setShowLeaderboard(false)}
-        currentUserId={userId}
-      />
-
-      {/* Leaderboard Button */}
-      <TouchableOpacity
-        style={styles.leaderboardButton}
-        onPress={() => setShowLeaderboard(true)}
-        activeOpacity={0.85}
-      >
-        <Text style={styles.leaderboardButtonText}>🏆 Top 10</Text>
       </TouchableOpacity>
 
       {/* Legend Overlay */}
@@ -1337,7 +1131,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           {selectedSquare.greeting ? (
             <View style={{ backgroundColor: '#FFF8E1', borderRadius: 8, padding: 10, marginBottom: 10, borderLeftWidth: 3, borderLeftColor: '#FFD700' }}>
               <Text style={{ fontSize: 13, color: '#555', fontStyle: 'italic' }}>
-                {'"' + selectedSquare.greeting + '"'}
+                💬 "{selectedSquare.greeting}"
               </Text>
             </View>
           ) : null}
@@ -1353,17 +1147,15 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           
           <View style={styles.modalButtons}>
             <TouchableOpacity 
-              style={[styles.modalButton, isSubmittingCheckIn.current && styles.disabledButton]}
+              style={styles.modalButton}
               onPress={() => submitCheckIn(false)}
-              disabled={isSubmittingCheckIn.current}
             >
               <Text style={styles.buttonText}>Check In (1 TB{boostState.isBoostActive ? ' x2' : ''})</Text>
             </TouchableOpacity>
             
             <TouchableOpacity 
-              style={[styles.modalButton, styles.photoButton, isSubmittingCheckIn.current && styles.disabledButton]}
+              style={[styles.modalButton, styles.photoButton]}
               onPress={() => submitCheckIn(true)}
-              disabled={isSubmittingCheckIn.current}
             >
               <Text style={styles.buttonText}>📷 With Photo (+2 TB{boostState.isBoostActive ? ' x2' : ''})</Text>
             </TouchableOpacity>
@@ -1443,13 +1235,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: 'white',
     textAlign: 'center',
-  },
-  earningsTapHint: {
-    fontSize: 10,
-    color: 'rgba(255,255,255,0.75)',
-    textAlign: 'center',
-    marginTop: 2,
-    letterSpacing: 0.3,
   },
   boostButton: {
     position: 'absolute',
@@ -1676,44 +1461,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#333',
-  },
-  findTAButton: {
-    position: 'absolute',
-    bottom: 244,
-    right: 16,
-    backgroundColor: '#1565C0',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 3,
-  },
-  findTAButtonText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: 'white',
-  },
-  leaderboardButton: {
-    position: 'absolute',
-    bottom: 296,
-    right: 16,
-    backgroundColor: '#1a3a1a',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 3,
-  },
-  leaderboardButtonText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#FFD700',
   },
   referralButton: {
     position: 'absolute',

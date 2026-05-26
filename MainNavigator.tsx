@@ -20,9 +20,10 @@ import { useAuth } from './contexts/AuthContext';
 import { DatabaseService } from './services/DatabaseService';
 import { ConsentService } from './services/ConsentService';
 import { soundService } from './services/SoundService';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import OnboardingScreen, { ONBOARDING_SEEN_KEY } from './screens/OnboardingScreen';
+import AgeGateScreen from './screens/AgeGateScreen';
 import DailyActivityScreen from './screens/DailyActivityScreen';
 import VisitorLogScreen from './screens/VisitorLogScreen';
 import ReferralScreen from './screens/ReferralScreen';
@@ -54,13 +55,14 @@ interface MapStackProps {
   mapRef: React.RefObject<any>;
   onPropertyUpdate: () => void;
   onNavigateToReferral: () => void;
+  onTBUpdate: (tbDelta: number) => void;
 }
 
 function MapStackNavigator({
   userId, username, userTB, usdEarnings,
   ownedProperties, allProperties, boostState,
   onPropertyPurchase, onCheckIn, onBoostUpdate, onEarningsUpdate,
-  mapRef, onPropertyUpdate, onNavigateToReferral,
+  mapRef, onPropertyUpdate, onNavigateToReferral, onTBUpdate,
 }: MapStackProps) {
   return (
     <MapStack.Navigator screenOptions={{ headerShown: false }}>
@@ -80,6 +82,7 @@ function MapStackNavigator({
             initialBoostState={boostState}
             onBoostUpdate={onBoostUpdate}
             onEarningsUpdate={onEarningsUpdate}
+            onTBUpdate={onTBUpdate}
             onNavigateToPropertyDetail={(property: GridSquare) =>
               props.navigation.navigate('PropertyDetail', { property, userId })
             }
@@ -103,7 +106,7 @@ function MapStackNavigator({
               ...props.route,
               params: {
                 ...(props.route.params as any),
-                onBalanceUpdate: (amount: number) => setUserTB(prev => prev + amount),
+                onBalanceUpdate: (amount: number) => onTBUpdate(amount),
               },
             }}
           />
@@ -132,11 +135,12 @@ interface ProfileStackProps {
   onSignOut: () => Promise<void>;
   onPropertyUpdate: () => void;
   onUsernameChange: (newUsername: string) => void;
+  onTBUpdate: (tbDelta: number) => void;
 }
 
 function ProfileStackNavigator({
   userTB, usdEarnings, username, ownedProperties,
-  totalCheckIns, totalTBEarned, userId, onSignOut, onPropertyUpdate, onUsernameChange,
+  totalCheckIns, totalTBEarned, userId, onSignOut, onPropertyUpdate, onUsernameChange, onTBUpdate,
 }: ProfileStackProps) {
   return (
     <ProfileStack.Navigator screenOptions={{ headerShown: false }}>
@@ -172,7 +176,7 @@ function ProfileStackNavigator({
               ...props.route,
               params: {
                 ...(props.route.params as any),
-                onBalanceUpdate: (amount: number) => setUserTB(prev => prev + amount),
+                onBalanceUpdate: (amount: number) => onTBUpdate(amount),
               },
             }}
           />
@@ -217,6 +221,7 @@ export default function MainNavigator() {
   const [totalTBEarned, setTotalTBEarned] = useState(0);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
+  const [needsAgeGate, setNeedsAgeGate] = useState<boolean | null>(null);
   const [consentReady, setConsentReady] = useState(false);
   const [boostState, setBoostState] = useState({
     freeBoostsRemaining: 4,
@@ -234,6 +239,7 @@ export default function MainNavigator() {
     if (user) {
       loadUserData();
       checkOnboarding();
+      checkAgeGate();
       // ✅ Wrapped in try/catch — a ConsentService failure no longer blocks the app
       ConsentService.initialize()
         .catch(e => console.warn('ConsentService init failed (non-fatal):', e))
@@ -248,6 +254,18 @@ export default function MainNavigator() {
       setOnboardingDone(seen === 'true');
     } catch {
       setOnboardingDone(true); // fail open — don't block the app
+    }
+  };
+
+  const checkAgeGate = async () => {
+    if (!user) return;
+    try {
+      const userData = await dbService.getUserData(user.uid);
+      // Show age gate if dateOfBirth has never been set
+      const hasDOB = userData?.dateOfBirth != null && userData.dateOfBirth !== '';
+      setNeedsAgeGate(!hasDOB);
+    } catch {
+      setNeedsAgeGate(false); // fail open
     }
   };
 
@@ -404,7 +422,7 @@ export default function MainNavigator() {
     }
   };
 
-  if (!dataLoaded || onboardingDone === null || !consentReady) {
+  if (!dataLoaded || onboardingDone === null || needsAgeGate === null || !consentReady) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator size="large" color="#2196F3" />
@@ -416,6 +434,15 @@ export default function MainNavigator() {
     return (
       <OnboardingScreen
         onDone={() => setOnboardingDone(true)}
+      />
+    );
+  }
+
+  if (needsAgeGate && user) {
+    return (
+      <AgeGateScreen
+        userId={user.uid}
+        onDone={(isAdult) => setNeedsAgeGate(false)}
       />
     );
   }
@@ -486,6 +513,7 @@ export default function MainNavigator() {
               mapRef={mapRef}
               onPropertyUpdate={handlePropertyUpdate}
               onNavigateToReferral={() => {}}
+              onTBUpdate={(delta) => setUserTB(prev => prev + delta)}
             />
           )}
         </Tab.Screen>
@@ -502,6 +530,7 @@ export default function MainNavigator() {
               onSignOut={handleSignOut}
               onPropertyUpdate={handlePropertyUpdate}
               onUsernameChange={setUsername}
+              onTBUpdate={(delta) => setUserTB(prev => prev + delta)}
             />
           )}
         </Tab.Screen>

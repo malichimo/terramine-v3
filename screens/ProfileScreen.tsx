@@ -12,6 +12,7 @@ import { DatabaseService } from '../services/DatabaseService';
 import EditProfileModal, { ProfileData } from '../components/EditProfileModal';
 import ReportModal from '../components/ReportModal';
 import { ModerationService } from '../services/ModerationService';
+import { dbServicePhase2 } from '../services/DatabaseServicePhase2';
 
 interface ActivityEvent {
   id: string;
@@ -87,6 +88,8 @@ export default function ProfileScreen({
   const [reportingCheckInId, setReportingCheckInId] = useState<string | null>(null);
   const [reportingUserId, setReportingUserId] = useState<string | null>(null);
   const [viewerIsAdult, setViewerIsAdult] = useState(false);
+  // productionLevel keyed by propertyId — loaded once when properties are available
+  const [productionLevels, setProductionLevels] = useState<{ [propertyId: string]: number }>({});
 
   const { user } = useAuth();
 
@@ -99,6 +102,30 @@ export default function ProfileScreen({
       }).catch(() => {});
     }
   }, [user]);
+
+  // Load production levels for all owned properties (for accurate earnings display)
+  useEffect(() => {
+    if (ownedProperties.length === 0) return;
+    const loadProductionLevels = async () => {
+      try {
+        const levels: { [propertyId: string]: number } = {};
+        await Promise.all(
+          ownedProperties.map(async (property) => {
+            try {
+              const details = await dbServicePhase2.getPropertyDetails(property.id);
+              levels[property.id] = details?.productionLevel ?? 1;
+            } catch {
+              levels[property.id] = 1;
+            }
+          })
+        );
+        setProductionLevels(levels);
+      } catch (e) {
+        console.error('Error loading production levels:', e);
+      }
+    };
+    loadProductionLevels();
+  }, [ownedProperties]);
 
   // Keep local displayUsername in sync when prop changes (e.g. after MainNavigator re-renders)
   useEffect(() => {
@@ -242,11 +269,14 @@ export default function ProfileScreen({
     diamond: 0.0000000044 * 86400,
   };
 
-  const monthlyEarnings =
-    (propertiesByType.rock    * rentRates.rock    +
-     propertiesByType.coal    * rentRates.coal    +
-     propertiesByType.gold    * rentRates.gold    +
-     propertiesByType.diamond * rentRates.diamond) * 30;
+  // Sum per-property monthly earnings factoring in each mine's production level bonus (+1% per level)
+  const getAdjustedRate = (property: GridSquare) => {
+    const base = rentRates[property.mineType as keyof typeof rentRates] ?? 0;
+    const level = productionLevels[property.id] ?? 1;
+    return base * (1 + (level - 1) / 100);
+  };
+
+  const monthlyEarnings = ownedProperties.reduce((sum, p) => sum + getAdjustedRate(p) * 30, 0);
 
   const totalVisitors = Object.values(propertyCheckIns).reduce((sum, cis) => sum + cis.length, 0);
 
@@ -417,7 +447,10 @@ export default function ProfileScreen({
               <Text style={styles.sectionTitle}>Properties by Type</Text>
               {mineTypes.map(({ key, label, icon }) => {
                 const count = propertiesByType[key];
-                const monthly = (count * rentRates[key] * 30).toFixed(6);
+                const monthly = ownedProperties
+                  .filter(p => p.mineType === key)
+                  .reduce((sum, p) => sum + getAdjustedRate(p) * 30, 0)
+                  .toFixed(6);
                 return (
                   <TouchableOpacity
                     key={key}
@@ -521,9 +554,7 @@ export default function ProfileScreen({
                   cmp = (mineOrder[a.mineType as keyof typeof mineOrder] ?? 0) -
                         (mineOrder[b.mineType as keyof typeof mineOrder] ?? 0);
                 } else if (sortKey === 'earnings') {
-                  const rateA = rentRates[a.mineType as keyof typeof rentRates] ?? 0;
-                  const rateB = rentRates[b.mineType as keyof typeof rentRates] ?? 0;
-                  cmp = rateA - rateB;
+                  cmp = getAdjustedRate(a) - getAdjustedRate(b);
                 }
                 return sortAsc ? cmp : -cmp;
               });
@@ -535,7 +566,9 @@ export default function ProfileScreen({
                 );
               }
               return sorted.map(property => {
-                const rate = rentRates[property.mineType as keyof typeof rentRates] ?? 0;
+                const level = productionLevels[property.id] ?? 1;
+                const rate = getAdjustedRate(property);
+                const levelLabel = level > 1 ? ` (Lv.${level})` : '';
                 return (
                   <TouchableOpacity
                     key={property.id}
@@ -560,7 +593,7 @@ export default function ProfileScreen({
                           {property.centerLat.toFixed(6)}, {property.centerLng.toFixed(6)}
                         </Text>
                         <Text style={styles.propertyEarnings}>
-                          ${(rate * 30).toFixed(6)}/month
+                          ${(rate * 30).toFixed(6)}/month{levelLabel}
                         </Text>
                       </View>
                     </View>

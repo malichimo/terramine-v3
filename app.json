@@ -3,7 +3,7 @@
     "name": "TerraMine",
     "slug": "TerraMine",
     "scheme": "terramine",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/terramine_logo_1024.png",
     "userInterfaceStyle": "light",
@@ -286,7 +286,7 @@
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
-      "buildNumber": "26"
+      "buildNumber": "29"
     },
     "android": {
       "adaptiveIcon": {
@@ -294,7 +294,7 @@
         "backgroundColor": "#1A3A5C"
       },
       "package": "com.terramine.app",
-      "versionCode": 11,
+      "versionCode": 12,
       "intentFilters": [
         {
           "action": "VIEW",
