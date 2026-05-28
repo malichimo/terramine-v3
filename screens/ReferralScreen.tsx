@@ -41,12 +41,17 @@ export default function ReferralScreen({ navigation }: ReferralScreenProps) {
   const handleShare = async () => {
     if (!referralInfo) return;
     try {
-      const deepLink = `terramine://referral?code=${referralInfo.code}`;
+      // ✅ FIX: Use https://terramine.app/join?ref= format to match DeepLinkService.
+      // The old format (terramine://referral?code=) was silently ignored by
+      // DeepLinkService which only handles paths containing '/join' or '://join',
+      // and looks for the 'ref' parameter — not 'code'. This caused the auto-fill
+      // on LoginScreen to never trigger when sharing from ReferralScreen.
+      const shareUrl = `https://terramine.app/join?ref=${referralInfo.code}`;
       const message =
         `⛏️ Join me on TerraMine!\n\n` +
         `Use my referral code: ${referralInfo.code}\n\n` +
         `We'll BOTH get 1,000 bonus TerraBucks when you buy your first TerraAcre!\n\n` +
-        `Download TerraMine and enter code ${referralInfo.code} at sign-up.\n${deepLink}`;
+        `Download TerraMine: ${shareUrl}`;
 
       await Share.share({ message, title: 'Join TerraMine!' });
     } catch (e) {

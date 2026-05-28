@@ -372,26 +372,31 @@ export function generatePuzzle(gameLevel: number): PuzzleConfig {
   const difficulty = getLaserDifficulty(gameLevel);
   const { gridSize, mirrorCount, targetCount, obstacleCount } = difficulty;
 
-  // Minimum bounces required per laser path — enforces puzzle complexity
+  // Minimum bounces required per laser path — enforces puzzle complexity.
+  // minBounces also controls the minimum travel distance before the first
+  // mirror can be placed (see traceRoute — minTravelBeforeBounce).
   // Level  1–10:  1 bounce  (must deflect at least once)
   // Level 11–25:  2 bounces (must use two mirrors per path)
   // Level 26+:    3 bounces (complex multi-bounce shots)
   const minBounces = gameLevel <= 10 ? 1 : gameLevel <= 25 ? 2 : 3;
 
-  // Keep trying until we generate a valid puzzle
-  for (let attempt = 0; attempt < 50; attempt++) {
+  // ✅ BUG-024 FIX: Increased from 50 → 150 attempts. On small grids (5×5)
+  // many random coal/miner placements can't satisfy minBounces, so we need
+  // more tries before falling back to a relaxed puzzle.
+  for (let attempt = 0; attempt < 150; attempt++) {
     const result = tryGeneratePuzzle(gridSize, mirrorCount, targetCount, obstacleCount, gameLevel, minBounces);
     if (result) return result;
   }
 
-  // Fallback: try with relaxed bounce requirement before giving up entirely
-  for (let attempt = 0; attempt < 20; attempt++) {
+  // Fallback: relax to 1 bounce minimum but still require a real bounce.
+  // ✅ BUG-024 FIX: Increased from 20 → 50 attempts here too.
+  for (let attempt = 0; attempt < 50; attempt++) {
     const result = tryGeneratePuzzle(gridSize, mirrorCount, targetCount, obstacleCount, gameLevel, 1);
     if (result) return result;
   }
 
-  // Last resort: trivial 1-target puzzle
-  return generateTrivialPuzzle(gridSize, gameLevel);
+  // Last resort: a guaranteed-solvable puzzle that still requires 1 real bounce.
+  return generateFallbackPuzzle(gridSize, gameLevel);
 }
 
 function tryGeneratePuzzle(
@@ -610,6 +615,13 @@ function traceRoute(
   pathCells: Set<string>,
   bouncesRemaining: number,
   depth: number,
+  // ✅ BUG-024 FIX: Minimum cells to travel before the first mirror can be placed.
+  // Without this, the generator places a mirror on the very first cell the
+  // laser enters, creating a one-tap-from-the-edge puzzle even with minBounces=1.
+  // We require at least 2 cells of straight travel before the first bounce,
+  // and at least 1 cell between subsequent bounces, so puzzles always have
+  // real traversal distance.
+  minTravelBeforeBounce: number = 2,
 ): PathStep[] | null {
   if (depth > 20) return null; // safety
 
@@ -617,6 +629,7 @@ function traceRoute(
   let r = row;
   let c = col;
   let d = dir;
+  let stepsSinceBounce = 0;
 
   while (true) {
     // Out of bounds
@@ -638,8 +651,14 @@ function traceRoute(
 
     path.push({ row: r, col: c });
 
+    // ✅ BUG-024 FIX: Only attempt a bounce after travelling minTravelBeforeBounce
+    // cells. On subsequent bounces (depth > 0), require at least 1 step between
+    // mirrors so they're not placed adjacent to each other.
+    const travelRequired = depth === 0 ? minTravelBeforeBounce : 1;
+    const canBounceHere = stepsSinceBounce >= travelRequired;
+
     // Check if we can place a mirror here to redirect toward target
-    if (bouncesRemaining > 0) {
+    if (bouncesRemaining > 0 && canBounceHere) {
       // Can we reach target with a bounce here?
       const mirror = getMirrorForRedirect(r, c, d, targetRow, targetCol, gridSize, usedCells, pathCells);
       if (mirror) {
@@ -653,6 +672,7 @@ function traceRoute(
           new Set([...pathCells, key]),
           bouncesRemaining - 1,
           depth + 1,
+          1, // subsequent bounces just need 1 step between them
         );
         if (subPath) {
           path[path.length - 1].mirrorType = mirror.type;
@@ -661,6 +681,7 @@ function traceRoute(
       }
     }
 
+    stepsSinceBounce++;
     const next = step(r, c, d);
     r = next.row;
     c = next.col;
@@ -725,37 +746,64 @@ function isAligned(
   return false;
 }
 
-// ─── Trivial fallback puzzle ──────────────────────────────────────────────────
+// ─── Fallback puzzle ──────────────────────────────────────────────────────────
 
 /**
- * A guaranteed-solvable 1-miner puzzle for when generation fails.
- * Miner fires right from row 2, coal is at (2, gridSize-1), no mirrors needed.
+ * ✅ BUG-024 FIX: Replaced the old generateTrivialPuzzle (which was a straight
+ * shot requiring zero mirror taps) with a guaranteed 1-bounce puzzle.
+ *
+ * Layout (any gridSize ≥ 5):
+ *   - Miner fires RIGHT from the left edge at row 1
+ *   - Mirror at (1, midCol) deflects the laser DOWN
+ *   - Coal at (gridSize-2, midCol) — must be hit going down
+ *   - Two decoy mirrors placed off the path in wrong orientation
+ *
+ * The player must tap the mirror at (1, midCol) to solve — always 1 real tap.
+ * This is the minimum acceptable puzzle complexity.
  */
-function generateTrivialPuzzle(gridSize: number, gameLevel: number): PuzzleConfig {
+function generateFallbackPuzzle(gridSize: number, gameLevel: number): PuzzleConfig {
   const grid = buildEmptyGrid(gridSize);
-  const midRow = Math.floor(gridSize / 2);
+  const midCol = Math.floor(gridSize / 2);
+  const minerRow = 1;
+  const coalRow = gridSize - 2;
 
-  // Place coal at right edge interior
-  grid[midRow][gridSize - 1] = {
-    row: midRow,
-    col: gridSize - 1,
-    type: 'coal',
-    coalIndex: 0,
-    isHit: false,
+  // Coal target
+  grid[coalRow][midCol] = {
+    row: coalRow, col: midCol,
+    type: 'coal', coalIndex: 0, isHit: false,
   };
 
-  // Add one decoy mirror that doesn't block the path
-  const decoyRow = midRow === 0 ? 1 : 0;
-  grid[decoyRow][Math.floor(gridSize / 2)] = {
-    row: decoyRow,
-    col: Math.floor(gridSize / 2),
-    type: 'mirror-\\',
+  // Solution mirror at (minerRow, midCol) — deflects laser from right to down.
+  // Correct orientation is 'mirror-\' (backslash: right→down).
+  // We start it in WRONG orientation ('mirror-/') so the player must tap it.
+  grid[minerRow][midCol] = {
+    row: minerRow, col: midCol,
+    type: 'mirror-/', // wrong — player must tap to flip to '\'
     rotations: 0,
   };
 
+  // Decoy mirror 1 — off the laser path, wrong orientation
+  const decoy1Row = coalRow;
+  const decoy1Col = midCol === gridSize - 2 ? midCol - 2 : midCol + 2;
+  if (decoy1Col >= 0 && decoy1Col < gridSize) {
+    grid[decoy1Row][decoy1Col] = {
+      row: decoy1Row, col: decoy1Col,
+      type: 'mirror-\\', rotations: 0,
+    };
+  }
+
+  // Decoy mirror 2 — off the laser path, wrong orientation
+  const decoy2Row = minerRow === 0 ? 2 : 0;
+  if (decoy2Row !== coalRow) {
+    grid[decoy2Row][Math.floor(gridSize / 3)] = {
+      row: decoy2Row, col: Math.floor(gridSize / 3),
+      type: 'mirror-/', rotations: 0,
+    };
+  }
+
   const miners: MinerConfig[] = [{
     edge: 'left',
-    position: midRow,
+    position: minerRow,
     fireDirection: 'right',
     color: 'red',
     coalIndex: 0,

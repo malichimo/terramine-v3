@@ -11,6 +11,8 @@ import TBTradeInModal from '../components/TBTradeInModal';
 import { soundService } from '../services/SoundService';
 import LeaderboardModal from '../components/LeaderboardModal';
 import { ReferralService } from '../services/ReferralService';
+import { AdMobService } from '../services/AdMobService';
+import { FontAwesome } from '@expo/vector-icons';
 
 // Extend BoostState with computed properties used locally in MapScreen
 interface MapScreenBoostState extends BoostState {
@@ -75,6 +77,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const [ownerNicknames, setOwnerNicknames] = useState<Map<string, string>>(new Map());
   const [showLegend, setShowLegend] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showCommunityModal, setShowCommunityModal] = useState(false);
   
   // Boost state
   const [boostState, setBoostState] = useState<MapScreenBoostState>({
@@ -581,6 +584,63 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     }
   };
 
+  // ── Cooldown helpers ───────────────────────────────────────────────────────
+
+  /**
+   * Returns seconds remaining on a cooldown, or 0 if cooldown has passed.
+   */
+  const getCooldownRemaining = (lastActionTime: number): number => {
+    const elapsed = Date.now() - lastActionTime;
+    const remaining = COOLDOWN_MS - elapsed;
+    return remaining > 0 ? Math.ceil(remaining / 1000) : 0;
+  };
+
+  const formatCooldown = (seconds: number): string => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  };
+
+  /**
+   * Shows an Alert offering the user the option to wait out the cooldown
+   * or watch a rewarded ad to skip it immediately.
+   * onSkipped is called when the ad reward is earned.
+   */
+  const showCooldownAlert = (
+    actionLabel: string,
+    secondsRemaining: number,
+    onSkipped: () => void,
+  ) => {
+    Alert.alert(
+      '⏳ Cooldown Active',
+      `You need to wait ${formatCooldown(secondsRemaining)} before your next ${actionLabel}.\n\nWatch a short ad to skip the cooldown now?`,
+      [
+        { text: 'Wait', style: 'cancel' },
+        {
+          text: '📺 Watch Ad to Skip',
+          onPress: async () => {
+            if (!adService.isAdReady()) {
+              Alert.alert('Ad Not Ready', 'The ad is still loading. Please wait a moment and try again.');
+              return;
+            }
+            const shown = await adService.showAd(
+              () => {
+                // Reward earned — clear the cooldown and proceed
+                onSkipped();
+              },
+              () => {
+                // Ad closed without completing — do nothing
+              },
+            );
+            if (!shown) {
+              Alert.alert('Ad Unavailable', 'Could not load an ad right now. Please wait out the cooldown.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const canCheckInToday = (propertyId: string): boolean => {
     const lastCheckIn = lastCheckIns.get(propertyId);
     if (!lastCheckIn) return true;
@@ -609,6 +669,17 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     
     if (!canCheckInToday(selectedSquare.id)) {
       Alert.alert('Already Checked In', 'You can only check in once per day (EST timezone).');
+      return;
+    }
+
+    // ── Cooldown check ─────────────────────────────────────────────────────
+    const cooldownRemaining = getCooldownRemaining(lastCheckInTime.current);
+    if (cooldownRemaining > 0) {
+      showCooldownAlert('check-in', cooldownRemaining, () => {
+        // Ad watched — reset cooldown and open the modal
+        lastCheckInTime.current = 0;
+        setShowCheckInModal(true);
+      });
       return;
     }
     
@@ -709,6 +780,11 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
       setLastCheckIns(prev => new Map(prev).set(selectedSquare.id, today));
 
+      // ── Stamp cooldown timestamp ───────────────────────────────────────────
+      // Only update after a confirmed successful write so failed check-ins
+      // don't incorrectly trigger the cooldown for the next attempt.
+      lastCheckInTime.current = Date.now();
+
       // ✅ BUG FIX: Post-save side effects are isolated in their own try/catch.
       // A streak update failure will NOT surface as "Failed to save check-in".
       let streakBonus = 0;
@@ -755,6 +831,16 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   // without triggering a re-render that could itself race.
   const isSubmittingCheckIn = useRef(false);
 
+  // ── Cooldown system ────────────────────────────────────────────────────────
+  // Tracks the timestamp of the last completed check-in and purchase so we can
+  // enforce a 5-minute cooldown between consecutive actions. Stored as refs so
+  // they survive re-renders without triggering them.
+  // Users can watch a rewarded ad to skip the cooldown early.
+  const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+  const lastCheckInTime = useRef<number>(0);
+  const lastPurchaseTime = useRef<number>(0);
+  const adService = useRef(new AdMobService()).current;
+
   const handlePurchaseProperty = async () => {
     if (!selectedSquare || !userLocation) return;
 
@@ -782,6 +868,21 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       return;
     }
 
+    // ── Cooldown check ─────────────────────────────────────────────────────
+    // Only applies to the SECOND+ purchase in a session. First purchase is
+    // always free so new players aren't blocked on their very first mine.
+    if (lastPurchaseTime.current > 0) {
+      const cooldownRemaining = getCooldownRemaining(lastPurchaseTime.current);
+      if (cooldownRemaining > 0) {
+        showCooldownAlert('purchase', cooldownRemaining, () => {
+          // Ad watched — reset cooldown and re-trigger purchase immediately
+          lastPurchaseTime.current = 0;
+          handlePurchaseProperty();
+        });
+        return;
+      }
+    }
+
     isPurchasing.current = true;
 
     const mineType = assignMineType();
@@ -800,6 +901,16 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       await onPropertyPurchase(updatedSquare, 100);
 
       soundService.play('purchase');
+
+      // ── Stamp cooldown timestamp ───────────────────────────────────────────
+      lastPurchaseTime.current = Date.now();
+
+      // ✅ BUG-026 FIX: Notify parent of the TB deduction immediately so the
+      // balance display updates in the same render cycle as the purchase.
+      // Without this, userTB (passed as a prop from MainNavigator) doesn't
+      // reflect the deduction until the parent re-renders and pushes the new
+      // prop down — causing a visible stale balance on slower devices.
+      onTBUpdate?.(-100);
 
       setGridSquares(prev => {
         const updated = new Map(prev);
@@ -1394,6 +1505,59 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         nextResetTime={boostState.nextFreeBoostResetAt}
         lastAdBoostRefillAt={boostState.lastAdBoostRefillAt}
       />
+
+      {/* ── Community Button (bottom-left floating) ─────────────────────── */}
+      <TouchableOpacity
+        style={styles.communityButton}
+        onPress={() => setShowCommunityModal(true)}
+      >
+        <Text style={styles.communityButtonText}>🌐 Community</Text>
+      </TouchableOpacity>
+
+      {/* ── Community Modal ──────────────────────────────────────────────── */}
+      {showCommunityModal && (
+        <View style={styles.communityModalOverlay}>
+          <View style={styles.communityModal}>
+            <Text style={styles.communityModalTitle}>🌍 TerraMine Community</Text>
+            <Text style={styles.communityModalSubtitle}>
+              Connect with other miners, share tips, and stay up to date!
+            </Text>
+
+            {/* Discord */}
+            <TouchableOpacity
+              style={[styles.communityLink, styles.discordLink]}
+              onPress={() => Linking.openURL('https://discord.gg/MDJJCQU4C')}
+            >
+              <FontAwesome name="discord" size={26} color="white" style={styles.communityLinkIcon} />
+              <View style={styles.communityLinkText}>
+                <Text style={styles.communityLinkTitle}>Discord</Text>
+                <Text style={styles.communityLinkDesc}>Chat, report bugs, suggest features</Text>
+              </View>
+              <Text style={styles.communityLinkArrow}>→</Text>
+            </TouchableOpacity>
+
+            {/* Facebook */}
+            <TouchableOpacity
+              style={[styles.communityLink, styles.facebookLink]}
+              onPress={() => Linking.openURL('https://www.facebook.com/share/g/14dumrdaFMK/')}
+            >
+              <FontAwesome name="facebook" size={26} color="white" style={styles.communityLinkIcon} />
+              <View style={styles.communityLinkText}>
+                <Text style={styles.communityLinkTitle}>Facebook Group</Text>
+                <Text style={styles.communityLinkDesc}>News, updates, and community posts</Text>
+              </View>
+              <Text style={styles.communityLinkArrow}>→</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.communityCloseButton}
+              onPress={() => setShowCommunityModal(false)}
+            >
+              <Text style={styles.communityCloseButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </View>
   );
 });
@@ -1776,6 +1940,116 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     marginTop: 8,
+  },
+
+  // ── Community button (bottom-left floating) ──────────────────────────────
+  communityButton: {
+    position: 'absolute',
+    bottom: 140,
+    left: 16,
+    backgroundColor: '#1565C0',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  communityButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: 'white',
+  },
+
+  // ── Community modal ───────────────────────────────────────────────────────
+  communityModalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 100,
+  },
+  communityModal: {
+    backgroundColor: '#1A0F00',
+    borderRadius: 20,
+    padding: 24,
+    marginHorizontal: 24,
+    width: '88%',
+    borderWidth: 1,
+    borderColor: '#6D4C1F',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  communityModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#FFD700',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  communityModalSubtitle: {
+    fontSize: 13,
+    color: '#AAA',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 18,
+  },
+  communityLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+  },
+  discordLink: {
+    backgroundColor: '#5865F2',
+  },
+  facebookLink: {
+    backgroundColor: '#1877F2',
+  },
+  communityLinkIcon: {
+    marginRight: 12,
+  },
+  communityLinkText: {
+    flex: 1,
+  },
+  communityLinkTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: 'white',
+  },
+  communityLinkDesc: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.75)',
+    marginTop: 2,
+  },
+  communityLinkArrow: {
+    fontSize: 18,
+    color: 'rgba(255,255,255,0.6)',
+    fontWeight: 'bold',
+  },
+  communityCloseButton: {
+    marginTop: 4,
+    backgroundColor: '#3A2000',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#6D4C1F',
+  },
+  communityCloseButtonText: {
+    color: '#CCC',
+    fontSize: 15,
+    fontWeight: '600',
   },
 });
 

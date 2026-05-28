@@ -38,6 +38,7 @@ const SettingsStack = createStackNavigator(); // ✅ Added
 const dbService = new DatabaseService();
 const REVIEW_PROMPTED_KEY = 'terramine_review_prompted';
 const REVIEW_CHECKIN_THRESHOLD = 5;
+const NOTIF_PROMPT_KEY = 'terramine_notif_prompted'; // ✅ One-time notification opt-in prompt
 
 // ─── Map Stack ────────────────────────────────────────────────────────────────
 interface MapStackProps {
@@ -339,6 +340,49 @@ export default function MainNavigator() {
       setOwnedProperties(prev => [...prev, property]);
       setAllProperties(prev => [...prev, property]);
       setUserTB(prev => prev - tbSpent);
+
+      // ✅ One-time notification opt-in prompt shown after first purchase.
+      // Uses AsyncStorage so it fires once per install — covers both new users
+      // and existing users who bought properties before this was added.
+      // Small delay so the purchase success alert settles first.
+      setTimeout(async () => {
+        try {
+          const alreadyPrompted = await AsyncStorage.getItem(NOTIF_PROMPT_KEY);
+          if (alreadyPrompted === 'true') return;
+
+          await AsyncStorage.setItem(NOTIF_PROMPT_KEY, 'true');
+
+          Alert.alert(
+            '⛏️ Get Notified When Visitors Arrive!',
+            'Want to know when someone checks in to your mine? Enable notifications to get an instant alert.',
+            [
+              { text: 'Not Now', style: 'cancel' },
+              {
+                text: 'Enable Notifications',
+                onPress: async () => {
+                  const token = await NotificationService.registerForPushNotifications();
+                  if (token) {
+                    await dbService.savePushToken(user.uid, token);
+                    await NotificationService.scheduleDailyReminder();
+                    Alert.alert(
+                      '✅ Notifications Enabled!',
+                      "You'll get an alert whenever someone visits your mine."
+                    );
+                  } else {
+                    Alert.alert(
+                      'Permission Required',
+                      'To enable notifications, go to your device Settings and allow notifications for TerraMine.'
+                    );
+                  }
+                },
+              },
+            ]
+          );
+        } catch (e) {
+          console.warn('Notification prompt failed (non-fatal):', e);
+        }
+      }, 2000);
+
     } catch (error) {
       console.error('Error purchasing property:', error);
       throw error;
@@ -364,6 +408,21 @@ export default function MainNavigator() {
         return newCount;
       });
       setTotalTBEarned(prev => prev + tbEarned);
+
+      // ✅ Push notification to property owner on check-in.
+      // Runs fire-and-forget — a notification failure must never break the check-in.
+      // Only fires for real player mines (not system mines — ownerId starts with 'terramine-').
+      if (propertyOwnerId && !propertyOwnerId.startsWith('terramine-')) {
+        dbService.getPushToken(propertyOwnerId).then(ownerToken => {
+          if (ownerToken) {
+            const visitorName = nickname || 'Someone';
+            const mine = mineType || 'mine';
+            NotificationService.sendCheckInNotification(ownerToken, visitorName, mine)
+              .catch(e => console.warn('Check-in notification failed (non-fatal):', e));
+          }
+        }).catch(e => console.warn('Failed to fetch owner push token (non-fatal):', e));
+      }
+
     } catch (error) {
       console.error('Error during check-in:', error);
       throw error;
@@ -485,9 +544,9 @@ export default function MainNavigator() {
             backgroundColor: '#1A0900',
             borderTopColor: '#6D4C1F',
             borderTopWidth: 2,
-            paddingBottom: 4,
+            paddingBottom: 8,
             paddingTop: 4,
-            height: 60,
+            height: 68,
           },
           tabBarLabelStyle: {
             fontSize: 11,
