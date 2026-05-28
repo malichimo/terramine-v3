@@ -15,7 +15,7 @@
     },
     "ios": {
       "bundleIdentifier": "com.terramine.app",
-      "supportsTablet": false,
+      "supportsTablet": true,
       "associatedDomains": ["applinks:terramine.app"],
       "config": {
         "googleMapsApiKey": "AIzaSyBsh79SG1PlF7WMA8b_ObYMrGatmhSWrtc",
