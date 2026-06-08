@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useImperativeHandle } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, Alert, ScrollView, TextInput, Linking } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, Alert, ScrollView, TextInput, Linking, AppState } from 'react-native';
 import MapView, { Polygon, PROVIDER_GOOGLE, Marker } from 'react-native-maps';
 import * as ImagePicker from 'expo-image-picker';
 import { LocationService, Coordinates } from '../services/LocationService';
 import { DatabaseService, BoostState } from '../services/DatabaseService';
+import { dbServicePhase2 } from '../services/DatabaseServicePhase2';
 import { generateGridSquare, getVisibleGridSquares, isWithinGridSquare, isAdjacentToUser, GridSquare, gridToLatLng } from '../utils/GridUtils';
 import { createSystemMineNear, isSystemMine, SYSTEM_CHECKIN_REWARD_TB } from '../services/SystemMineService';
 import BoostModal from '../components/BoostModal';
@@ -13,6 +14,7 @@ import LeaderboardModal from '../components/LeaderboardModal';
 import { ReferralService } from '../services/ReferralService';
 import { AdMobService } from '../services/AdMobService';
 import { FontAwesome } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Extend BoostState with computed properties used locally in MapScreen
 interface MapScreenBoostState extends BoostState {
@@ -68,13 +70,23 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const [showTradeInModal, setShowTradeInModal] = useState(false);
   const [findingNearestTA, setFindingNearestTA] = useState(false);
   const [gridSquares, setGridSquares] = useState<Map<string, GridSquare>>(new Map());
+
+  // ✅ BUG-029 FOLLOW-UP FIX: Cache of all properties within ~100 miles of the
+  // user's location. Loaded once on mount and refreshed when the user moves >10
+  // miles from the last fetch point. Stored as RAW Firestore results (other
+  // players only) — merged with ownedProperties at point of use to avoid
+  // stale closure issues with the ownedProperties prop.
+  const radiusPropertiesRef = useRef<GridSquare[]>([]);
+  const lastRadiusFetchRef  = useRef<{ lat: number; lng: number } | null>(null);
   const [selectedSquare, setSelectedSquare] = useState<GridSquare | null>(null);
   const [showCheckInModal, setShowCheckInModal] = useState(false);
   const [showBoostModal, setShowBoostModal] = useState(false);
   const [checkInMessage, setCheckInMessage] = useState('');
   const [lastCheckIns, setLastCheckIns] = useState<Map<string, string>>(new Map());
   const [propertyCheckIns, setPropertyCheckIns] = useState<Map<string, CheckIn[]>>(new Map());
-  const [ownerNicknames, setOwnerNicknames] = useState<Map<string, string>>(new Map());
+  // ✅ AVATAR: Cache both nickname and avatarUrl per owner so we only
+  // fetch each user doc once and can display their avatar in the mine panel.
+  const [ownerCache, setOwnerCache] = useState<Map<string, { nickname: string; avatarUrl: string | null }>>(new Map());
   const [showLegend, setShowLegend] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showCommunityModal, setShowCommunityModal] = useState(false);
@@ -504,7 +516,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   }, [ownedProperties.length]);
 
   useEffect(() => {
-    if (userLocation && allProperties.length > 0) {
+    // Fallback: if radius cache hasn't loaded yet, use allProperties prop
+    if (userLocation && allProperties.length > 0 && radiusPropertiesRef.current.length === 0) {
       loadNearbyProperties(userLocation);
     }
   }, [allProperties.length]);
@@ -521,41 +534,93 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     }
   }, [userLocation?.latitude, userLocation?.longitude]);
 
+  // ── Radius property loader ─────────────────────────────────────────────────
+  // Fetches all properties within 100 miles and caches them in radiusPropertiesRef.
+  // Re-fetches only when user moves >10 miles from the last fetch point to avoid
+  // hammering Firestore on every GPS tick.
+  const loadRadiusProperties = async (location: Coordinates) => {
+    const last = lastRadiusFetchRef.current;
+    if (last) {
+      const R = 3958.8;
+      const dLat = (location.latitude  - last.lat) * Math.PI / 180;
+      const dLng = (location.longitude - last.lng) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(last.lat * Math.PI / 180) *
+        Math.cos(location.latitude * Math.PI / 180) *
+        Math.sin(dLng / 2) ** 2;
+      const distMiles = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      if (distMiles < 10) return;
+    }
+
+    try {
+      const nearby = await dbServicePhase2.getPropertiesInRadius(
+        location.latitude, location.longitude, 100
+      );
+      // ✅ FIX: Store RAW results only — do NOT merge with ownedProperties here.
+      // ownedProperties is a prop from MainNavigator and suffers from stale closure
+      // when read inside this async function defined at render time.
+      // Merging happens at point of use (loadNearbyProperties + visitableTAs)
+      // where the latest prop value is always available via the component scope.
+      radiusPropertiesRef.current = nearby;
+      lastRadiusFetchRef.current  = { lat: location.latitude, lng: location.longitude };
+      loadNearbyProperties(location);
+    } catch (e) {
+      console.warn('loadRadiusProperties failed (non-fatal):', e);
+    }
+  };
+
   const initializeLocation = async () => {
     const location = await locationService.getCurrentLocation();
     if (location) {
       setUserLocation(location);
+      // Load radius first so the grid renders with full ownership data immediately
+      await loadRadiusProperties(location);
       loadNearbyProperties(location);
-      
+
       locationService.startWatchingLocation((newLocation) => {
         setUserLocation(newLocation);
+        loadRadiusProperties(newLocation).catch(() => {});
         loadNearbyProperties(newLocation);
       });
     }
   };
 
-  const loadNearbyProperties = async (location: Coordinates) => {
+  const loadNearbyProperties = (location: Coordinates, propertiesOverride?: GridSquare[]) => {
     const visibleGridIds = getVisibleGridSquares(location.latitude, location.longitude, 500);
     const newGridSquares = new Map<string, GridSquare>();
-    
+
+    // ✅ FIX: Inject ALL radius cache properties directly into the grid map first,
+    // regardless of whether they fall within the visible window.
+    // getVisibleGridSquares hard-caps at 150m — properties owned by other players
+    // further away were never being added to the grid, making them invisible.
+    // The MapView only renders what's in the viewport anyway, so adding extras is free.
+    const ownedIds = new Set(ownedProperties.map(p => p.id));
+    const propertySource = propertiesOverride
+      ? propertiesOverride
+      : [
+          ...ownedProperties,
+          ...radiusPropertiesRef.current.filter(p => !ownedIds.has(p.id)),
+        ];
+
+    // Seed the grid with ALL known properties first
+    for (const prop of propertySource) {
+      newGridSquares.set(prop.id, prop);
+    }
+
+    // Then fill in the visible unowned squares around the user
     visibleGridIds.forEach(gridId => {
+      if (newGridSquares.has(gridId)) return; // Already set from property source
       const [x, y] = gridId.split('_').map(Number);
-      
-      const ownedProperty = allProperties.find(p => p.id === gridId);
-      if (ownedProperty) {
-        newGridSquares.set(gridId, ownedProperty);
+      const existingSquare = gridSquares.get(gridId);
+      if (existingSquare && existingSquare.isOwned) {
+        newGridSquares.set(gridId, existingSquare);
       } else {
-        const existingSquare = gridSquares.get(gridId);
-        if (existingSquare && existingSquare.isOwned) {
-          newGridSquares.set(gridId, existingSquare);
-        } else {
-          const center = gridToLatLng(x, y, location.latitude);
-          const square = generateGridSquare(center.latitude, center.longitude);
-          newGridSquares.set(gridId, square);
-        }
+        const center = gridToLatLng(x, y, location.latitude);
+        const square = generateGridSquare(center.latitude, center.longitude);
+        newGridSquares.set(gridId, square);
       }
     });
-    
+
     setGridSquares(newGridSquares);
   };
 
@@ -574,13 +639,24 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   };
 
   const fetchOwnerNickname = async (ownerId: string) => {
-    if (ownerNicknames.has(ownerId)) return; // already cached
+    if (ownerCache.has(ownerId)) return; // already cached
     try {
       const userData = await dbService.getUserData(ownerId);
       const nickname = userData?.nickname || userData?.email?.split('@')[0] || 'Unknown';
-      setOwnerNicknames(prev => new Map(prev).set(ownerId, nickname));
+      const avatarUrl = userData?.avatarUrl || null;
+      const entry = { nickname, avatarUrl };
+      setOwnerCache(prev => {
+        // ✅ BUG-029 FIX: Cap cache at 100 entries to prevent unbounded Map growth.
+        if (prev.size >= 100) {
+          const trimmed = new Map<string, { nickname: string; avatarUrl: string | null }>();
+          const entries = Array.from(prev.entries()).slice(-50);
+          entries.forEach(([k, v]) => trimmed.set(k, v));
+          return trimmed.set(ownerId, entry);
+        }
+        return new Map(prev).set(ownerId, entry);
+      });
     } catch {
-      setOwnerNicknames(prev => new Map(prev).set(ownerId, 'Unknown'));
+      setOwnerCache(prev => new Map(prev).set(ownerId, { nickname: 'Unknown', avatarUrl: null }));
     }
   };
 
@@ -678,6 +754,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       showCooldownAlert('check-in', cooldownRemaining, () => {
         // Ad watched — reset cooldown and open the modal
         lastCheckInTime.current = 0;
+        AsyncStorage.removeItem(STORAGE_KEY_CHECKIN).catch(() => {});
         setShowCheckInModal(true);
       });
       return;
@@ -784,6 +861,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       // Only update after a confirmed successful write so failed check-ins
       // don't incorrectly trigger the cooldown for the next attempt.
       lastCheckInTime.current = Date.now();
+      AsyncStorage.setItem(STORAGE_KEY_CHECKIN, String(lastCheckInTime.current)).catch(() => {});
 
       // ✅ BUG FIX: Post-save side effects are isolated in their own try/catch.
       // A streak update failure will NOT surface as "Failed to save check-in".
@@ -841,16 +919,57 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const lastPurchaseTime = useRef<number>(0);
   const adService = useRef(new AdMobService()).current;
 
+  // ✅ BUG-029 FIX: Listen for iOS memory pressure warnings and proactively
+  // free the largest in-memory caches before the Hermes GC is forced to OOM.
+  // On iOS, the OS fires 'memoryWarning' before killing the process — this
+  // gives us a window to shed non-essential cached data gracefully.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('memoryWarning', () => {
+      console.warn('⚠️ Memory warning received — clearing caches');
+      setOwnerCache(new Map());
+      setPropertyCheckIns(new Map());
+    });
+    return () => subscription.remove();
+  }, []);
+  // 5-minute cooldown survives app restarts. AsyncStorage is local and instant —
+  // no network call, no login lag. Without this, restarting the app resets both
+  // refs to 0 and users can immediately check in or purchase again.
+  const STORAGE_KEY_CHECKIN  = `terramine_lastCheckIn_${userId}`;
+  const STORAGE_KEY_PURCHASE = `terramine_lastPurchase_${userId}`;
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [ciVal, puVal] = await AsyncStorage.multiGet([
+          STORAGE_KEY_CHECKIN,
+          STORAGE_KEY_PURCHASE,
+        ]);
+        const ciTs = ciVal[1] ? parseInt(ciVal[1], 10) : 0;
+        const puTs = puVal[1] ? parseInt(puVal[1], 10) : 0;
+        // Only restore if still within the cooldown window — no point enforcing
+        // a cooldown from 3 days ago
+        const now = Date.now();
+        if (ciTs && now - ciTs < COOLDOWN_MS) lastCheckInTime.current = ciTs;
+        if (puTs && now - puTs < COOLDOWN_MS) lastPurchaseTime.current = puTs;
+      } catch (e) {
+        console.warn('Could not restore cooldown timestamps:', e);
+      }
+    })();
+  }, []);
+
   const handlePurchaseProperty = async () => {
     if (!selectedSquare || !userLocation) return;
 
     // ✅ FIX: Block re-entrant calls (double-tap)
     if (isPurchasing.current) return;
 
-    if (userTB < 100) {
-      Alert.alert('Insufficient TB', 'You need 100 TB to purchase a property.');
-      return;
-    }
+    // ✅ BUG-030 FIX: Removed local userTB < 100 guard here. The prop from
+    // MainNavigator can be stale after onTBUpdate(-100) fires optimistically —
+    // causing a false "Insufficient TB" rejection when the user actually has
+    // enough. Firestore's purchaseProperty() already does an authoritative
+    // balance check at the DB level and throws 'Insufficient TB balance' if
+    // genuinely short. That error surfaces cleanly to the user via the catch
+    // block below. We keep only the UI-level checks that Firestore can't do.
 
     if (selectedSquare.isOwned) {
       Alert.alert('Already Owned', 'This property is already owned.');
@@ -877,6 +996,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         showCooldownAlert('purchase', cooldownRemaining, () => {
           // Ad watched — reset cooldown and re-trigger purchase immediately
           lastPurchaseTime.current = 0;
+          AsyncStorage.removeItem(STORAGE_KEY_PURCHASE).catch(() => {});
           handlePurchaseProperty();
         });
         return;
@@ -904,6 +1024,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
 
       // ── Stamp cooldown timestamp ───────────────────────────────────────────
       lastPurchaseTime.current = Date.now();
+      AsyncStorage.setItem(STORAGE_KEY_PURCHASE, String(lastPurchaseTime.current)).catch(() => {});
 
       // ✅ BUG-026 FIX: Notify parent of the TB deduction immediately so the
       // balance display updates in the same render cycle as the purchase.
@@ -1061,8 +1182,15 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       return;
     }
 
-    // Filter to only TAs owned by other players (not the current user, not unowned, not system)
-    const visitableTAs = allProperties.filter(p =>
+    // Merge owned + radius cache at point of use so visitableTAs always has
+    // the full picture of nearby other players' mines regardless of load order.
+    const ownedIds = new Set(ownedProperties.map(p => p.id));
+    const fullPropertySource = [
+      ...ownedProperties,
+      ...radiusPropertiesRef.current.filter(p => !ownedIds.has(p.id)),
+    ];
+
+    const visitableTAs = fullPropertySource.filter(p =>
       p.isOwned &&
       p.ownerId &&
       p.ownerId !== userId &&
@@ -1109,7 +1237,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       ? `${Math.round(distMiles * 5280)} ft away`
       : `${distMiles.toFixed(1)} mi away`;
 
-    const ownerName = ownerNicknames.get(nearest.ownerId || '') || 'another player';
+    const ownerName = ownerCache.get(nearest.ownerId || '')?.nickname || 'another player';
     const mineName = `${nearest.mineType.charAt(0).toUpperCase() + nearest.mineType.slice(1)} Mine`;
 
     setTimeout(() => {
@@ -1331,11 +1459,29 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           </Text>
           {selectedSquare.isOwned ? (
             <View>
-              <Text style={styles.usernameText}>
-                Owner: {selectedSquare.ownerId === userId
-                  ? 'You'
-                  : (ownerNicknames.get(selectedSquare.ownerId || '') || 'Loading...')}
-              </Text>
+              {/* ✅ AVATAR: Show owner avatar + nickname in mine panel */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                {selectedSquare.ownerId !== userId && (() => {
+                  const cached = ownerCache.get(selectedSquare.ownerId || '');
+                  return cached?.avatarUrl ? (
+                    <Image
+                      source={{ uri: cached.avatarUrl }}
+                      style={{ width: 28, height: 28, borderRadius: 14, marginRight: 6, borderWidth: 1, borderColor: '#E65100' }}
+                    />
+                  ) : (
+                    <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#E65100', marginRight: 6, alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>
+                        {(ownerCache.get(selectedSquare.ownerId || '')?.nickname || '?').charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  );
+                })()}
+                <Text style={styles.usernameText}>
+                  Owner: {selectedSquare.ownerId === userId
+                    ? 'You'
+                    : (ownerCache.get(selectedSquare.ownerId || '')?.nickname || 'Loading...')}
+                </Text>
+              </View>
               {selectedSquare.ownerId === userId && (
                 <TouchableOpacity
                   style={styles.manageButton}
@@ -1507,12 +1653,17 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       />
 
       {/* ── Community Button (bottom-left floating) ─────────────────────── */}
-      <TouchableOpacity
-        style={styles.communityButton}
-        onPress={() => setShowCommunityModal(true)}
-      >
-        <Text style={styles.communityButtonText}>🌐 Community</Text>
-      </TouchableOpacity>
+      {/* ✅ FIX: Hide when any panel/modal is open so it doesn't render on
+          top of property panels, check-in modals, or the boost modal.
+          selectedSquare being non-null means a property panel is showing. */}
+      {!selectedSquare && !showCheckInModal && !showBoostModal && !showCommunityModal && (
+        <TouchableOpacity
+          style={styles.communityButton}
+          onPress={() => setShowCommunityModal(true)}
+        >
+          <Text style={styles.communityButtonText}>🌐 Community</Text>
+        </TouchableOpacity>
+      )}
 
       {/* ── Community Modal ──────────────────────────────────────────────── */}
       {showCommunityModal && (

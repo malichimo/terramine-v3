@@ -35,7 +35,7 @@ interface MemoryMatchScreenProps {
 }
 
 export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScreenProps) {
-  const { property, propertyDetails } = route.params;
+  const { property, propertyDetails, onBalanceUpdate } = route.params;
   const { user } = useAuth();
   
   const [gameState, setGameState] = useState<GameState | null>(null);
@@ -260,7 +260,7 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
       const levelBefore = propertyDetails?.gameLevel ?? 1;
 
       // Record game result
-      await dbServicePhase2.recordGameResult(
+      const earned = await dbServicePhase2.recordGameResult(
         user.uid,
         property.id,
         property.mineType as any,
@@ -271,6 +271,12 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
         result.movesUsed
       );
 
+      // ✅ BUG-027 FIX: Notify parent of TB earned so map screen balance
+      // updates immediately without requiring a re-login.
+      if (earned?.tb && onBalanceUpdate) {
+        onBalanceUpdate(earned.tb);
+      }
+
       // Check for level-up
       const updated = await dbServicePhase2.getPropertyDetails(property.id);
       const leveledUp = updated && updated.gameLevel > levelBefore;
@@ -280,6 +286,25 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
 
       if (result.won) {
         soundService.play('win');
+
+        // Build rewards summary from what was actually saved to Firestore.
+        // Resource tier labels are mine-type-specific (stored as common/uncommon/rare/epic
+        // in Firestore but displayed with the proper in-game name for this mine type).
+        const resourceNames: Record<string, Record<string, string>> = {
+          rock:    { common: 'Gravel',     uncommon: 'Slate',      rare: 'Granite',    epic: 'Marble'           },
+          coal:    { common: 'Coal Dust',  uncommon: 'Lignite',    rare: 'Anthracite', epic: 'Diamond Coal'     },
+          gold:    { common: 'Gold Flakes',uncommon: 'Gold Nugget',rare: 'Gold Bar',   epic: 'Gold Ingot'       },
+          diamond: { common: 'Carbon',     uncommon: 'Raw Diamond',rare: 'Gem Diamond',epic: 'Flawless Diamond' },
+        };
+        const rn = resourceNames[property.mineType] ?? resourceNames.rock;
+        const tbLine       = earned?.tb       ? `💰 ${earned.tb} TB\n`                    : '';
+        const xpLine       = earned?.xp       ? `⭐ ${earned.xp} XP\n`                    : '';
+        const commonLine   = earned?.common   ? `🪨 ${earned.common} ${rn.common}\n`      : '';
+        const uncommonLine = earned?.uncommon ? `🟡 ${earned.uncommon} ${rn.uncommon}\n`  : '';
+        const rareLine     = earned?.rare     ? `🔵 ${earned.rare} ${rn.rare}\n`          : '';
+        const epicLine     = earned?.epic     ? `🟣 ${earned.epic} ${rn.epic}\n`          : '';
+        const rewardsBlock = `\nRewards Earned:\n${tbLine}${xpLine}${commonLine}${uncommonLine}${rareLine}${epicLine}`;
+
         Alert.alert(
           result.isPerfect ? '🌟 PERFECT GAME!' : '🎉 Victory!',
           `You matched all pairs!\n\n` +
@@ -287,6 +312,7 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
             `Moves: ${result.movesUsed}\n` +
             `Time Left: ${result.timeRemaining}s\n` +
             (result.isPerfect ? `\n🌟 No wrong guesses!\n` : '') +
+            rewardsBlock +
             (leveledUp ? `\n⬆️ LEVEL UP! Now Level ${updated!.gameLevel}` : ''),
           [
             {

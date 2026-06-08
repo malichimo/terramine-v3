@@ -289,12 +289,9 @@ export default function SluiceBoxActivity({
         setUsedBaseAttempt(true);
       }
 
-      // 25% chance for 50 TB bonus (gold mine rate)
-      let tbBonusAmount = Math.random() < 0.25 ? 50 : 0;
-      
-      if (shouldDouble && tbBonusAmount > 0) {
-        tbBonusAmount = tbBonusAmount * 2;
-      }
+      // ✅ FIX: Capped at 2 TB max — previous value of 50 TB was too generous.
+      // TB bonus excluded from 2x double-reward multiplier; only resources double.
+      let tbBonusAmount = Math.random() < 0.25 ? 2 : 0;
       
       if (tbBonusAmount > 0) {
         await dbService.updateUserBalance(user.uid, tbBonusAmount);

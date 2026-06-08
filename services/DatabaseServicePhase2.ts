@@ -815,6 +815,58 @@ export class DatabaseServicePhase2 {
       return snap.data().greeting || null;
     } catch { return null; }
   }
+
+  // ── Radius property fetch ─────────────────────────────────────────────────
+  // Fetches all properties within ~radiusMiles of a lat/lng center.
+  // Firestore doesn't support 2D geo queries natively, so we:
+  //   1. Query centerLat within a bounding box (single-field range — Firestore supports this)
+  //   2. Filter centerLng client-side on the returned docs
+  // At 100 miles this returns at most a few hundred docs — well within memory budget.
+  // 1 degree lat ≈ 69 miles. 1 degree lng ≈ 69 * cos(lat) miles.
+  async getPropertiesInRadius(
+    lat: number,
+    lng: number,
+    radiusMiles: number = 100
+  ): Promise<import('../utils/GridUtils').GridSquare[]> {
+    try {
+      const latDelta = radiusMiles / 69.0;
+      const lngDelta = radiusMiles / (69.0 * Math.cos((lat * Math.PI) / 180));
+
+      const minLat = lat - latDelta;
+      const maxLat = lat + latDelta;
+      const minLng = lng - lngDelta;
+      const maxLng = lng + lngDelta;
+
+      const q = query(
+        collection(db, 'properties'),
+        where('centerLat', '>=', minLat),
+        where('centerLat', '<=', maxLat)
+      );
+
+      const snap = await getDocs(q);
+
+      return snap.docs
+        .filter(d => {
+          const clng = d.data().centerLng;
+          return clng >= minLng && clng <= maxLng;
+        })
+        .map(d => {
+          const data = d.data();
+          return {
+            id: data.id,
+            centerLat: data.centerLat,
+            centerLng: data.centerLng,
+            corners: data.corners,
+            isOwned: true,
+            ownerId: data.ownerId,
+            mineType: data.mineType as 'rock' | 'coal' | 'gold' | 'diamond',
+          } as import('../utils/GridUtils').GridSquare;
+        });
+    } catch (e) {
+      console.warn('getPropertiesInRadius failed (non-fatal):', e);
+      return [];
+    }
+  }
 }
 
 export const dbServicePhase2 = new DatabaseServicePhase2();

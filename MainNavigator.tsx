@@ -114,10 +114,62 @@ function MapStackNavigator({
         )}
       </MapStack.Screen>
       <MapStack.Screen name="Upgrade" component={UpgradeScreen as any} />
-      <MapStack.Screen name="MemoryMatch" component={MemoryMatchScreen as any} />
-      <MapStack.Screen name="GoldRush" component={GoldRushGame as any} />
-      <MapStack.Screen name="MinerMaze" component={MinerMazeScreen as any} />
-      <MapStack.Screen name="LaserBlast" component={LaserBlastGame as any} />
+      <MapStack.Screen name="MemoryMatch">
+        {(props) => (
+          <MemoryMatchScreen
+            {...(props as any)}
+            route={{
+              ...props.route,
+              params: {
+                ...(props.route.params as any),
+                onBalanceUpdate: (amount: number) => onTBUpdate(amount),
+              },
+            }}
+          />
+        )}
+      </MapStack.Screen>
+      <MapStack.Screen name="GoldRush">
+        {(props) => (
+          <GoldRushGame
+            {...(props as any)}
+            route={{
+              ...props.route,
+              params: {
+                ...(props.route.params as any),
+                onBalanceUpdate: (amount: number) => onTBUpdate(amount),
+              },
+            }}
+          />
+        )}
+      </MapStack.Screen>
+      <MapStack.Screen name="MinerMaze">
+        {(props) => (
+          <MinerMazeScreen
+            {...(props as any)}
+            route={{
+              ...props.route,
+              params: {
+                ...(props.route.params as any),
+                onBalanceUpdate: (amount: number) => onTBUpdate(amount),
+              },
+            }}
+          />
+        )}
+      </MapStack.Screen>
+      <MapStack.Screen name="LaserBlast">
+        {(props) => (
+          <LaserBlastGame
+            {...(props as any)}
+            route={{
+              ...props.route,
+              params: {
+                ...(props.route.params as any),
+                onBalanceUpdate: (amount: number) => onTBUpdate(amount),
+              },
+            }}
+          />
+        )}
+      </MapStack.Screen>
       <MapStack.Screen name="VisitorLog" component={VisitorLogScreen as any} />
       <MapStack.Screen name="Referral" component={ReferralScreen as any} />
     </MapStack.Navigator>
@@ -184,10 +236,62 @@ function ProfileStackNavigator({
         )}
       </ProfileStack.Screen>
       <ProfileStack.Screen name="Upgrade" component={UpgradeScreen as any} />
-      <ProfileStack.Screen name="MemoryMatch" component={MemoryMatchScreen as any} />
-      <ProfileStack.Screen name="GoldRush" component={GoldRushGame as any} />
-      <ProfileStack.Screen name="MinerMaze" component={MinerMazeScreen as any} />
-      <ProfileStack.Screen name="LaserBlast" component={LaserBlastGame as any} />
+      <ProfileStack.Screen name="MemoryMatch">
+        {(props) => (
+          <MemoryMatchScreen
+            {...(props as any)}
+            route={{
+              ...props.route,
+              params: {
+                ...(props.route.params as any),
+                onBalanceUpdate: (amount: number) => onTBUpdate(amount),
+              },
+            }}
+          />
+        )}
+      </ProfileStack.Screen>
+      <ProfileStack.Screen name="GoldRush">
+        {(props) => (
+          <GoldRushGame
+            {...(props as any)}
+            route={{
+              ...props.route,
+              params: {
+                ...(props.route.params as any),
+                onBalanceUpdate: (amount: number) => onTBUpdate(amount),
+              },
+            }}
+          />
+        )}
+      </ProfileStack.Screen>
+      <ProfileStack.Screen name="MinerMaze">
+        {(props) => (
+          <MinerMazeScreen
+            {...(props as any)}
+            route={{
+              ...props.route,
+              params: {
+                ...(props.route.params as any),
+                onBalanceUpdate: (amount: number) => onTBUpdate(amount),
+              },
+            }}
+          />
+        )}
+      </ProfileStack.Screen>
+      <ProfileStack.Screen name="LaserBlast">
+        {(props) => (
+          <LaserBlastGame
+            {...(props as any)}
+            route={{
+              ...props.route,
+              params: {
+                ...(props.route.params as any),
+                onBalanceUpdate: (amount: number) => onTBUpdate(amount),
+              },
+            }}
+          />
+        )}
+      </ProfileStack.Screen>
       <ProfileStack.Screen name="VisitorLog" component={VisitorLogScreen as any} />
       <ProfileStack.Screen name="Referral" component={ReferralScreen as any} />
     </ProfileStack.Navigator>
@@ -238,10 +342,16 @@ export default function MainNavigator() {
 
   useEffect(() => {
     if (user) {
-      loadUserData();
+      // ✅ BUG-033 FIX: loadUserData MUST complete before checkAgeGate runs.
+      // Both functions read the user Firestore doc. For new Google/Apple sign-in
+      // users, the doc doesn't exist yet — loadUserData creates it via createUser().
+      // If checkAgeGate races loadUserData (as it did before), it may read the doc
+      // before createUser() finishes, finding tbBalance=null. purchaseProperty()
+      // then does a fresh Firestore read and gets tbBalance ?? 0 = 0 < 100 →
+      // "Insufficient TB balance" — blocking ALL new users from buying their first mine.
+      // Sequencing guarantees the doc exists with tbBalance:1000 before anything else reads it.
+      loadUserData().then(() => checkAgeGate());
       checkOnboarding();
-      checkAgeGate();
-      // ✅ Wrapped in try/catch — a ConsentService failure no longer blocks the app
       ConsentService.initialize()
         .catch(e => console.warn('ConsentService init failed (non-fatal):', e))
         .finally(() => setConsentReady(true));
@@ -275,16 +385,48 @@ export default function MainNavigator() {
     try {
       let userData = await dbService.getUserData(user.uid);
       if (!userData) {
-        await dbService.createUser(user.uid, user.email || '');
+        // ✅ FIX: Retry user doc creation up to 3 times with 1-second backoff.
+        // A single Firestore network blip during the first-write window silently
+        // swallows createUser(), leaving the user with no tbBalance or email in
+        // Firestore. The outer catch then calls setDataLoaded(true) and the app
+        // opens normally — but the user can't purchase any properties because
+        // purchaseProperty() finds tbBalance=null → 0 < 100 → "Insufficient TB".
+        // Retrying here ensures the doc is created before anything else proceeds.
+        // Google/Apple Sign-In users may also have user.email === null (Apple only
+        // provides it on the very first sign-in), so we always fall back to ''.
+        let created = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            await dbService.createUser(user.uid, user.email || '');
+            created = true;
+            break;
+          } catch (e) {
+            console.warn(`createUser attempt ${attempt + 1} failed:`, e);
+            if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+        if (!created) {
+          console.error('createUser failed after 3 attempts — user doc may be missing. User will need to sign out and back in.');
+        }
         userData = await dbService.getUserData(user.uid);
       }
-      const properties = await dbService.getPropertiesByOwner(user.uid);
-      const allProps = await dbService.getAllProperties();
 
+      const properties = await dbService.getPropertiesByOwner(user.uid);
+
+      // ✅ BUG-029 FIX: Removed getAllProperties() — it fetched the ENTIRE
+      // properties collection into JS memory on every login, causing a Hermes
+      // GC OOM crash (EXC_CRASH/SIGABRT) as the player base grows. The full
+      // table scan also spread the array on every purchase, hitting the exact
+      // hermesBuiltinCopyDataProperties → ArrayStorageBase::reallocateToLarger
+      // crash chain in the reported stack trace.
+      // MapScreen.loadNearbyProperties() only uses allProperties to check if a
+      // visible grid square is owned — passing only the current user's own
+      // properties is correct. Nearby owned properties from OTHER players are
+      // fetched on-demand in loadNearbyProperties() via getVisibleGridSquares().
       setUserTB(userData?.tbBalance || 1000);
       setUsdEarnings(userData?.usdEarnings || 0);
       setOwnedProperties(properties);
-      setAllProperties(allProps);
+      setAllProperties(properties);
       setTotalCheckIns(userData?.totalCheckIns || 0);
       setTotalTBEarned(userData?.totalTBEarned || 0);
       if (userData?.nickname) setUsername(userData.nickname);
@@ -339,7 +481,11 @@ export default function MainNavigator() {
       await dbService.purchaseProperty(user.uid, property, tbSpent);
       setOwnedProperties(prev => [...prev, property]);
       setAllProperties(prev => [...prev, property]);
-      setUserTB(prev => prev - tbSpent);
+      // ✅ BUG-035 FIX: Removed setUserTB(prev => prev - tbSpent) here.
+      // MapScreen already calls onTBUpdate(-100) as an optimistic update immediately
+      // after purchase — which maps to setUserTB(prev => prev + delta) on line 698.
+      // Deducting again here caused a double-deduction of 200 TB instead of 100.
+      // TB state is owned by MapScreen's optimistic call; this handler owns property state only.
 
       // ✅ One-time notification opt-in prompt shown after first purchase.
       // Uses AsyncStorage so it fires once per install — covers both new users

@@ -338,12 +338,11 @@ export default function SlotMachineActivity({
         setUsedBaseAttempt(true);
       }
 
-      // 25% chance for 100 TB bonus (diamond mine rate)
-      let tbBonusAmount = Math.random() < 0.25 ? 100 : 0;
-      
-      if (shouldDouble && tbBonusAmount > 0) {
-        tbBonusAmount = tbBonusAmount * 2;
-      }
+      // 25% chance for 2 TB bonus (diamond mine rate)
+      // ✅ FIX: Capped at 2 TB max — previous value of 100 TB was too generous
+      // for a daily activity. TB bonus intentionally excluded from the 2x
+      // double-reward multiplier; only resource quantities double.
+      let tbBonusAmount = Math.random() < 0.25 ? 2 : 0;
       
       if (tbBonusAmount > 0) {
         await dbService.updateUserBalance(user.uid, tbBonusAmount);

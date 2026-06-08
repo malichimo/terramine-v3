@@ -35,10 +35,12 @@ export class LocationService {
       if (!hasPermission) return null;
 
       const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
+        // ✅ OPT: Balanced accuracy for initial position — sufficient for a
+        // 10-meter grid square. High accuracy is for turn-by-turn navigation
+        // and keeps the GPS chip at full power unnecessarily.
+        accuracy: Location.Accuracy.Balanced,
       });
 
-      // Validate coordinates
       const coords = {
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
@@ -65,15 +67,33 @@ export class LocationService {
     const hasPermission = await this.requestPermissions();
     if (!hasPermission) return;
 
-    // watchPositionAsync returns a Promise, so we need to await it
     const subscription = await Location.watchPositionAsync(
       {
-        accuracy: Location.Accuracy.High,
-        timeInterval: 3000, // Update every 3 seconds
-        distanceInterval: 5, // Or when moved 5 meters
+        // ✅ OPT: Three changes here to dramatically reduce device heating:
+        //
+        // 1. Accuracy.Balanced instead of Accuracy.High.
+        //    Balanced uses a combination of cell towers, Wi-Fi, and GPS rather
+        //    than GPS-only. Precision is ~10–30m — more than enough to determine
+        //    which 10m grid square the user is in. High accuracy keeps the GPS
+        //    chip at full power continuously, which is the primary cause of
+        //    device heating during long TerraMine sessions.
+        //
+        // 2. timeInterval: 10000 instead of 3000.
+        //    Was firing every 3 seconds regardless of movement — 20 full grid
+        //    rebuilds per minute while the user stands still. 10 seconds is
+        //    still responsive enough that walking between grid squares feels
+        //    instant, but reduces idle GPS callbacks by 66%.
+        //
+        // 3. distanceInterval: 10 instead of 5.
+        //    5 meters is sub-grid-square resolution — the grid is 10m cells,
+        //    so updates closer than 10m can never change which cell the user
+        //    is in. 10m aligns with the grid and eliminates noise callbacks
+        //    from GPS jitter while the user is stationary.
+        accuracy: Location.Accuracy.Balanced,
+        timeInterval: 10000,
+        distanceInterval: 10,
       },
       (location) => {
-        // Validate coordinates before calling callback
         const coords = {
           latitude: location.coords.latitude,
           longitude: location.coords.longitude,

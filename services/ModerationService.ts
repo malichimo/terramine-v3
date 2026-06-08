@@ -153,10 +153,17 @@ export class ModerationService {
    * Save date of birth and isAdult flag to user doc.
    */
   static async saveDateOfBirth(userId: string, dateOfBirth: string): Promise<void> {
-    const isAdult = this.isAdultFromDOB(dateOfBirth);
+    // Handle checkbox sentinels (new flow) before attempting date parsing
+    let isAdult: boolean;
+    if (dateOfBirth === 'checkbox-adult') {
+      isAdult = true;
+    } else if (dateOfBirth === 'checkbox') {
+      isAdult = false;
+    } else {
+      isAdult = this.isAdultFromDOB(dateOfBirth); // legacy real DOB
+    }
+
     const userRef = doc(db, 'users', userId);
-    // Use setDoc with merge:true so this works even if the user doc
-    // hasn't been created yet by MainNavigator.loadUserData
     await setDoc(userRef, { dateOfBirth, isAdult }, { merge: true });
   }
 

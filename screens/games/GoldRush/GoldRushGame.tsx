@@ -70,7 +70,7 @@ const AVAIL_H  = SH - HEADER_H - FOOTER_H - PADDING * 2;
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function GoldRushGame({ route, navigation }: any) {
-  const { property, propertyDetails } = route.params;
+  const { property, propertyDetails, onBalanceUpdate } = route.params;
   const { user } = useAuth();
 
   const gameLevel  = propertyDetails?.gameLevel ?? 1;
@@ -124,9 +124,13 @@ export default function GoldRushGame({ route, navigation }: any) {
     initNewPuzzle();
     adService.current = new AdMobService();
 
-    // ✅ FIX: Mark unmounted on cleanup so async callbacks don't fire after exit
+    // ✅ BUG-028 FIX: Destroy the ad on unmount so the native AVPlayer (iOS) /
+    // ExoPlayer (Android) is torn down before the component is deallocated.
+    // Without this, pending notification observers fire on a freed object →
+    // EXC_BAD_ACCESS on iOS / equivalent crash on Android.
     return () => {
       isMounted.current = false;
+      adService.current?.destroyAd();
     };
   }, []);
 
@@ -288,6 +292,12 @@ export default function GoldRushGame({ route, navigation }: any) {
       );
       if (!isMounted.current) return;
       setReward(earned as GameReward);
+
+      // ✅ BUG-027 FIX: Notify parent of TB earned so map screen balance
+      // updates immediately without requiring a re-login.
+      if (earned?.tb && onBalanceUpdate) {
+        onBalanceUpdate(earned.tb);
+      }
 
       // ✅ BUG-009 FIX: Re-fetch and store into liveDetails so the XP meter
       //    updates immediately — route.params is a stale snapshot and never changes

@@ -89,7 +89,11 @@ export class AdMobService {
     }
   }
 
-  private destroyAd() {
+  // ✅ BUG-028 FIX: Public so game screens can call this on unmount to tear down
+  // the native AVPlayer (iOS) / ExoPlayer (Android) before the component is
+  // deallocated. Without this, pending FairPlay/notification observers fire on
+  // a freed object → EXC_BAD_ACCESS on iOS, equivalent crash on Android.
+  destroyAd() {
     this.unsubscribeLoaded?.();
     this.unsubscribeClosed?.();
     this.unsubscribeError?.();

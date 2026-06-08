@@ -308,11 +308,9 @@ export default function CoalPileActivity({
         setUsedBaseAttempt(true);
       }
 
-      let tbBonusAmount = Math.random() < 0.25 ? 25 : 0;
-      
-      if (shouldDouble && tbBonusAmount > 0) {
-        tbBonusAmount = tbBonusAmount * 2;
-      }
+      // ✅ FIX: Capped at 2 TB max — previous value of 25 TB was too generous.
+      // TB bonus excluded from 2x double-reward multiplier; only resources double.
+      let tbBonusAmount = Math.random() < 0.25 ? 2 : 0;
       
       if (tbBonusAmount > 0) {
         await dbService.updateUserBalance(user.uid, tbBonusAmount);

@@ -321,15 +321,25 @@ const Vignette = () => (
 // ─────────────────────────────────────────────────────────────────
 
 export default function MinerMazeScreen({ route, navigation }: any) {
-  const { property, propertyDetails } = route.params;
+  const { property, propertyDetails, onBalanceUpdate } = route.params;
   const { user } = useAuth();
   const resultSaved = useRef(false);
+
+  // ✅ BUG-028 FIX: isMounted ref prevents setState calls after unmount
+  const isMounted = useRef(true);
 
   // Lazy-init AdMob: create exactly once, never on re-renders
   const adService = useRef<AdMobService | null>(null);
   useEffect(() => {
     adService.current = new AdMobService();
-    return () => { /* AdMobService has no cleanup needed */ };
+    // ✅ BUG-028 FIX: Destroy the ad on unmount so the native AVPlayer (iOS) /
+    // ExoPlayer (Android) is torn down before the component is deallocated.
+    // Without this, pending notification observers fire on a freed object →
+    // EXC_BAD_ACCESS on iOS / equivalent crash on Android.
+    return () => {
+      isMounted.current = false;
+      adService.current?.destroyAd();
+    };
   }, []);  // empty deps = runs once on mount
 
   // ── state ──────────────────────────────────────────────────
@@ -370,7 +380,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
   const [litSet,  setLitSet]  = useState<Set<string>>(new Set());
   const [visitedCells, setVisitedCells] = useState<Set<string>>(new Set());
   const [lastHaz, setLastHaz] = useState<HazardDef|null>(null);
-  const [reward,  setReward]  = useState<{tb:number,res:number}|null>(null);
+  const [reward,  setReward]  = useState<{tb:number,common:number,uncommon:number,rare:number,epic:number}|null>(null);
 
   // Animated camera offset (px) – world translates so miner stays centred
   const camX = useRef(new Animated.Value(0)).current;
@@ -614,6 +624,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
                   await adService.current!.showAd(
                     () => {
                       if (resolved) return;
+                      if (!isMounted.current) return;
                       resolved = true;
                       clearTimeout(adTimeout);
                       // ✅ BUG-010 FIX: Route through 'paused' before 'playing'.
@@ -661,7 +672,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
     try {
       const perfect = won && steps <= (cfg.cols * cfg.rows);
       const levelBefore = liveDetails?.gameLevel ?? 1;
-      await dbServicePhase2.recordGameResult(
+      const earned = await dbServicePhase2.recordGameResult(
         user.uid,
         property.id,
         property.mineType,
@@ -671,6 +682,22 @@ export default function MinerMazeScreen({ route, navigation }: any) {
         tLeft,
         steps
       );
+
+      // ✅ BUG-027 FIX: Notify parent of TB earned so map screen balance
+      // updates immediately without requiring a re-login.
+      if (earned?.tb && onBalanceUpdate) {
+        onBalanceUpdate(earned.tb);
+      }
+      // Store earned rewards for display on win screen
+      if (isMounted.current) {
+        setReward({
+          tb:       earned?.tb       ?? 0,
+          common:   earned?.common   ?? 0,
+          uncommon: earned?.uncommon ?? 0,
+          rare:     earned?.rare     ?? 0,
+          epic:     earned?.epic     ?? 0,
+        });
+      }
       // Re-fetch so XP meter reflects the just-saved values
       const updated = await dbServicePhase2.getPropertyDetails(property.id);
       if (updated) {
@@ -693,14 +720,16 @@ export default function MinerMazeScreen({ route, navigation }: any) {
     try {
       await adService.current.showAd(
         async () => {
+          if (!isMounted.current) return;
           const updated = await dbServicePhase2.getPropertyDetails(property.id);
+          if (!isMounted.current) return;
           setAdLevelLoading(false);
           navigation.replace('MinerMaze', { property, propertyDetails: updated ?? propertyDetails });
         },
-        () => { setAdLevelLoading(false); }
+        () => { if (isMounted.current) setAdLevelLoading(false); }
       );
     } catch {
-      setAdLevelLoading(false);
+      if (isMounted.current) setAdLevelLoading(false);
     }
   };
 
@@ -736,10 +765,10 @@ export default function MinerMazeScreen({ route, navigation }: any) {
     setPu(p => ({ ...p, charges: p.charges - 1, boosted: true, boostLeft: BOOST_DUR }));
     setLitSet(computeLit(miner, grid, cfg, true));
   };
-  const adBoost  = async () => { if (!adService.current) return; try { await adService.current.showAd(() => { soundService.play('chime'); setPu(p => ({...p, charges: p.charges+1})); }, () => {}); } catch {} };
-  const adCanary = async () => { if (pu.canary || !adService.current) return; try { await adService.current.showAd(() => { soundService.play('canary'); setPu(p => ({...p, canary:true})); }, () => {}); } catch {} };
-  const adHealth = async () => { if (!adService.current) return; try { await adService.current.showAd(() => { soundService.play('chime'); setHealth(h => Math.min(100, h+30)); }, () => {}); } catch {} };
-  const adTime   = async () => { if (!adService.current) return; try { await adService.current.showAd(() => { soundService.play('chime'); setTLeft(t => t + 30); }, () => {}); } catch {} };
+  const adBoost  = async () => { if (!adService.current) return; try { await adService.current.showAd(() => { if (!isMounted.current) return; soundService.play('chime'); setPu(p => ({...p, charges: p.charges+1})); }, () => {}); } catch {} };
+  const adCanary = async () => { if (pu.canary || !adService.current) return; try { await adService.current.showAd(() => { if (!isMounted.current) return; soundService.play('canary'); setPu(p => ({...p, canary:true})); }, () => {}); } catch {} };
+  const adHealth = async () => { if (!adService.current) return; try { await adService.current.showAd(() => { if (!isMounted.current) return; soundService.play('chime'); setHealth(h => Math.min(100, h+30)); }, () => {}); } catch {} };
+  const adTime   = async () => { if (!adService.current) return; try { await adService.current.showAd(() => { if (!isMounted.current) return; soundService.play('chime'); setTLeft(t => t + 30); }, () => {}); } catch {} };
 
   const isCanaryWarn = useCallback((r: number, c: number) => {
     if (!pu.canary) return false;
@@ -1023,7 +1052,10 @@ export default function MinerMazeScreen({ route, navigation }: any) {
             )}
             <Text style={st.rHead}>Rewards</Text>
             <Text style={st.rLine}>⛏️  +{reward.tb} TB</Text>
-            <Text style={st.rLine}>🪨  +{reward.res} Coal Resources</Text>
+            {reward.common   > 0 && <Text style={st.rLine}>🪨  +{reward.common} {({'rock':'Gravel','coal':'Coal Dust','gold':'Gold Flakes','diamond':'Carbon'} as any)[property.mineType] ?? 'Common'}</Text>}
+            {reward.uncommon > 0 && <Text style={st.rLine}>🟡  +{reward.uncommon} {({'rock':'Slate','coal':'Lignite','gold':'Gold Nugget','diamond':'Raw Diamond'} as any)[property.mineType] ?? 'Uncommon'}</Text>}
+            {reward.rare     > 0 && <Text style={st.rLine}>🔵  +{reward.rare} {({'rock':'Granite','coal':'Anthracite','gold':'Gold Bar','diamond':'Gem Diamond'} as any)[property.mineType] ?? 'Rare'}</Text>}
+            {reward.epic     > 0 && <Text style={st.rLine}>🟣  +{reward.epic} {({'rock':'Marble','coal':'Diamond Coal','gold':'Gold Ingot','diamond':'Flawless Diamond'} as any)[property.mineType] ?? 'Epic'}</Text>}
             <Text style={st.rLine}>📊  Score: {score.toLocaleString()}</Text>
             <Text style={st.rLine}>👣  Steps: {steps}</Text>
             <View style={st.xpRow}>

@@ -13,6 +13,7 @@ import {
   ScrollView,
   Platform,
   StatusBar,
+  Image,
 } from 'react-native';
 import { db } from '../firebaseConfig';
 import {
@@ -28,6 +29,7 @@ interface LeaderboardEntry {
   rank: number;
   userId: string;
   nickname: string;
+  avatarUrl: string | null;
   propertyCount: number;
 }
 
@@ -78,8 +80,9 @@ export default function LeaderboardModal({ visible, onClose, currentUserId }: Le
         userIdsNeeded.add(currentUserId);
       }
 
-      // Fetch nicknames in parallel
+      // Fetch nicknames and avatars in parallel — same single getDoc per user
       const nicknameMap = new Map<string, string>();
+      const avatarMap   = new Map<string, string | null>();
       await Promise.all(
         Array.from(userIdsNeeded).map(async uid => {
           try {
@@ -87,9 +90,11 @@ export default function LeaderboardModal({ visible, onClose, currentUserId }: Le
             if (userSnap.exists()) {
               const data = userSnap.data();
               nicknameMap.set(uid, data.nickname || data.email?.split('@')[0] || 'Unknown');
+              avatarMap.set(uid, data.avatarUrl || null);
             }
           } catch {
             nicknameMap.set(uid, 'Unknown');
+            avatarMap.set(uid, null);
           }
         })
       );
@@ -99,6 +104,7 @@ export default function LeaderboardModal({ visible, onClose, currentUserId }: Le
         rank: i + 1,
         userId: uid,
         nickname: nicknameMap.get(uid) || 'Unknown',
+        avatarUrl: avatarMap.get(uid) ?? null,
         propertyCount: count,
       }));
       setEntries(leaderboardEntries);
@@ -110,6 +116,7 @@ export default function LeaderboardModal({ visible, onClose, currentUserId }: Le
           rank: currentUserIndex + 1,
           userId: uid,
           nickname: nicknameMap.get(uid) || 'Unknown',
+          avatarUrl: avatarMap.get(uid) ?? null,
           propertyCount: count,
         });
       } else {
@@ -139,6 +146,19 @@ export default function LeaderboardModal({ visible, onClose, currentUserId }: Le
         ]}
       >
         <Text style={[styles.rankText, entry.rank <= 3 && styles.rankEmoji]}>{rankLabel}</Text>
+        {/* ✅ AVATAR: Show player avatar or initials placeholder */}
+        {entry.avatarUrl ? (
+          <Image
+            source={{ uri: entry.avatarUrl }}
+            style={styles.avatar}
+          />
+        ) : (
+          <View style={[styles.avatarPlaceholder, isCurrentUser && styles.avatarPlaceholderHighlight]}>
+            <Text style={styles.avatarInitial}>
+              {entry.nickname.charAt(0).toUpperCase()}
+            </Text>
+          </View>
+        )}
         <Text
           style={[styles.nickname, isCurrentUser && styles.nicknameHighlight]}
           numberOfLines={1}
@@ -332,6 +352,34 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
     color: 'rgba(255,255,255,0.5)',
+  },
+  avatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,215,0,0.4)',
+  },
+  avatarPlaceholder: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginRight: 10,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  avatarPlaceholderHighlight: {
+    backgroundColor: 'rgba(255,215,0,0.2)',
+    borderColor: 'rgba(255,215,0,0.5)',
+  },
+  avatarInitial: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#FFD700',
   },
   rankEmoji: {
     fontSize: 20,

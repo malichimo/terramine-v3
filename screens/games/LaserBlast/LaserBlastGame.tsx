@@ -84,7 +84,7 @@ interface BeamSegment {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function LaserBlastGame({ route, navigation }: any) {
-  const { property, propertyDetails } = route.params;
+  const { property, propertyDetails, onBalanceUpdate } = route.params;
   const { user } = useAuth();
 
   const gameLevel   = propertyDetails?.gameLevel ?? 1;
@@ -138,9 +138,13 @@ export default function LaserBlastGame({ route, navigation }: any) {
     initNewPuzzle();
     adService.current = new AdMobService();
 
-    // ✅ FIX: Mark unmounted on cleanup
+    // ✅ BUG-028 FIX: Destroy the ad on unmount so the native AVPlayer (iOS) /
+    // ExoPlayer (Android) is torn down before the component is deallocated.
+    // Without this, pending notification observers fire on a freed object →
+    // EXC_BAD_ACCESS on iOS / equivalent crash on Android.
     return () => {
       isMounted.current = false;
+      adService.current?.destroyAd();
     };
   }, []);
 
@@ -385,6 +389,12 @@ export default function LaserBlastGame({ route, navigation }: any) {
       if (!isMounted.current) return;
       setReward(earned);
 
+      // ✅ BUG-027 FIX: Notify parent of TB earned so map screen balance
+      // updates immediately without requiring a re-login.
+      if (earned?.tb && onBalanceUpdate) {
+        onBalanceUpdate(earned.tb);
+      }
+
       const updated = await dbServicePhase2.getPropertyDetails(property.id);
       if (!isMounted.current) return;
       if (updated && updated.gameLevel > levelBefore) {
@@ -459,6 +469,20 @@ export default function LaserBlastGame({ route, navigation }: any) {
     }
   }
 
+  // ── Auto-trigger level-up ad when player levels up ──────────────────────
+  // ✅ FIX: Previously the level-up ad required a manual button tap.
+  // Now it fires automatically when leveledUp becomes true, giving the
+  // player 2 seconds to see the win screen before the ad starts.
+  useEffect(() => {
+    if (!leveledUp) return;
+    const timer = setTimeout(() => {
+      if (isMounted.current && leveledUp) {
+        handlePlayNextLevelAd();
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [leveledUp]);
+
   // ── Play Next Level (after level-up ad) ───────────────────────────────────
   async function handlePlayNextLevelAd() {
     if (!adService.current) return;
@@ -530,22 +554,32 @@ export default function LaserBlastGame({ route, navigation }: any) {
 
   // ── Restart ────────────────────────────────────────────────────────────────
   function restart() {
+    // ✅ FIX: Generate puzzle FIRST before any state updates.
+    // Previously setPhase('puzzle') fired before initNewPuzzle() completed,
+    // causing the timer useEffect to restart while grid was still empty → crash.
     if (timerRef.current) clearInterval(timerRef.current);
+
+    // Generate and cache the new puzzle synchronously before any re-renders
+    const p = generatePuzzle(gameLevel);
+    puzzleRef.current = p;
+
+    // Reset all refs
     resultSaved.current     = false;
     livesRef.current        = MAX_LIVES;
     tapsUsedRef.current     = 0;
     fireAttemptsRef.current = 0;
     timeLeftRef.current     = timeLimit;
 
+    // Reset animated values
     beamOpacity.setValue(0);
     celebrateScale.setValue(0);
     diamondSparkleOp.setValue(0);
 
-    setPhase('puzzle');
-    setTimeLeft(timeLimit);
-    setTapsUsed(0);
-    setLivesLeft(MAX_LIVES);
-    setFireAttempts(0);
+    // Initialize mirror animations for new puzzle
+    initMirrorAnims(p.grid);
+
+    // Now update all state in one batch — grid is already set via puzzleRef
+    setGrid(cloneGrid(p.grid));
     setBeamSegs([]);
     setHitResults([]);
     setScore(0);
@@ -553,7 +587,12 @@ export default function LaserBlastGame({ route, navigation }: any) {
     setLeveledUp(false);
     setNewLevel(gameLevel);
     setShowAdOffer(false);
-    initNewPuzzle();
+    setTapsUsed(0);
+    setLivesLeft(MAX_LIVES);
+    setFireAttempts(0);
+    setTimeLeft(timeLimit);
+    // Phase last — timer useEffect fires on this, grid is already ready
+    setPhase('puzzle');
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────

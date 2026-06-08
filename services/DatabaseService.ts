@@ -12,6 +12,7 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import * as FileSystem from 'expo-file-system';
 import { GridSquare } from '../utils/GridUtils';
 import { getNext4AMEST } from '../utils/TimeUtils';
 import { NotificationService } from './NotificationService';
@@ -178,11 +179,18 @@ export class DatabaseService {
 
   // Upload a check-in photo to Firebase Storage and return the download URL
   async uploadCheckInPhoto(userId: string, propertyId: string, photoUri: string): Promise<string> {
+    // ✅ FIX: Use expo-file-system instead of fetch() to read the local file.
+    // fetch() on local file:/// URIs fails silently on many Android production
+    // builds — the check-in saves with hasPhoto:true but no file reaches Storage.
+    // FileSystem.readAsStringAsync with Base64 encoding works reliably on both
+    // platforms in EAS production builds.
     const timestamp = Date.now();
     const storageRef = ref(storage, `checkIns/${propertyId}_${userId}_${timestamp}.jpg`);
-    const response = await fetch(photoUri);
-    const blob = await response.blob();
-    await uploadBytes(storageRef, blob);
+    const base64 = await FileSystem.readAsStringAsync(photoUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    const byteArray = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    await uploadBytes(storageRef, byteArray, { contentType: 'image/jpeg' });
     return await getDownloadURL(storageRef);
   }
 
@@ -410,11 +418,15 @@ export class DatabaseService {
   }
 
   async uploadAvatar(userId: string, photoUri: string): Promise<string> {
+    // ✅ FIX: Use expo-file-system instead of fetch() — same fix as uploadCheckInPhoto.
+    // fetch() on local file:/// URIs fails silently on Android production builds.
     const timestamp = Date.now();
     const storageRef = ref(storage, `avatars/${userId}_${timestamp}.jpg`);
-    const response = await fetch(photoUri);
-    const blob = await response.blob();
-    await uploadBytes(storageRef, blob);
+    const base64 = await FileSystem.readAsStringAsync(photoUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    const byteArray = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    await uploadBytes(storageRef, byteArray, { contentType: 'image/jpeg' });
     return await getDownloadURL(storageRef);
   }
 
@@ -457,11 +469,33 @@ export class DatabaseService {
       });
     }
 
+    // ✅ FIX: Check whether the daily free boost reset time has passed.
+    // getBoostState was resetting ad boosts automatically but never checking
+    // nextFreeBoostResetAt for free boosts — it just returned the raw Firestore
+    // value. Players who used all free boosts would never get them back unless
+    // they triggered useFreeBoost again (which requires boosts > 0). Now we
+    // check on every app open and reset to 4 if the reset time has passed.
+    const FREE_BOOSTS_MAX = 4;
+    let freeBoostsRemaining = data.freeBoostsRemaining ?? FREE_BOOSTS_MAX;
+    let nextFreeBoostResetAt = data.nextFreeBoostResetAt ?? null;
+
+    if (nextFreeBoostResetAt) {
+      const resetTime = new Date(nextFreeBoostResetAt);
+      if (Date.now() >= resetTime.getTime() && freeBoostsRemaining < FREE_BOOSTS_MAX) {
+        freeBoostsRemaining = FREE_BOOSTS_MAX;
+        nextFreeBoostResetAt = null; // clear until next use
+        await updateDoc(userRef, {
+          freeBoostsRemaining: FREE_BOOSTS_MAX,
+          nextFreeBoostResetAt: null,
+        });
+      }
+    }
+
     return {
-      freeBoostsRemaining: data.freeBoostsRemaining ?? 4,
+      freeBoostsRemaining,
       adBoostsRemaining,
       boostExpiresAt: data.boostExpiresAt ?? null,
-      nextFreeBoostResetAt: data.nextFreeBoostResetAt ?? null,
+      nextFreeBoostResetAt,
       lastAdBoostRefillAt,
     };
   }

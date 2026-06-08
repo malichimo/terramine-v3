@@ -277,13 +277,9 @@ export default function RockConveyorActivity({
         setUsedBaseAttempt(true);
       }
 
-      // Random TB bonus (25% chance for 10 TB)
-      let tbBonusAmount = Math.random() < 0.25 ? 10 : 0;
-      
-      // Only double TB bonus if this is the base attempt with double active
-      if (shouldDouble && tbBonusAmount > 0) {
-        tbBonusAmount = tbBonusAmount * 2;
-      }
+      // ✅ FIX: Capped at 2 TB max — previous value of 10 TB was too generous.
+      // TB bonus excluded from 2x double-reward multiplier; only resources double.
+      let tbBonusAmount = Math.random() < 0.25 ? 2 : 0;
       
       if (tbBonusAmount > 0) {
         await dbService.updateUserBalance(user.uid, tbBonusAmount);
