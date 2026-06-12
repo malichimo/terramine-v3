@@ -146,11 +146,13 @@ export default function LeaderboardModal({ visible, onClose, currentUserId }: Le
         ]}
       >
         <Text style={[styles.rankText, entry.rank <= 3 && styles.rankEmoji]}>{rankLabel}</Text>
-        {/* ✅ AVATAR: Show player avatar or initials placeholder */}
-        {entry.avatarUrl ? (
+        {/* ✅ AVATAR: Show player avatar or initials placeholder.
+             Only use https:// URLs — gs:// URIs crash React Native Image. */}
+        {entry.avatarUrl?.startsWith('https://') ? (
           <Image
             source={{ uri: entry.avatarUrl }}
             style={styles.avatar}
+            onError={() => {}} // silent fallback — re-render shows initials
           />
         ) : (
           <View style={[styles.avatarPlaceholder, isCurrentUser && styles.avatarPlaceholderHighlight]}>

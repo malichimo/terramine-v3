@@ -74,6 +74,8 @@ export interface PuzzleConfig {
   targetCount: number;
   /** Difficulty label */
   difficulty: string;
+  /** Correct mirror orientations — used for verification only, not exposed to player */
+  solutionMirrors?: Array<{ row: number; col: number; correctType: 'mirror-/' | 'mirror-\\' }>;
 }
 
 export interface FireResult {
@@ -550,9 +552,16 @@ function walkPath(
 
   for (let t = 0; t < travelDist; t++) {
     if (r < 0 || r >= gridSize || c < 0 || c >= gridSize) return null;
-    // Candidate next traversal cell
+    // ✅ FIX: Traversal cells must not pass through an existing coal or mirror.
+    // A laser passing through another laser's coal makes that coal unreachable
+    // because traceLaser terminates on coal cells — the beam stops there.
+    // A laser passing through another laser's mirror gets deflected off its
+    // intended path, making the puzzle unsolvable.
+    const traversalKey = `${r},${c}`;
+    if (usedCoalCells.has(traversalKey)) return null;
+    if (usedMirrorCells.has(traversalKey)) return null;
+    // Step to next cell, push current as traversal
     const n = step(r, c, dir);
-    // Push current cell as traversal (laser passes through here)
     route.push({ row: r, col: c });
     r = n.row;
     c = n.col;
@@ -640,30 +649,27 @@ export function generatePuzzle(gameLevel: number): PuzzleConfig {
     const result = tryGeneratePuzzle(gameLevel);
     if (!result) continue;
 
-    // ✅ FIX: Verification pass — confirm the puzzle is actually solvable
-    // by temporarily restoring all solution mirrors to correct orientation
-    // and firing all lasers. If any laser misses, discard and retry.
-    // This catches edge cases where path-first construction produces a
-    // technically valid route that traceLaser can't follow (e.g. due to
-    // decoy mirrors placed on traversal cells that redirect the laser).
+    // ✅ REAL VERIFICATION: Restore all solution mirrors to their correct
+    // orientation on a cloned grid, fire all lasers, and require allHit.
+    // This is the only reliable way to confirm the puzzle is solvable.
+    // The previous heuristic (segment count >= gridSize/2) was insufficient —
+    // it passed puzzles where decoy mirrors redirected lasers to wrong targets.
     const verifyGrid = result.grid.map(row => row.map(cell => ({ ...cell })));
-    // Restore all mirrors to correct orientation for verification only
-    // We need to re-derive correct types from the route — but since we
-    // scrambled them already, fire the puzzle as-is with all mirrors
-    // flipped back by solving it: just check if firing with correct
-    // orientations works. Since we don't store correct types post-scramble,
-    // use a simpler check: fire as-is and see if AT LEAST one laser is
-    // blockable. If allHit is already true (all correct by luck at 26+),
-    // that's fine. The real unsolvable case is when traceLaser can't
-    // physically reach a coal regardless of mirror orientation.
-    // Detect this by checking if any coal is unreachable from its miner
-    // even with an open grid (no mirrors, no obstacles blocking the path zone).
-    const fireCheck = fireLasers(result);
-    // Accept if at least the laser segments reach the grid area near each coal
-    // Simple heuristic: each laser must travel at least (gridSize/2) steps
-    const minSteps = Math.floor(result.gridSize / 2);
-    const viable = fireCheck.results.every(r => r.segments.length >= minSteps);
-    if (viable) return result;
+
+    // result.solutionMirrors carries the correct types from tryGeneratePuzzle
+    if (result.solutionMirrors) {
+      for (const { row, col, correctType } of result.solutionMirrors) {
+        verifyGrid[row][col].type = correctType;
+      }
+    }
+
+    const verifyPuzzle: PuzzleConfig = {
+      ...result,
+      grid: verifyGrid,
+    };
+
+    const fireCheck = fireLasers(verifyPuzzle);
+    if (fireCheck.allHit) return result; // solvable — return scrambled version
   }
 
   return generateFallbackPuzzle(gameLevel);
@@ -712,13 +718,14 @@ function tryGeneratePuzzle(gameLevel: number): PuzzleConfig | null {
     mark(coalRow, coalCol);
     usedCoalCells.add(coalKey);
 
-    // Place solution mirrors at bounce points
+    // Place solution mirrors at bounce points and track traversal cells
+    // ✅ FIX: traversal cell loop was nested INSIDE the mirror cell if-block,
+    // so traversal cells only registered when a mirror was being processed.
+    // Now they are tracked in a separate pass over the full route.
     for (const cell of route) {
       if (cell.mirrorType) {
         const key = `${cell.row},${cell.col}`;
-        // Double-check mirror isn't already used (safety)
         if (usedMirrorCells.has(key)) return null;
-
         grid[cell.row][cell.col] = {
           row: cell.row, col: cell.col,
           type: cell.mirrorType,
@@ -732,12 +739,11 @@ function tryGeneratePuzzle(gameLevel: number): PuzzleConfig | null {
           correctType: cell.mirrorType,
         });
       }
-      // Non-mirror path cells are traversal — not in usedCells (crossing allowed)
-      // but DO track them so obstacles are never placed on them
-      for (const cell of route) {
-        if (!cell.mirrorType) {
-          usedTraversalCells.add(`${cell.row},${cell.col}`);
-        }
+    }
+    // Track traversal cells separately — obstacles must never land here
+    for (const cell of route) {
+      if (!cell.mirrorType) {
+        usedTraversalCells.add(`${cell.row},${cell.col}`);
       }
     }
 
@@ -812,6 +818,12 @@ function tryGeneratePuzzle(gameLevel: number): PuzzleConfig | null {
     miners,
     targetCount,
     difficulty: getDifficultyLabel(gameLevel),
+    // ✅ Pass solution mirror positions/types so generatePuzzle can verify
+    solutionMirrors: solutionMirrors.map(m => ({
+      row: m.row,
+      col: m.col,
+      correctType: m.correctType,
+    })),
   };
 }
 

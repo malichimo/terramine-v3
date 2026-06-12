@@ -569,7 +569,14 @@ export default function MainNavigator() {
         }).catch(e => console.warn('Failed to fetch owner push token (non-fatal):', e));
       }
 
-    } catch (error) {
+    } catch (error: any) {
+      // ✅ BUG-053 FIX: Surface the server-side duplicate check-in rejection
+      // as a friendly alert rather than a raw error. This fires when the client-side
+      // guard was bypassed (app restart, cache clear, multiple devices).
+      if (error?.message === 'ALREADY_CHECKED_IN_TODAY') {
+        Alert.alert('Already Checked In', 'You have already checked in to this property today.');
+        return;
+      }
       console.error('Error during check-in:', error);
       throw error;
     }

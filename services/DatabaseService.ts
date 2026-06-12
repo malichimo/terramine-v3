@@ -57,9 +57,14 @@ export class DatabaseService {
 
   async updateUserBalance(userId: string, amount: number) {
     const userRef = doc(db, 'users', userId);
-    await updateDoc(userRef, {
+    // FIX: Use setDoc with merge:true instead of updateDoc.
+    // updateDoc throws "No document to update" if the user doc is missing or
+    // was created incomplete (Google/Apple sign-in users before the retry fix
+    // in v1.1.2). setDoc+merge creates the field if absent, increments if
+    // present, and never overwrites unrelated fields.
+    await setDoc(userRef, {
       tbBalance: increment(amount),
-    });
+    }, { merge: true });
   }
 
   // Properties
@@ -179,18 +184,11 @@ export class DatabaseService {
 
   // Upload a check-in photo to Firebase Storage and return the download URL
   async uploadCheckInPhoto(userId: string, propertyId: string, photoUri: string): Promise<string> {
-    // ✅ FIX: Use expo-file-system instead of fetch() to read the local file.
-    // fetch() on local file:/// URIs fails silently on many Android production
-    // builds — the check-in saves with hasPhoto:true but no file reaches Storage.
-    // FileSystem.readAsStringAsync with Base64 encoding works reliably on both
-    // platforms in EAS production builds.
     const timestamp = Date.now();
     const storageRef = ref(storage, `checkIns/${propertyId}_${userId}_${timestamp}.jpg`);
-    const base64 = await FileSystem.readAsStringAsync(photoUri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    const byteArray = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-    await uploadBytes(storageRef, byteArray, { contentType: 'image/jpeg' });
+    const response = await fetch(photoUri);
+    const blob = await response.blob();
+    await uploadBytes(storageRef, blob, { contentType: 'image/jpeg' });
     return await getDownloadURL(storageRef);
   }
 
@@ -255,6 +253,40 @@ export class DatabaseService {
   // Check-ins
   async createCheckIn(userId: string, propertyId: string, propertyOwnerId: string, message?: string, hasPhoto?: boolean, photoUri?: string, visitorNickname?: string, mineType?: string) {
     const checkInRef = doc(collection(db, 'checkIns'));
+
+    // ✅ BUG-053 FIX: Server-side once-per-day enforcement.
+    // Query Firestore for any check-in by this user on this property today (EST).
+    // This is the authoritative check — it cannot be bypassed by clearing AsyncStorage,
+    // restarting the app, or using multiple devices. The client-side guard in MapScreen
+    // is a UX convenience only; this is the real gate.
+    //
+    // ✅ DATE FIX: Build the EST day boundaries using explicit UTC arithmetic
+    // rather than `new Date("M/D/YYYY 00:00:00 EST")` which is non-standard
+    // and returns Invalid Date on some JS engines (causing the query to throw
+    // and the user to see "Failed to save check-in").
+    const now = new Date();
+    const EST_OFFSET_MS = 5 * 60 * 60 * 1000;
+    const nowEST = new Date(now.getTime() - EST_OFFSET_MS);
+    const startOfDayEST = new Date(Date.UTC(
+      nowEST.getUTCFullYear(), nowEST.getUTCMonth(), nowEST.getUTCDate(),
+      0, 0, 0, 0
+    ) + EST_OFFSET_MS).toISOString();
+    const endOfDayEST = new Date(Date.UTC(
+      nowEST.getUTCFullYear(), nowEST.getUTCMonth(), nowEST.getUTCDate(),
+      23, 59, 59, 999
+    ) + EST_OFFSET_MS).toISOString();
+
+    const duplicateQuery = query(
+      collection(db, 'checkIns'),
+      where('userId',     '==', userId),
+      where('propertyId', '==', propertyId),
+      where('timestamp',  '>=', startOfDayEST),
+      where('timestamp',  '<=', endOfDayEST),
+    );
+    const duplicateSnap = await getDocs(duplicateQuery);
+    if (!duplicateSnap.empty) {
+      throw new Error('ALREADY_CHECKED_IN_TODAY');
+    }
 
     // photoUri here is already an uploaded download URL — no re-upload needed
     const photoURL = hasPhoto && photoUri ? photoUri : undefined;
@@ -418,15 +450,11 @@ export class DatabaseService {
   }
 
   async uploadAvatar(userId: string, photoUri: string): Promise<string> {
-    // ✅ FIX: Use expo-file-system instead of fetch() — same fix as uploadCheckInPhoto.
-    // fetch() on local file:/// URIs fails silently on Android production builds.
     const timestamp = Date.now();
     const storageRef = ref(storage, `avatars/${userId}_${timestamp}.jpg`);
-    const base64 = await FileSystem.readAsStringAsync(photoUri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    const byteArray = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-    await uploadBytes(storageRef, byteArray, { contentType: 'image/jpeg' });
+    const response = await fetch(photoUri);
+    const blob = await response.blob();
+    await uploadBytes(storageRef, blob, { contentType: 'image/jpeg' });
     return await getDownloadURL(storageRef);
   }
 

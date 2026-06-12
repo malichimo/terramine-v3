@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useImperativeHandle } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, Alert, ScrollView, TextInput, Linking, AppState } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, Alert, ScrollView, TextInput, Linking, AppState, Image } from 'react-native';
 import MapView, { Polygon, PROVIDER_GOOGLE, Marker } from 'react-native-maps';
 import * as ImagePicker from 'expo-image-picker';
 import { LocationService, Coordinates } from '../services/LocationService';
@@ -855,7 +855,15 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       // Previously this was set before the try block, so a post-save error would
       // show "Failed to save check-in" even though the check-in saved correctly.
       const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
-      setLastCheckIns(prev => new Map(prev).set(selectedSquare.id, today));
+      setLastCheckIns(prev => {
+        const next = new Map(prev).set(selectedSquare.id, today);
+        // ✅ BUG-053 FIX: Persist updated map to AsyncStorage so the daily
+        // cooldown survives app restarts. Convert Map → plain object for JSON.
+        const obj: Record<string, string> = {};
+        next.forEach((date, propId) => { obj[propId] = date; });
+        AsyncStorage.setItem(STORAGE_KEY_DAILY_CHECKINS, JSON.stringify(obj)).catch(() => {});
+        return next;
+      });
 
       // ── Stamp cooldown timestamp ───────────────────────────────────────────
       // Only update after a confirmed successful write so failed check-ins
@@ -936,13 +944,19 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   // refs to 0 and users can immediately check in or purchase again.
   const STORAGE_KEY_CHECKIN  = `terramine_lastCheckIn_${userId}`;
   const STORAGE_KEY_PURCHASE = `terramine_lastPurchase_${userId}`;
+  // ✅ BUG-053 FIX: Persist the per-property daily check-in map across app restarts.
+  // Previously lastCheckIns lived only in React state — a restart wiped it,
+  // allowing a user to check in to the same property multiple times per day
+  // by simply force-quitting and reopening the app.
+  const STORAGE_KEY_DAILY_CHECKINS = `terramine_dailyCheckIns_${userId}`;
 
   useEffect(() => {
     (async () => {
       try {
-        const [ciVal, puVal] = await AsyncStorage.multiGet([
+        const [ciVal, puVal, dcVal] = await AsyncStorage.multiGet([
           STORAGE_KEY_CHECKIN,
           STORAGE_KEY_PURCHASE,
+          STORAGE_KEY_DAILY_CHECKINS,
         ]);
         const ciTs = ciVal[1] ? parseInt(ciVal[1], 10) : 0;
         const puTs = puVal[1] ? parseInt(puVal[1], 10) : 0;
@@ -951,6 +965,22 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         const now = Date.now();
         if (ciTs && now - ciTs < COOLDOWN_MS) lastCheckInTime.current = ciTs;
         if (puTs && now - puTs < COOLDOWN_MS) lastPurchaseTime.current = puTs;
+
+        // ✅ BUG-053 FIX: Restore per-property daily check-in map from AsyncStorage.
+        // Only keep entries from today (EST) — stale entries from previous days
+        // are discarded so players can check in again the next day.
+        if (dcVal[1]) {
+          try {
+            const stored: Record<string, string> = JSON.parse(dcVal[1]);
+            const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+            const todayEntries = Object.entries(stored).filter(([, date]) => date === today);
+            if (todayEntries.length > 0) {
+              setLastCheckIns(new Map(todayEntries));
+            }
+          } catch (parseErr) {
+            console.warn('Could not parse daily check-ins from storage:', parseErr);
+          }
+        }
       } catch (e) {
         console.warn('Could not restore cooldown timestamps:', e);
       }
@@ -1139,12 +1169,14 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   };
 
   const getSquareFillColor = (square: GridSquare): string => {
+    // ✅ Highlight selected square so user can see which TA they tapped
+    if (selectedSquare?.id === square.id) {
+      return 'rgba(255, 255, 255, 0.6)';
+    }
     if (square.isOwned) {
       if (square.ownerId === userId) {
-        // Player's own property — solid mine color
         return getMineColor(square.mineType);
       } else {
-        // Another player's property — orange fill
         return 'rgba(255, 152, 0, 0.6)';
       }
     }
@@ -1152,11 +1184,14 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   };
 
   const getSquareStrokeColor = (square: GridSquare): string => {
+    if (selectedSquare?.id === square.id) {
+      return '#FFFFFF';
+    }
     if (square.isOwned) {
       if (square.ownerId === userId) {
-        return '#2196F3'; // Blue border for own properties
+        return '#2196F3';
       } else {
-        return '#E65100'; // Dark orange border for others' properties
+        return '#E65100';
       }
     }
     return '#4CAF50';
@@ -1282,7 +1317,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
             coordinates={square.corners}
             fillColor={getSquareFillColor(square)}
             strokeColor={getSquareStrokeColor(square)}
-            strokeWidth={2}
+            strokeWidth={selectedSquare?.id === square.id ? 4 : 2}
             tappable
             onPress={() => handleSquarePress(square)}
           />
@@ -1337,25 +1372,33 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       {/* Boost Button */}
       <TouchableOpacity 
         style={styles.boostButton}
-        onPress={async () => {
-          // Only refresh ad boost refill count — do NOT overwrite boostExpiresAt
-          // as Firestore may not have committed the write yet on slower devices
-          try {
-            const refreshedState = await dbService.getBoostState(userId);
-            setBoostState(prev => ({
-              ...refreshedState,
-              // Preserve local boostExpiresAt if it's further in the future than what Firestore returned
-              boostExpiresAt: (prev.boostExpiresAt && (!refreshedState.boostExpiresAt || 
-                new Date(prev.boostExpiresAt) > new Date(refreshedState.boostExpiresAt)))
-                ? prev.boostExpiresAt
-                : refreshedState.boostExpiresAt,
-              boostTimeRemaining: prev.boostTimeRemaining,
-              isBoostActive: prev.isBoostActive,
-            }));
-          } catch (error) {
-            console.error('Error refreshing boost state:', error);
-          }
+        onPress={() => {
+          // ✅ FIX (SIGABRT/Hermes OOM on iOS 26.6): Open the modal immediately
+          // without a blocking Firestore read on the tap handler. Doing a
+          // getBoostState() fetch synchronously here creates a memory spike
+          // (Firestore alloc + response object) while GPS, the map renderer,
+          // and the earnings timer are all live — enough to push Hermes over
+          // the edge on devices already under OS memory pressure.
+          // Boost state is already current from loadBoostState() on mount and
+          // the 30s boost timer — no stale data risk from skipping this fetch.
+          // If we need to refresh ad boost counts, do it after the modal opens
+          // so it runs in the background without blocking the UI thread.
           setShowBoostModal(true);
+          setTimeout(() => {
+            dbService.getBoostState(userId).then(refreshedState => {
+              setBoostState(prev => ({
+                ...refreshedState,
+                boostExpiresAt: (prev.boostExpiresAt && (!refreshedState.boostExpiresAt ||
+                  new Date(prev.boostExpiresAt) > new Date(refreshedState.boostExpiresAt)))
+                  ? prev.boostExpiresAt
+                  : refreshedState.boostExpiresAt,
+                boostTimeRemaining: prev.boostTimeRemaining,
+                isBoostActive: prev.isBoostActive,
+              }));
+            }).catch(error => {
+              console.error('Error refreshing boost state (non-fatal):', error);
+            });
+          }, 300);
         }}
       >
         <View style={[styles.boostButtonInner, boostState.isBoostActive && styles.boostButtonActive]}>
@@ -1460,28 +1503,38 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           {selectedSquare.isOwned ? (
             <View>
               {/* ✅ AVATAR: Show owner avatar + nickname in mine panel */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                {selectedSquare.ownerId !== userId && (() => {
-                  const cached = ownerCache.get(selectedSquare.ownerId || '');
-                  return cached?.avatarUrl ? (
-                    <Image
-                      source={{ uri: cached.avatarUrl }}
-                      style={{ width: 28, height: 28, borderRadius: 14, marginRight: 6, borderWidth: 1, borderColor: '#E65100' }}
-                    />
-                  ) : (
-                    <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#E65100', marginRight: 6, alignItems: 'center', justifyContent: 'center' }}>
-                      <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>
-                        {(ownerCache.get(selectedSquare.ownerId || '')?.nickname || '?').charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                  );
-                })()}
-                <Text style={styles.usernameText}>
-                  Owner: {selectedSquare.ownerId === userId
-                    ? 'You'
-                    : (ownerCache.get(selectedSquare.ownerId || '')?.nickname || 'Loading...')}
-                </Text>
-              </View>
+              {(() => {
+                const isOwnMine = selectedSquare.ownerId === userId;
+                const cached = !isOwnMine ? ownerCache.get(selectedSquare.ownerId || '') : null;
+                const ownerLabel = isOwnMine ? 'You' : (cached?.nickname || 'Loading...');
+                const initial = (cached?.nickname || '?').charAt(0).toUpperCase();
+                const safeAvatarUrl = cached?.avatarUrl?.startsWith('https://') ? cached.avatarUrl : null;
+                return (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                    {!isOwnMine && (
+                      safeAvatarUrl ? (
+                        <Image
+                          source={{ uri: safeAvatarUrl }}
+                          style={{ width: 28, height: 28, borderRadius: 14, marginRight: 6, borderWidth: 1, borderColor: '#E65100' }}
+                          onError={() => {
+                            // ✅ If image fails for any reason, clear from cache and show initials
+                            setOwnerCache(prev => {
+                              const entry = prev.get(selectedSquare?.ownerId || '');
+                              if (!entry) return prev;
+                              return new Map(prev).set(selectedSquare?.ownerId || '', { ...entry, avatarUrl: null });
+                            });
+                          }}
+                        />
+                      ) : (
+                        <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#E65100', marginRight: 6, alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>{initial}</Text>
+                        </View>
+                      )
+                    )}
+                    <Text style={styles.usernameText}>Owner: {ownerLabel}</Text>
+                  </View>
+                );
+              })()}
               {selectedSquare.ownerId === userId && (
                 <TouchableOpacity
                   style={styles.manageButton}
