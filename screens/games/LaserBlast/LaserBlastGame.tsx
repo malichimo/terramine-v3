@@ -20,6 +20,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { dbServicePhase2 } from '../../../services/DatabaseServicePhase2';
 import { AdMobService } from '../../../services/AdMobService';
 import { soundService } from '../../../services/SoundService';
+import { getResourceNames } from '../../../utils/ResourceNames';
 import type { GameReward } from '../../../types/PropertyTypes';
 import {
   Cell,
@@ -607,6 +608,10 @@ export default function LaserBlastGame({ route, navigation }: any) {
 
   const p = puzzleRef.current;
 
+  // ✅ BUG-063 FIX: mine-type-specific resource tier names for the win overlay
+  // (was hardcoded "Common"/"Uncommon"/"Rare", no "Epic" row at all).
+  const resourceNames = getResourceNames(property.mineType);
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe}>
@@ -824,19 +829,25 @@ export default function LaserBlastGame({ route, navigation }: any) {
                 {reward.common > 0 && (
                   <View style={styles.rewardItem}>
                     <Text style={styles.rewardVal}>+{reward.common}</Text>
-                    <Text style={styles.rewardLbl}>Common</Text>
+                    <Text style={styles.rewardLbl}>{resourceNames.common}</Text>
                   </View>
                 )}
                 {reward.uncommon > 0 && (
                   <View style={styles.rewardItem}>
                     <Text style={styles.rewardVal}>+{reward.uncommon}</Text>
-                    <Text style={styles.rewardLbl}>Uncommon</Text>
+                    <Text style={styles.rewardLbl}>{resourceNames.uncommon}</Text>
                   </View>
                 )}
                 {reward.rare > 0 && (
                   <View style={styles.rewardItem}>
                     <Text style={styles.rewardVal}>+{reward.rare}</Text>
-                    <Text style={styles.rewardLbl}>Rare</Text>
+                    <Text style={styles.rewardLbl}>{resourceNames.rare}</Text>
+                  </View>
+                )}
+                {reward.epic > 0 && (
+                  <View style={styles.rewardItem}>
+                    <Text style={styles.rewardVal}>+{reward.epic}</Text>
+                    <Text style={styles.rewardLbl}>{resourceNames.epic}</Text>
                   </View>
                 )}
               </View>

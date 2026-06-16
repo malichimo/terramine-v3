@@ -1,5 +1,5 @@
-import React, { createContext, useState, useEffect, useContext } from 'react';
-import { Alert } from 'react-native';
+import React, { createContext, useState, useEffect, useContext, useRef } from 'react';
+import { Alert, AppState } from 'react-native';
 import { auth, db } from '../firebaseConfig';
 import { doc, getDoc } from 'firebase/firestore';
 import {
@@ -53,15 +53,48 @@ export const useAuth = () => useContext(AuthContext);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  // ✅ BUG-068: lets the onAuthStateChanged handler distinguish a deliberate
+  // sign-out (instant, no grace period) from an unexpected/spurious null.
+  const isExplicitSignOutRef = useRef(false);
 
   useEffect(() => {
+    // ── BUG-068 FIX: guard against spurious `null` auth states ──────────────
+    // onAuthStateChanged can fire null transiently — e.g. after the app
+    // resumes from background and a proactive ID-token refresh hits a
+    // network blip, or the AsyncStorage-backed persistence layer has a
+    // hiccup rehydrating (possibly correlated with AsyncStorage pressure,
+    // BUG-049). Previously ANY null was treated as "logged out" instantly,
+    // which immediately bounced an already-signed-in player to the
+    // Welcome/Login screen even if Firebase recovered a moment later.
+    //
+    // Now: once we've seen a real user, a subsequent null starts a short
+    // grace period and re-checks auth.currentUser before actually clearing
+    // state. Only a null that *persists* past the grace period is treated
+    // as a genuine logout.
+    let hasSeenUser = false;
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearGraceTimer = () => {
+      if (graceTimer) {
+        clearTimeout(graceTimer);
+        graceTimer = null;
+      }
+    };
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      const ts = new Date().toISOString();
+
       if (firebaseUser) {
+        clearGraceTimer();
+        hasSeenUser = true;
+        console.log(`🔑 [Auth ${ts}] onAuthStateChanged -> user ${firebaseUser.uid}`);
+
         // Check if user is banned before allowing access
         try {
           const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
           if (userDoc.exists() && userDoc.data().isBanned === true) {
             // Sign out immediately — don't let them into the app
+            isExplicitSignOutRef.current = true;
             await firebaseSignOut(auth);
             setUser(null);
             setLoading(false);
@@ -76,11 +109,84 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('Ban check failed (non-fatal):', e);
           // On error, allow login — better than locking out legitimate users
         }
+
+        setUser(firebaseUser);
+        setLoading(false);
+        return;
       }
-      setUser(firebaseUser);
-      setLoading(false);
+
+      // firebaseUser is null
+      console.log(`🔑 [Auth ${ts}] onAuthStateChanged -> null (hasSeenUser=${hasSeenUser})`);
+
+      if (!hasSeenUser) {
+        // Cold start with no persisted session — this is a legitimate
+        // "not logged in" state, no grace period needed.
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
+      if (isExplicitSignOutRef.current) {
+        // The user deliberately tapped "Log Out" — clear immediately,
+        // no grace period needed.
+        isExplicitSignOutRef.current = false;
+        clearGraceTimer();
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
+      // We previously had a real, signed-in user. Don't trust this null
+      // yet — give the SDK a moment to recover from a transient blip.
+      console.warn(`⚠️ [Auth ${ts}] Unexpected null after authenticated session — starting grace period before treating as logout`);
+      clearGraceTimer();
+      graceTimer = setTimeout(() => {
+        const stillNull = !auth.currentUser;
+        console.log(`🔑 [Auth ${ts}] Grace period elapsed — auth.currentUser is ${stillNull ? 'still null, logging out' : 'present, ignoring spurious null'}`);
+        if (stillNull) {
+          setUser(null);
+          setLoading(false);
+        }
+        // else: SDK recovered on its own — leave existing user state in place
+      }, 2500);
     });
-    return unsubscribe;
+
+    // ── BUG-068: proactive foreground token refresh ─────────────────────────
+    // When the app returns to the foreground, force a token refresh so any
+    // genuinely-invalid session (revoked/expired refresh token, disabled
+    // account) is surfaced and handled explicitly, rather than discovered
+    // later as an ambiguous null from onAuthStateChanged. Transient network
+    // errors during this refresh are logged but ignored — they don't mean
+    // the session is invalid.
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && auth.currentUser) {
+        const ts = new Date().toISOString();
+        auth.currentUser.getIdToken(true)
+          .then(() => console.log(`🔑 [Auth ${ts}] Foreground token refresh OK`))
+          .catch((err: any) => {
+            console.warn(`⚠️ [Auth ${ts}] Foreground token refresh failed:`, err?.code || err?.message || err);
+            const terminalCodes = [
+              'auth/user-token-expired',
+              'auth/user-disabled',
+              'auth/invalid-user-token',
+              'auth/user-not-found',
+            ];
+            if (terminalCodes.includes(err?.code)) {
+              console.warn(`⚠️ [Auth ${ts}] Token genuinely invalid (${err.code}) — signing out`);
+              isExplicitSignOutRef.current = true;
+              firebaseSignOut(auth).catch(() => {});
+            }
+            // Other errors (e.g. auth/network-request-failed) are transient —
+            // leave the session alone and let the next refresh attempt retry.
+          });
+      }
+    });
+
+    return () => {
+      clearGraceTimer();
+      unsubscribe();
+      appStateSub.remove();
+    };
   }, []);
 
   const signInWithEmail = async (email: string, password: string) => {
@@ -188,6 +294,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Not signed in with Google — fine
       }
 
+      isExplicitSignOutRef.current = true;
       await firebaseSignOut(auth);
       console.log('👋 Sign out complete');
     } catch (error) {

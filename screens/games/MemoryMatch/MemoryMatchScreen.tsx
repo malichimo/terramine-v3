@@ -22,6 +22,7 @@ import { soundService } from '../../../services/SoundService';
 import { GameState } from '../../../types/MemoryMatchTypes';
 import { initializeGame, tickTimer, checkGameOver, getGameResult } from '../../../utils/MemoryMatchEngine';
 import { calculateRewards, getDifficultyConfig } from '../../../utils/MemoryMatchConstants';
+import { getResourceNames } from '../../../utils/ResourceNames';
 import MemoryMatchBoard from './MemoryMatchBoard';
 
 interface MemoryMatchScreenProps {
@@ -41,6 +42,21 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isGameStarted, setIsGameStarted] = useState(false);
   const [isSavingResult, setIsSavingResult] = useState(false);
+
+  // ✅ BUG-058 FIX: in-screen win overlay state, mirrors the GoldRush/LaserBlast
+  // "celebrating" pattern — Play Again / Exit instead of an Alert that
+  // immediately navigates back.
+  const [showWinScreen, setShowWinScreen] = useState(false);
+  const [winResult, setWinResult] = useState<any>(null);
+  const [winRewards, setWinRewards] = useState<any>(null);
+  const [leveledUp, setLeveledUp] = useState(false);
+  const [newLevel, setNewLevel] = useState(propertyDetails.gameLevel);
+  const [adLevelLoading, setAdLevelLoading] = useState(false);
+
+  // ✅ Mirrors GoldRush's liveDetails pattern — route.params is a stale
+  // snapshot, so re-fetched details (XP, level) are stored here for the
+  // header/XP bar to stay accurate across "Play Again" and level-ups.
+  const [liveDetails, setLiveDetails] = useState(propertyDetails);
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const isMounted = useRef(true);
@@ -279,84 +295,26 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
 
       // Check for level-up
       const updated = await dbServicePhase2.getPropertyDetails(property.id);
-      const leveledUp = updated && updated.gameLevel > levelBefore;
+      const didLevelUp = !!(updated && updated.gameLevel > levelBefore);
 
       if (!isMounted.current) return;
       setIsSavingResult(false);
 
+      if (updated) {
+        setLiveDetails(updated);
+      }
+
       if (result.won) {
         soundService.play('win');
 
-        // Build rewards summary from what was actually saved to Firestore.
-        // Resource tier labels are mine-type-specific (stored as common/uncommon/rare/epic
-        // in Firestore but displayed with the proper in-game name for this mine type).
-        const resourceNames: Record<string, Record<string, string>> = {
-          rock:    { common: 'Gravel',     uncommon: 'Slate',      rare: 'Granite',    epic: 'Marble'           },
-          coal:    { common: 'Coal Dust',  uncommon: 'Lignite',    rare: 'Anthracite', epic: 'Diamond Coal'     },
-          gold:    { common: 'Gold Flakes',uncommon: 'Gold Nugget',rare: 'Gold Bar',   epic: 'Gold Ingot'       },
-          diamond: { common: 'Carbon',     uncommon: 'Raw Diamond',rare: 'Gem Diamond',epic: 'Flawless Diamond' },
-        };
-        const rn = resourceNames[property.mineType] ?? resourceNames.rock;
-        const tbLine       = earned?.tb       ? `💰 ${earned.tb} TB\n`                    : '';
-        const xpLine       = earned?.xp       ? `⭐ ${earned.xp} XP\n`                    : '';
-        const commonLine   = earned?.common   ? `🪨 ${earned.common} ${rn.common}\n`      : '';
-        const uncommonLine = earned?.uncommon ? `🟡 ${earned.uncommon} ${rn.uncommon}\n`  : '';
-        const rareLine     = earned?.rare     ? `🔵 ${earned.rare} ${rn.rare}\n`          : '';
-        const epicLine     = earned?.epic     ? `🟣 ${earned.epic} ${rn.epic}\n`          : '';
-        const rewardsBlock = `\nRewards Earned:\n${tbLine}${xpLine}${commonLine}${uncommonLine}${rareLine}${epicLine}`;
-
-        Alert.alert(
-          result.isPerfect ? '🌟 PERFECT GAME!' : '🎉 Victory!',
-          `You matched all pairs!\n\n` +
-            `Score: ${result.score.toLocaleString()}\n` +
-            `Moves: ${result.movesUsed}\n` +
-            `Time Left: ${result.timeRemaining}s\n` +
-            (result.isPerfect ? `\n🌟 No wrong guesses!\n` : '') +
-            rewardsBlock +
-            (leveledUp ? `\n⬆️ LEVEL UP! Now Level ${updated!.gameLevel}` : ''),
-          [
-            {
-              text: leveledUp ? 'Next ›' : 'OK',
-              onPress: () => {
-                if (leveledUp) {
-                  // Offer level-up ad
-                  Alert.alert(
-                    `⬆️ Level ${updated!.gameLevel} Unlocked!`,
-                    `Watch a short ad to play Level ${updated!.gameLevel} now?`,
-                    [
-                      {
-                        text: 'Skip',
-                        onPress: () => navigation.goBack(),
-                      },
-                      {
-                        text: `📺 Play Level ${updated!.gameLevel}`,
-                        onPress: async () => {
-                          try {
-                            await adService.showAd(
-                              async () => {
-                                const fresh = await dbServicePhase2.getPropertyDetails(property.id);
-                                navigation.replace('MemoryMatch', {
-                                  property,
-                                  propertyDetails: fresh ?? updated,
-                                });
-                              },
-                              () => navigation.goBack()
-                            );
-                          } catch {
-                            navigation.goBack();
-                          }
-                        },
-                      },
-                    ]
-                  );
-                } else {
-                  navigation.goBack();
-                }
-              },
-            },
-          ],
-          { cancelable: false }
-        );
+        // ✅ BUG-058 FIX: show an in-screen win overlay with Play Again / Exit
+        // (matches the GoldRush/LaserBlast "celebrating" pattern) instead of
+        // an Alert whose only option immediately navigated back.
+        setWinResult(result);
+        setWinRewards(earned);
+        setLeveledUp(didLevelUp);
+        setNewLevel(updated?.gameLevel ?? propertyDetails.gameLevel);
+        setShowWinScreen(true);
       } else {
         // Lost — just go back
         navigation.goBack();
@@ -383,6 +341,61 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
       ]
     );
   };
+
+  // ✅ BUG-058 FIX: "Play Again" — replays the same level without leaving
+  // this screen, instead of always exiting back to the mine screen.
+  const restart = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+    setShowWinScreen(false);
+    setWinResult(null);
+    setWinRewards(null);
+    setLeveledUp(false);
+    setNewLevel(propertyDetails.gameLevel);
+    setIsGameStarted(false);
+    setIsSavingResult(false);
+    const freshState = initializeGame(propertyDetails.gameLevel, property.mineType);
+    setGameState(freshState);
+  };
+
+  // ✅ BUG-058 FIX: "Watch Ad → Play Level X" from the win overlay when a
+  // level-up occurred — same ad-gated flow that used to live inside the
+  // win Alert's nested level-up prompt.
+  const handlePlayNextLevel = async () => {
+    setAdLevelLoading(true);
+    try {
+      const shown = await adService.showAd(
+        async () => {
+          const fresh = await dbServicePhase2.getPropertyDetails(property.id);
+          if (!isMounted.current) return;
+          setAdLevelLoading(false);
+          navigation.replace('MemoryMatch', {
+            property,
+            propertyDetails: fresh ?? liveDetails,
+            onBalanceUpdate,
+          });
+        },
+        () => {
+          // Ad closed without reward — stay on the win overlay so the
+          // player can retry or tap Exit themselves.
+          if (!isMounted.current) return;
+          setAdLevelLoading(false);
+        }
+      );
+
+      if (!shown) {
+        if (!isMounted.current) return;
+        setAdLevelLoading(false);
+        Alert.alert('Ad Not Ready', 'Ad failed to load. Try again later.');
+      }
+    } catch (error) {
+      console.error('Error showing level-up ad:', error);
+      if (!isMounted.current) return;
+      setAdLevelLoading(false);
+    }
+  };
+
 
   const getMineIcon = () => {
     switch (property.mineType) {
@@ -411,6 +424,9 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
     );
   }
 
+  // Mine-type-specific resource tier labels for the win overlay rewards row.
+  const resourceNames = getResourceNames(property.mineType);
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
@@ -423,7 +439,7 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
         <View style={styles.headerCenter}>
           <Text style={styles.title}>🧠 MEMORY MATCH</Text>
           <Text style={styles.subtitle}>
-            {getMineIcon()} Level {propertyDetails.gameLevel}
+            {getMineIcon()} Level {liveDetails.gameLevel}
           </Text>
         </View>
         <View style={styles.headerRight} />
@@ -474,17 +490,117 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
       {/* XP Progress */}
       <View style={styles.xpBar}>
         <Text style={styles.xpLabel}>
-          XP: {propertyDetails.gameXP} / 1000
+          XP: {liveDetails.gameXP} / 1000
         </Text>
         <View style={styles.xpBarOuter}>
           <View 
             style={[
               styles.xpBarInner, 
-              { width: `${(propertyDetails.gameXP / 1000) * 100}%` }
+              { width: `${(liveDetails.gameXP / 1000) * 100}%` }
             ]} 
           />
         </View>
       </View>
+
+      {/* ✅ BUG-058 FIX: Win overlay — Play Again / Exit (or Watch Ad → Next
+          Level / Exit on level-up) instead of an Alert that immediately
+          navigated back. */}
+      {showWinScreen && winResult && (
+        <View style={styles.winOverlay}>
+          <View style={styles.winPanel}>
+            <Text style={styles.winTitle}>
+              {winResult.isPerfect ? '🌟 PERFECT GAME!' : '🎉 Victory!'}
+            </Text>
+            <Text style={styles.winSubtitle}>You matched all pairs!</Text>
+
+            <View style={styles.winStatsRow}>
+              <Text style={styles.winStatText}>
+                Score: {winResult.score.toLocaleString()}
+              </Text>
+              <Text style={styles.winStatText}>
+                Moves: {winResult.movesUsed}
+              </Text>
+              <Text style={styles.winStatText}>
+                Time Left: {winResult.timeRemaining}s
+              </Text>
+            </View>
+            {winResult.isPerfect && (
+              <Text style={styles.perfectText}>🌟 No wrong guesses!</Text>
+            )}
+
+            {winRewards && (
+              <View style={styles.rewardRow}>
+                {!!winRewards.tb && (
+                  <View style={styles.rewardItem}>
+                    <Text style={styles.rewardVal}>+{winRewards.tb}</Text>
+                    <Text style={styles.rewardLbl}>TB</Text>
+                  </View>
+                )}
+                {!!winRewards.xp && (
+                  <View style={styles.rewardItem}>
+                    <Text style={styles.rewardVal}>+{winRewards.xp}</Text>
+                    <Text style={styles.rewardLbl}>XP</Text>
+                  </View>
+                )}
+                {!!winRewards.common && (
+                  <View style={styles.rewardItem}>
+                    <Text style={styles.rewardVal}>+{winRewards.common}</Text>
+                    <Text style={styles.rewardLbl}>{resourceNames.common}</Text>
+                  </View>
+                )}
+                {!!winRewards.uncommon && (
+                  <View style={styles.rewardItem}>
+                    <Text style={styles.rewardVal}>+{winRewards.uncommon}</Text>
+                    <Text style={styles.rewardLbl}>{resourceNames.uncommon}</Text>
+                  </View>
+                )}
+                {!!winRewards.rare && (
+                  <View style={styles.rewardItem}>
+                    <Text style={styles.rewardVal}>+{winRewards.rare}</Text>
+                    <Text style={styles.rewardLbl}>{resourceNames.rare}</Text>
+                  </View>
+                )}
+                {!!winRewards.epic && (
+                  <View style={styles.rewardItem}>
+                    <Text style={styles.rewardVal}>+{winRewards.epic}</Text>
+                    <Text style={styles.rewardLbl}>{resourceNames.epic}</Text>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {leveledUp && (
+              <View style={styles.levelUpBanner}>
+                <Text style={styles.levelUpTxt}>⬆️ LEVEL UP! Now Level {newLevel}</Text>
+              </View>
+            )}
+
+            <View style={styles.btnRow}>
+              {leveledUp ? (
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnGold, adLevelLoading && { opacity: 0.6 }]}
+                  onPress={handlePlayNextLevel}
+                  disabled={adLevelLoading}
+                >
+                  <Text style={styles.btnTxt}>
+                    {adLevelLoading ? '⏳ Loading...' : `📺 Play Level ${newLevel}`}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity style={styles.btn} onPress={restart}>
+                  <Text style={styles.btnTxt}>🔄 Play Again</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={[styles.btn, styles.btnGreen]}
+                onPress={() => navigation.goBack()}
+              >
+                <Text style={styles.btnTxt}>🚪 Exit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -607,5 +723,106 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: '#FFD700',
     borderRadius: 4,
+  },
+
+  // ── ✅ BUG-058 FIX: Win overlay styles ──────────────────────────────────
+  winOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  winPanel: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: '#3a2f1f',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#FFD700',
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    gap: 8,
+  },
+  winTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#FFD700',
+    textAlign: 'center',
+  },
+  winSubtitle: {
+    fontSize: 14,
+    color: '#FFF',
+    marginBottom: 4,
+  },
+  winStatsRow: {
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  winStatText: {
+    fontSize: 13,
+    color: '#EEE',
+  },
+  rewardRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 14,
+    marginVertical: 8,
+  },
+  rewardItem: {
+    alignItems: 'center',
+    minWidth: 50,
+  },
+  rewardVal: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#FFD700',
+  },
+  rewardLbl: {
+    fontSize: 11,
+    color: '#CCC',
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  levelUpBanner: {
+    backgroundColor: '#7CFC00',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    marginVertical: 6,
+  },
+  levelUpTxt: {
+    color: '#1a3a1a',
+    fontWeight: 'bold',
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  btnRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 10,
+  },
+  btn: {
+    backgroundColor: '#FFD700',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  btnGold: {
+    backgroundColor: '#F59E0B',
+  },
+  btnGreen: {
+    backgroundColor: '#4a7a4a',
+  },
+  btnTxt: {
+    color: '#1a1410',
+    fontWeight: 'bold',
+    fontSize: 14,
   },
 });

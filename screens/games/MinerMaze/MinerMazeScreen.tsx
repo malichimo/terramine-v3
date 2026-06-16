@@ -25,6 +25,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AdMobService } from '../../../services/AdMobService';
 import { soundService } from '../../../services/SoundService';
 import { dbServicePhase2 } from '../../../services/DatabaseServicePhase2';
+import { getResourceNames } from '../../../utils/ResourceNames';
 import { useAuth } from '../../../contexts/AuthContext';
 
 // ─────────────────────────────────────────────────────────────────
@@ -316,6 +317,22 @@ const Vignette = () => (
   </View>
 );
 
+// ✅ BUG-060 FIX: Difficulty is predetermined by mine level, not player choice.
+// Levels 1–10 → Easy, 11–30 → Medium, 31+ → Hard.
+function getDiffKeyForLevel(gameLevel: number): string {
+  if (gameLevel <= 10) return 'easy';
+  if (gameLevel <= 30) return 'medium';
+  return 'hard';
+}
+
+// ✅ BUG-060 FIX: Difficulty is predetermined by mine level, not player choice.
+// Levels 1–10 → Easy (8×10), 11–30 → Medium (15×19), 31+ → Hard (25×33)
+function getDiffKeyForLevel(gameLevel: number): string {
+  if (gameLevel <= 10) return 'easy';
+  if (gameLevel <= 30) return 'medium';
+  return 'hard';
+}
+
 // ─────────────────────────────────────────────────────────────────
 //  MAIN SCREEN
 // ─────────────────────────────────────────────────────────────────
@@ -348,7 +365,10 @@ export default function MinerMazeScreen({ route, navigation }: any) {
   const [newLevel,  setNewLevel]  = useState(1);
   const [adLevelLoading, setAdLevelLoading] = useState(false);
   const [liveDetails, setLiveDetails] = useState(propertyDetails);
-  const [diffKey, setDiffKey] = useState('easy');
+  // ✅ BUG-060 FIX: diffKey is derived from gameLevel — not a player-controlled
+  // state value. Updated after a level-up so "Try Again" on the end screen
+  // uses the new tier automatically.
+  const [diffKey, setDiffKey] = useState(() => getDiffKeyForLevel(propertyDetails?.gameLevel ?? 1));
   const [grid,    setGrid]    = useState<Cell[][]>([]);
   const [miner,   setMiner]   = useState<MinerPos>({ row:0, col:0, dir:'right' });
   // lookAngle: free rotation in degrees (0=right, 90=down, 180=left, 270=up)
@@ -705,6 +725,9 @@ export default function MinerMazeScreen({ route, navigation }: any) {
         if (won && updated.gameLevel > levelBefore) {
           setLeveledUp(true);
           setNewLevel(updated.gameLevel);
+          // ✅ BUG-060 FIX: re-derive difficulty for the new level so "Try Again"
+          // on the end screen uses the correct tier (e.g. Easy→Medium on Lv 11).
+          setDiffKey(getDiffKeyForLevel(updated.gameLevel));
         }
       }
     } catch (e) {
@@ -998,19 +1021,25 @@ export default function MinerMazeScreen({ route, navigation }: any) {
           <View style={st.row}><Text style={st.rIco}>❤️</Text><Text style={st.rTxt}>First Aid – restore 30 HP (watch ad)</Text></View>
         </View>
 
+        {/* ✅ BUG-060 FIX: Difficulty is predetermined by mine level.
+            Replaced the Easy/Medium/Hard selector buttons with a single
+            info card showing the auto-selected tier and what unlocks next. */}
         <Text style={st.secLbl}>Difficulty</Text>
-        <View style={st.dRow}>
-          {Object.entries(DIFFS).map(([k, d]) => (
-            <TouchableOpacity key={k}
-              style={[st.mDBtn, diffKey===k && st.dBtnOn]}
-              onPress={() => setDiffKey(k)}>
-              <Text style={{ fontSize:22 }}>{d.emoji}</Text>
-              <Text style={st.dLbl}>{d.label}</Text>
-              <Text style={st.dSub}>{d.cols}×{d.rows}</Text>
-              <Text style={st.dSub}>{d.timeLimit}s</Text>
-              <Text style={st.dTb}>+{d.tbReward} TB</Text>
-            </TouchableOpacity>
-          ))}
+        <View style={[st.box, { borderColor: '#FFD700' }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+            <Text style={{ fontSize: 26, marginRight: 10 }}>{cfg.emoji}</Text>
+            <View>
+              <Text style={[st.dLbl, { fontSize: 16 }]}>{cfg.label}</Text>
+              <Text style={st.dSub}>Level {liveDetails?.gameLevel ?? 1} Mine</Text>
+            </View>
+          </View>
+          <Text style={st.bTxt}>🗺️  Grid: {cfg.cols}×{cfg.rows}  ·  ⏱️ {cfg.timeLimit}s  ·  ⛏️ +{cfg.tbReward} TB</Text>
+          {diffKey === 'easy' && (
+            <Text style={[st.dSub, { marginTop: 6 }]}>Reach Level 11 to unlock Medium difficulty</Text>
+          )}
+          {diffKey === 'medium' && (
+            <Text style={[st.dSub, { marginTop: 6 }]}>Reach Level 31 to unlock Hard difficulty</Text>
+          )}
         </View>
 
         <TouchableOpacity style={st.bigBtn} onPress={() => { resultSaved.current = false; startGame(); }}>
@@ -1052,10 +1081,15 @@ export default function MinerMazeScreen({ route, navigation }: any) {
             )}
             <Text style={st.rHead}>Rewards</Text>
             <Text style={st.rLine}>⛏️  +{reward.tb} TB</Text>
-            {reward.common   > 0 && <Text style={st.rLine}>🪨  +{reward.common} {({'rock':'Gravel','coal':'Coal Dust','gold':'Gold Flakes','diamond':'Carbon'} as any)[property.mineType] ?? 'Common'}</Text>}
-            {reward.uncommon > 0 && <Text style={st.rLine}>🟡  +{reward.uncommon} {({'rock':'Slate','coal':'Lignite','gold':'Gold Nugget','diamond':'Raw Diamond'} as any)[property.mineType] ?? 'Uncommon'}</Text>}
-            {reward.rare     > 0 && <Text style={st.rLine}>🔵  +{reward.rare} {({'rock':'Granite','coal':'Anthracite','gold':'Gold Bar','diamond':'Gem Diamond'} as any)[property.mineType] ?? 'Rare'}</Text>}
-            {reward.epic     > 0 && <Text style={st.rLine}>🟣  +{reward.epic} {({'rock':'Marble','coal':'Diamond Coal','gold':'Gold Ingot','diamond':'Flawless Diamond'} as any)[property.mineType] ?? 'Epic'}</Text>}
+            {(() => {
+              const rn = getResourceNames(property.mineType);
+              return <>
+                {reward.common   > 0 && <Text style={st.rLine}>🪨  +{reward.common} {rn.common}</Text>}
+                {reward.uncommon > 0 && <Text style={st.rLine}>🟡  +{reward.uncommon} {rn.uncommon}</Text>}
+                {reward.rare     > 0 && <Text style={st.rLine}>🔵  +{reward.rare} {rn.rare}</Text>}
+                {reward.epic     > 0 && <Text style={st.rLine}>🟣  +{reward.epic} {rn.epic}</Text>}
+              </>;
+            })()}
             <Text style={st.rLine}>📊  Score: {score.toLocaleString()}</Text>
             <Text style={st.rLine}>👣  Steps: {steps}</Text>
             <View style={st.xpRow}>

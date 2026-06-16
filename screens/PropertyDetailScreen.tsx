@@ -24,6 +24,7 @@ import { DatabaseService } from '../services/DatabaseService';
 import { formatTimeUntilReset } from '../utils/TimeUtils';
 import { useAuth } from '../contexts/AuthContext';
 import { getDifficultyConfig as getMemoryMatchDifficulty } from '../utils/MemoryMatchConstants';
+import { getGoldRushGridSize, getDifficultyLabel as getGoldRushDifficultyLabel } from '../utils/GoldRushEngine';
 
 const dbService = new DatabaseService();
 
@@ -515,7 +516,7 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
           <View style={[styles.statRow, styles.statRowMargin]}>
             <Text style={styles.statLabel}>Earning:</Text>
             <Text style={[styles.statValue, { color: getMineColor() }]}>
-              ${(currentRate * 60 * 24 * 30).toExponential(2)}/mo
+              ${(currentRate * 60 * 24 * 30).toFixed(6)}/mo
             </Text>
           </View>
 
@@ -597,13 +598,28 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
                     {d.gridRows}x{d.gridCols} Grid • {d.timeLimit}s • {d.totalPairs} pairs
                   </Text>
                 );
-              } else {
-                // GoldRush / MinerMaze: uses square gridSize
-                const d = dbServicePhase2.getGameDifficulty(propertyDetails.gameLevel);
+              } else if (property.mineType === 'gold') {
+                // ✅ BUG-061 FIX: GoldRush uses getGoldRushGridSize (starts at 4×4)
+                // not getGameDifficulty (starts at 3×3) — different sizing functions.
+                const gridSize = getGoldRushGridSize(propertyDetails.gameLevel);
+                const label    = getGoldRushDifficultyLabel(propertyDetails.gameLevel);
+                const timeLim  = dbServicePhase2.getGameDifficulty(propertyDetails.gameLevel).timeLimit;
                 return (
                   <Text style={styles.gameDifficulty}>
-                    {d.gridSize}x{d.gridSize} Grid • {d.timeLimit}s
-                    {d.movesLimit ? ` • ${d.movesLimit} moves` : ''}
+                    {gridSize}×{gridSize} Grid • {timeLim}s • {label}
+                  </Text>
+                );
+              } else {
+                // ✅ BUG-060 FIX: MinerMaze (coal) uses its own DIFFS tiers defined
+                // in MinerMazeScreen — cols×rows grids, not the 3×3/4×4 gridSize from
+                // getGameDifficulty() which belongs to a different game entirely.
+                // Levels 1–10 → Easy (8×10), 11–30 → Medium (15×19), 31+ → Hard (25×33)
+                const mazeDiff = propertyDetails.gameLevel <= 10 ? { label:'Easy',   emoji:'🟢', cols:8,  rows:10, timeLimit:240 }
+                               : propertyDetails.gameLevel <= 30 ? { label:'Medium', emoji:'🟡', cols:15, rows:19, timeLimit:150 }
+                               :                                   { label:'Hard',   emoji:'🔴', cols:25, rows:33, timeLimit:90  };
+                return (
+                  <Text style={styles.gameDifficulty}>
+                    {mazeDiff.emoji} {mazeDiff.label} • {mazeDiff.cols}×{mazeDiff.rows} • {mazeDiff.timeLimit}s
                   </Text>
                 );
               }

@@ -17,6 +17,8 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import { useAuth } from '../contexts/AuthContext';
 import { ModerationService } from '../services/ModerationService';
 import { DeepLinkService } from '../services/DeepLinkService';
+import { ReferralService } from '../services/ReferralService';
+import { auth } from '../firebaseConfig';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -131,7 +133,6 @@ export default function LoginScreen() {
           // Apply referral code if provided
           if (referralCode.trim()) {
             try {
-              const { ReferralService } = require('../services/ReferralService');
               const applied = await ReferralService.applyReferralCode(result.uid, referralCode.trim());
               if (applied) {
                 await DeepLinkService.clearPendingCode(); // clear saved deep link code
@@ -166,10 +167,44 @@ export default function LoginScreen() {
     }
   };
 
+  // ✅ BUG-036 FIX: After Google/Apple sign-in, check for a pending deep-link
+  // referral code and apply it silently if this user hasn't already been referred.
+  // auth.currentUser is synchronously set by Firebase after signInWithCredential
+  // resolves, so this is safe to call immediately after await signInWithGoogle/Apple().
+  const applyPendingReferralIfEligible = async () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+
+    const pendingCode = await DeepLinkService.getPendingCode();
+    if (!pendingCode) return;
+
+    try {
+      const applied = await ReferralService.applyReferralCode(uid, pendingCode);
+      if (applied) {
+        await DeepLinkService.clearPendingCode();
+        console.log('[BUG-036] Pending referral code auto-applied for Google/Apple user:', pendingCode);
+        // Silent apply — no Alert, since the user didn't explicitly enter a code.
+        // The TB reward fires later at first purchase; the ReferralScreen will
+        // show the referral stats once that happens.
+      } else {
+        // Code was invalid or a self-referral — clear it so it doesn't persist
+        await DeepLinkService.clearPendingCode();
+        console.log('[BUG-036] Pending referral code invalid or self-referral, cleared:', pendingCode);
+      }
+    } catch (e) {
+      // Non-fatal — don't block sign-in for a referral failure
+      console.warn('[BUG-036] Failed to apply pending referral code:', e);
+    }
+  };
+
   const handleGoogleSignIn = async () => {
     try {
       setGoogleLoading(true);
       await signInWithGoogle();
+      // ✅ BUG-036 FIX: Apply any pending deep-link referral code now that
+      // we have a signed-in user. Email sign-up does this in handleSignUp;
+      // Google/Apple bypasses that flow entirely.
+      await applyPendingReferralIfEligible();
     } catch (error: any) {
       Alert.alert('Google Sign-In Failed', error.message);
     } finally {
@@ -181,6 +216,8 @@ export default function LoginScreen() {
     try {
       setAppleLoading(true);
       await signInWithApple();
+      // ✅ BUG-036 FIX: same as handleGoogleSignIn above
+      await applyPendingReferralIfEligible();
     } catch (error: any) {
       // ERR_REQUEST_CANCELED means the user dismissed — not an error worth alerting
       if (error.code !== 'ERR_REQUEST_CANCELED') {

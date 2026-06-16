@@ -7,7 +7,7 @@ import {
   ActivityIndicator, TextInput, Modal,
 } from 'react-native';
 import { sendPasswordResetEmail, EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
-import { deleteDoc, doc } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebaseConfig';
 import { useAuth } from '../contexts/AuthContext';
 import Constants from 'expo-constants';
@@ -16,6 +16,7 @@ import * as Notifications from 'expo-notifications';
 import { NotificationService } from '../services/NotificationService';
 import { Ionicons } from '@expo/vector-icons';
 import FeedbackModal from '../components/FeedbackModal';
+import { ReferralService } from '../services/ReferralService';
 
 // ── URLs — swap these once you have real hosted pages ──────────────────────
 const PRIVACY_POLICY_URL = 'https://terramine.app/privacy';
@@ -44,11 +45,30 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
   const [showConfirmPw, setShowConfirmPw] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
 
+  // ✅ BUG-036 FIX: Referral code entry for Google/Apple Sign-In users
+  // These users bypass the email signup flow where the code field normally appears.
+  const [referralModalVisible, setReferralModalVisible] = useState(false);
+  const [referralCodeInput, setReferralCodeInput] = useState('');
+  const [submittingReferral, setSubmittingReferral] = useState(false);
+  const [referralEligible, setReferralEligible] = useState(false); // hide row once used
+
   // Load persisted sound prefs on mount
   useEffect(() => {
     setSfxEnabled(soundService.isSfxEnabled());
     setMusicEnabled(soundService.isMusicEnabled());
   }, []);
+
+  // ✅ BUG-036: Check whether this user is eligible to enter a referral code.
+  // Hide the row if they've already been referred or completed a referral reward.
+  useEffect(() => {
+    if (!user) return;
+    getDoc(doc(db, 'users', user.uid)).then(snap => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      const alreadyUsed = !!data.referredBy || !!data.hasCompletedReferral;
+      setReferralEligible(!alreadyUsed);
+    }).catch(() => {});
+  }, [user]);
 
   const appVersion = Constants.expoConfig?.version ?? '1.0.0';
   const buildNumber =
@@ -128,6 +148,37 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
     setShowNewPw(false);
     setShowConfirmPw(false);
     setChangePasswordVisible(true);
+  };
+
+  // ✅ BUG-036: Submit a referral code entered post sign-up.
+  const handleSubmitReferral = async () => {
+    if (!user) return;
+    const code = referralCodeInput.trim().toUpperCase();
+    if (!code) {
+      Alert.alert('Enter a Code', 'Please enter a referral code before submitting.');
+      return;
+    }
+    setSubmittingReferral(true);
+    try {
+      const success = await ReferralService.applyReferralCode(user.uid, code);
+      if (success) {
+        setReferralEligible(false);
+        setReferralModalVisible(false);
+        setReferralCodeInput('');
+        Alert.alert(
+          '🎉 Referral Code Applied!',
+          "Your friend's code has been saved. You'll both receive 1,000 TB when you buy your first TerraAcre!"
+        );
+      } else {
+        // validateCode returned null — code doesn't exist — or self-referral
+        Alert.alert('Invalid Code', 'That referral code wasn\'t found. Double-check it and try again.');
+      }
+    } catch (e) {
+      console.error('Referral submit error:', e);
+      Alert.alert('Error', 'Something went wrong. Please try again.');
+    } finally {
+      setSubmittingReferral(false);
+    }
   };
 
   const handleChangePassword = async () => {
@@ -327,6 +378,29 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
             </View>
             <Text style={styles.rowChevron}>›</Text>
           </TouchableOpacity>
+
+          {/* ✅ BUG-036 FIX: Referral code entry for users who signed up via
+              Google/Apple and never saw the email signup referral field.
+              Hidden once a code has been applied or a referral completed. */}
+          {referralEligible && (
+            <>
+              <View style={styles.divider} />
+              <TouchableOpacity
+                style={styles.row}
+                onPress={() => { setReferralCodeInput(''); setReferralModalVisible(true); }}
+                activeOpacity={0.7}
+              >
+                <View style={styles.rowLeft}>
+                  <Text style={styles.rowIcon}>🎁</Text>
+                  <View>
+                    <Text style={styles.rowTitle}>Enter Referral Code</Text>
+                    <Text style={styles.rowSubtitle}>Have a friend's code? Enter it here</Text>
+                  </View>
+                </View>
+                <Text style={styles.rowChevron}>›</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
 
         {/* ── LEGAL ── */}
@@ -413,6 +487,57 @@ export default function SettingsScreen({ onSignOut }: SettingsScreenProps) {
 
         <View style={styles.footer} />
       </ScrollView>
+
+      {/* ── Referral Code Modal (BUG-036) ── */}
+      <Modal
+        visible={referralModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setReferralModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>🎁 Enter Referral Code</Text>
+            <Text style={styles.modalSubtitle}>
+              Enter a friend's referral code below. You'll both receive 1,000 TB when you buy your first TerraAcre!
+            </Text>
+
+            <Text style={styles.fieldLabel}>Referral Code</Text>
+            <View style={styles.pwRow}>
+              <TextInput
+                style={[styles.pwInput, { letterSpacing: 2, textTransform: 'uppercase' }]}
+                placeholder="e.g. TM-AB3X9"
+                placeholderTextColor="#aaa"
+                value={referralCodeInput}
+                onChangeText={t => setReferralCodeInput(t.toUpperCase())}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                maxLength={10}
+              />
+            </View>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => setReferralModalVisible(false)}
+                disabled={submittingReferral}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.saveButton}
+                onPress={handleSubmitReferral}
+                disabled={submittingReferral}
+              >
+                {submittingReferral
+                  ? <ActivityIndicator color="white" size="small" />
+                  : <Text style={styles.saveButtonText}>Apply Code</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── Change Password Modal ── */}
       <FeedbackModal

@@ -21,6 +21,7 @@ import { PropertyDetails, ResourcePool } from '../types/PropertyTypes';
 import { useAuth } from '../contexts/AuthContext';
 import { dbServicePhase2 } from '../services/DatabaseServicePhase2';
 import { AdMobService } from '../services/AdMobService';
+import { getResourceNames } from '../utils/ResourceNames';
 
 interface UpgradeScreenProps {
   route: {
@@ -86,20 +87,9 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
     }
   };
 
-  const getResourceNames = () => {
-    switch (property.mineType) {
-      case 'rock':
-        return { common: 'Gravel', uncommon: 'Slate', rare: 'Granite', epic: 'Marble' };
-      case 'coal':
-        return { common: 'Lignite', uncommon: 'Soft Coal', rare: 'Anthracite', epic: 'Diamond' };
-      case 'gold':
-        return { common: 'Gold Dust', uncommon: 'Gold Nugget', rare: 'Gold Bar', epic: 'Pure Gold' };
-      case 'diamond':
-        return { common: 'Diamond Chip', uncommon: 'Raw Diamond', rare: 'Cut Diamond', epic: 'Flawless Diamond' };
-      default:
-        return { common: 'Common', uncommon: 'Uncommon', rare: 'Rare', epic: 'Epic' };
-    }
-  };
+  // ✅ BUG-064/065 FIX: resource tier names now come from the shared
+  // utils/ResourceNames.ts table (was a locally-drifted copy with wrong
+  // Gold common/epic and Coal common/uncommon/epic names).
 
   // Guard: productionLevel may be undefined on newly-initialized Firestore docs
   const currentLevel = propertyDetails?.productionLevel ?? 1;
@@ -144,7 +134,7 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
 
     Alert.alert(
       'Confirm Upgrade',
-      `Upgrade to Level ${nextLevel} (+${nextBonus}% production)?\n\nThis will cost:\n• ${formatNumber(upgradeCost.common)} ${getResourceNames().common}\n• ${formatNumber(upgradeCost.uncommon)} ${getResourceNames().uncommon}\n• ${formatNumber(upgradeCost.rare)} ${getResourceNames().rare}\n• ${formatNumber(upgradeCost.epic)} ${getResourceNames().epic}`,
+      `Upgrade to Level ${nextLevel} (+${nextBonus}% production)?\n\nThis will cost:\n• ${formatNumber(upgradeCost.common)} ${getResourceNames(property.mineType).common}\n• ${formatNumber(upgradeCost.uncommon)} ${getResourceNames(property.mineType).uncommon}\n• ${formatNumber(upgradeCost.rare)} ${getResourceNames(property.mineType).rare}\n• ${formatNumber(upgradeCost.epic)} ${getResourceNames(property.mineType).epic}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -238,7 +228,7 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
     );
   }
 
-  const resourceNames = getResourceNames();
+  const resourceNames = getResourceNames(property.mineType);
 
   return (
     <SafeAreaView style={styles.container}>
