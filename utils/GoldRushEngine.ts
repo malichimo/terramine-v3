@@ -171,6 +171,51 @@ export function getGoldRushGridSize(gameLevel: number): number {
   return 6;
 }
 
+/**
+ * ✅ BUG-048 FIX: GoldRush-specific tap budget.
+ *
+ * Previously GoldRushGame used getGameDifficulty().movesLimit which was
+ * designed for MinerMaze (a completely different mechanic) and returned null
+ * for levels 1–25 — meaning no limit at all on the easiest levels.
+ *
+ * This function derives a tap budget from the actual GoldRush inner-grid
+ * geometry:
+ *   - Inner cells = gridSize × (gridSize - 2)  (col 0 and col n-1 are grass)
+ *   - Budget starts generous (4× inner cells) and tightens with level
+ *   - Levels 1–5 have no limit (learning curve)
+ *
+ * Grid tiers:
+ *   Levels  1– 5: no limit (tutorial)
+ *   Levels  6–15: 4×4 grid, budget 32 → 20 taps
+ *   Levels 16–35: 5×5 grid, budget 53 → 38 taps
+ *   Levels 36+:   6×6 grid, budget 72 → 40 taps (floor)
+ */
+export function getGoldRushMovesLimit(gameLevel: number): number | null {
+  if (gameLevel <= 5) return null;
+
+  const gs = getGoldRushGridSize(gameLevel);
+  const innerCells = gs * (gs - 2);
+
+  if (gameLevel <= 15) {
+    return Math.max(20, Math.round(innerCells * (4 - (gameLevel - 6) * 0.2)));
+  }
+  if (gameLevel <= 35) {
+    return Math.max(28, Math.round(innerCells * (3.5 - (gameLevel - 16) * 0.05)));
+  }
+  return Math.max(40, Math.round(innerCells * (3.0 - (gameLevel - 36) * 0.02)));
+}
+
+/**
+ * ✅ BUG-048 FIX: GoldRush-specific "perfect game" tap threshold.
+ *
+ * Previously: gridSize * 2 (8/10/12 taps) — far too tight for a winding path.
+ * Now: gridSize * 3 (12/15/18 taps) — rewards a clean first-attempt solve
+ * without requiring the player to know the solution in advance.
+ */
+export function getGoldRushPerfectThreshold(gridSize: number): number {
+  return gridSize * 3;
+}
+
 // ─── Puzzle generation ────────────────────────────────────────────────────────
 //
 // Layout:

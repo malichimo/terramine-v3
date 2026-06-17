@@ -40,6 +40,8 @@ import {
   calculateScore,
   getDifficultyLabel,
   getGoldRushGridSize,
+  getGoldRushMovesLimit,
+  getGoldRushPerfectThreshold,
 } from '../../../utils/GoldRushEngine';
 
 // ─── Assets ───────────────────────────────────────────────────────────────────
@@ -78,7 +80,10 @@ export default function GoldRushGame({ route, navigation }: any) {
   const difficulty = dbServicePhase2.getGameDifficulty(gameLevel);
   const gridSize   = getGoldRushGridSize(gameLevel); // GoldRush starts at 4×4
   const timeLimit  = difficulty.timeLimit;
-  const movesLimit = difficulty.movesLimit ?? null;
+  // ✅ BUG-048 FIX: use GoldRush-specific tap budget instead of
+  // getGameDifficulty().movesLimit which was designed for MinerMaze and
+  // returned null for levels 1–25 (no limit at all on the easiest levels).
+  const movesLimit = getGoldRushMovesLimit(gameLevel);
   const TILE_SIZE  = Math.floor(Math.min(AVAIL_W, AVAIL_H) / gridSize);
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -285,7 +290,9 @@ export default function GoldRushGame({ route, navigation }: any) {
     if (resultSaved.current || !user) return;
     resultSaved.current = true;
     try {
-      const perfect = won && finalTaps <= gridSize * 2;
+      // ✅ BUG-048 FIX: perfect threshold was gridSize * 2 (8/10/12 taps) —
+      // far too tight for a winding path. Now gridSize * 3 (12/15/18 taps).
+      const perfect = won && finalTaps <= getGoldRushPerfectThreshold(gridSize);
       const levelBefore = propertyDetails?.gameLevel ?? gameLevel;
       const earned = await dbServicePhase2.recordGameResult(
         user.uid, property.id, property.mineType,

@@ -106,9 +106,18 @@ export default function BoostModal({
     // ✅ FIX: Hard guard — if already showing, do nothing
     if (isShowingAd.current) return;
 
+    // ✅ PRELOAD FIX: Instead of immediately rejecting with "Ad Not Ready",
+    // wait up to 5 seconds for the ad to finish loading. After watching an ad,
+    // the next one takes 1–3s to load — players who tap again quickly were
+    // hitting this wall after just 2–3 ads and thinking ads were broken.
     if (!isAdReady) {
-      Alert.alert('Ad Not Ready', 'Please wait for the ad to load.');
-      return;
+      setIsAdLoading(true);
+      const ready = await adService.waitUntilReady(5000);
+      setIsAdLoading(false);
+      if (!ready) {
+        Alert.alert('Ad Not Ready', 'The ad is still loading. Please wait a moment and try again.');
+        return;
+      }
     }
 
     // ✅ FIX: Lock immediately before any async work
@@ -135,11 +144,10 @@ export default function BoostModal({
       console.error('Error showing rewarded ad:', error);
       Alert.alert('Error', 'Failed to show ad. Please try again.');
     } finally {
-      // ✅ FIX: Release lock and reload next ad with a safe delay
+      // ✅ FIX: Release lock. AdMobService.initializeAd() already fires after
+      // 500ms internally when the ad closes — no need to wait 1s here too.
+      // The polling interval will pick up isAdReady when it's ready.
       isShowingAd.current = false;
-      setTimeout(() => {
-        loadAd();
-      }, 1000);
     }
   };
 

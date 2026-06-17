@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef, useImperativeHandle } from 'react';
+import React, { useState, useEffect, useRef, useImperativeHandle, useMemo } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Alert, ScrollView, TextInput, Linking, AppState, Image } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapView, { Polygon, PROVIDER_GOOGLE, Marker } from 'react-native-maps';
 import * as ImagePicker from 'expo-image-picker';
 import { LocationService, Coordinates } from '../services/LocationService';
@@ -70,6 +71,20 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const [showTradeInModal, setShowTradeInModal] = useState(false);
   const [findingNearestTA, setFindingNearestTA] = useState(false);
   const [gridSquares, setGridSquares] = useState<Map<string, GridSquare>>(new Map());
+
+  // ✅ BUG-049 FIX: Track last grid rebuild position so we skip rebuilds when
+  // the user hasn't moved enough to change which grid squares are visible.
+  // One GRID_SIZE unit = ~10m. Rebuilding for sub-cell movement is pure waste.
+  const lastGridRebuildRef = useRef<{ lat: number; lng: number } | null>(null);
+  // Minimum movement (in degrees) to trigger a grid rebuild — ~8 meters,
+  // just under one grid cell so we catch the crossing but ignore GPS jitter.
+  const GRID_REBUILD_THRESHOLD = 0.00008;
+
+  // ✅ BUG-049 FIX: read device bottom inset so floating buttons clear the
+  // Android gesture nav bar (typically 48px on gesture-nav devices, 0 on
+  // button-nav devices, and 0 on iOS where SafeAreaView already handles it).
+  const insets = useSafeAreaInsets();
+  const bottomInset = insets.bottom;
 
   // ✅ BUG-029 FOLLOW-UP FIX: Cache of all properties within ~100 miles of the
   // user's location. Loaded once on mount and refreshed when the user moves >10
@@ -371,11 +386,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     }
   };
 
-  useEffect(() => {
-    if (userLocation) {
-      loadNearbyProperties(userLocation);
-    }
-  }, [userLocation]);
+  // ✅ BUG-049 FIX: Removed separate userLocation useEffect here — consolidated
+  // below with ownedProperties.length and allProperties.length into one effect.
   
   useEffect(() => {
     initializeLocation();
@@ -509,18 +521,24 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     }
   };
 
+  // ✅ BUG-049 FIX: Consolidated grid rebuild trigger.
+  // Was three separate useEffects all calling loadNearbyProperties:
+  //   - [userLocation] — every GPS tick (every 10s) = 500 polygon rebuilds
+  //   - [ownedProperties.length] — on purchase
+  //   - [allProperties.length] — on initial load
+  // On a property purchase all three fired simultaneously = 3× 500 polygon recreations.
+  // Now one effect, with the movement guard inside loadNearbyProperties handling
+  // GPS jitter. Ownership changes reset the guard to force an immediate rebuild.
   useEffect(() => {
-    if (userLocation) {
-      loadNearbyProperties(userLocation);
+    if (!userLocation) return;
+    // Reset movement guard on ownership changes so the new property
+    // appears immediately regardless of whether the user has moved.
+    const isOwnershipChange = ownedProperties.length > 0 || allProperties.length > 0;
+    if (isOwnershipChange) {
+      lastGridRebuildRef.current = null;
     }
-  }, [ownedProperties.length]);
-
-  useEffect(() => {
-    // Fallback: if radius cache hasn't loaded yet, use allProperties prop
-    if (userLocation && allProperties.length > 0 && radiusPropertiesRef.current.length === 0) {
-      loadNearbyProperties(userLocation);
-    }
-  }, [allProperties.length]);
+    loadNearbyProperties(userLocation);
+  }, [userLocation?.latitude, userLocation?.longitude, ownedProperties.length, allProperties.length]);
 
   // Auto-zoom to user location on first load
   useEffect(() => {
@@ -586,6 +604,22 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   };
 
   const loadNearbyProperties = (location: Coordinates, propertiesOverride?: GridSquare[]) => {
+    // ✅ BUG-049 FIX: Skip grid rebuild if user hasn't moved enough to change
+    // which grid cells are visible. GPS fires every 10s even when stationary —
+    // without this guard every tick rebuilds 500 polygons for no reason.
+    // propertiesOverride bypasses the guard (explicit refresh after purchase/check-in).
+    if (!propertiesOverride) {
+      const last = lastGridRebuildRef.current;
+      if (last) {
+        const dLat = Math.abs(location.latitude  - last.lat);
+        const dLng = Math.abs(location.longitude - last.lng);
+        if (dLat < GRID_REBUILD_THRESHOLD && dLng < GRID_REBUILD_THRESHOLD) {
+          return; // user hasn't moved a meaningful distance — skip rebuild
+        }
+      }
+      lastGridRebuildRef.current = { lat: location.latitude, lng: location.longitude };
+    }
+
     const visibleGridIds = getVisibleGridSquares(location.latitude, location.longitude, 500);
     const newGridSquares = new Map<string, GridSquare>();
 
@@ -1295,6 +1329,37 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     }, 900);
   };
 
+  // ✅ BUG-049 FIX: Memoize the polygon list so React doesn't recreate all
+  // 500 Polygon components when unrelated state changes (e.g. checkInMessage,
+  // boostModal, showLegend). Only re-renders when gridSquares data or the
+  // selected square changes (which requires a color/stroke update).
+  const gridPolygons = useMemo(() => (
+    Array.from(gridSquares.entries()).map(([squareId, square]) => {
+      const isSelected = selectedSquare?.id === squareId;
+      return (
+        <Polygon
+          key={`polygon-${squareId}`}
+          coordinates={square.corners}
+          fillColor={
+            isSelected ? 'rgba(255, 255, 255, 0.6)'
+            : square.isOwned
+              ? square.ownerId === userId ? getMineColor(square.mineType) : 'rgba(255, 152, 0, 0.6)'
+              : 'rgba(76, 175, 80, 0.3)'
+          }
+          strokeColor={
+            isSelected ? '#FFFFFF'
+            : square.isOwned
+              ? square.ownerId === userId ? '#2196F3' : '#E65100'
+              : '#4CAF50'
+          }
+          strokeWidth={isSelected ? 4 : 2}
+          tappable
+          onPress={() => handleSquarePress(square)}
+        />
+      );
+    })
+  ), [gridSquares, selectedSquare?.id, userId]);
+
   return (
     <View style={styles.container}>
       <MapView
@@ -1311,18 +1376,8 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         showsMyLocationButton
         followsUserLocation={false}
       >
-        {Array.from(gridSquares.entries()).map(([squareId, square]) => (
-          <Polygon
-            key={`polygon-${squareId}`}
-            coordinates={square.corners}
-            fillColor={getSquareFillColor(square)}
-            strokeColor={getSquareStrokeColor(square)}
-            strokeWidth={selectedSquare?.id === square.id ? 4 : 2}
-            tappable
-            onPress={() => handleSquarePress(square)}
-          />
-        ))}
-        
+        {gridPolygons}
+
         {userLocation && (
           <Marker
             coordinate={{
@@ -1417,7 +1472,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
 
       {/* Legend Toggle Button */}
       <TouchableOpacity
-        style={styles.legendButton}
+        style={[styles.legendButton, { bottom: 140 + bottomInset }]}
         onPress={() => setShowLegend(!showLegend)}
       >
         <Text style={styles.legendButtonText}>🗺 Legend</Text>
@@ -1425,7 +1480,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
 
       {/* Referral Button */}
       <TouchableOpacity
-        style={styles.referralButton}
+        style={[styles.referralButton, { bottom: 192 + bottomInset }]}
         onPress={() => onNavigateToReferral?.()}
         activeOpacity={0.85}
       >
@@ -1435,7 +1490,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       {/* Find Nearest TA Button */}
       {ownedProperties.length > 0 && (
         <TouchableOpacity
-          style={styles.findTAButton}
+          style={[styles.findTAButton, { bottom: 244 + bottomInset }]}
           onPress={handleFindNearestTA}
           activeOpacity={0.85}
           disabled={findingNearestTA}
@@ -1455,7 +1510,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
 
       {/* Leaderboard Button */}
       <TouchableOpacity
-        style={styles.leaderboardButton}
+        style={[styles.leaderboardButton, { bottom: 296 + bottomInset }]}
         onPress={() => setShowLeaderboard(true)}
         activeOpacity={0.85}
       >
@@ -1464,7 +1519,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
 
       {/* Legend Overlay */}
       {showLegend && (
-        <View style={styles.legendPanel}>
+        <View style={[styles.legendPanel, { bottom: 185 + bottomInset }]}>
           <Text style={styles.legendTitle}>Map Legend</Text>
           <View style={styles.legendRow}>
             <View style={[styles.legendSwatch, { backgroundColor: 'rgba(76, 175, 80, 0.3)', borderColor: '#4CAF50' }]} />
@@ -1711,7 +1766,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
           selectedSquare being non-null means a property panel is showing. */}
       {!selectedSquare && !showCheckInModal && !showBoostModal && !showCommunityModal && (
         <TouchableOpacity
-          style={styles.communityButton}
+          style={[styles.communityButton, { bottom: 140 + bottomInset }]}
           onPress={() => setShowCommunityModal(true)}
         >
           <Text style={styles.communityButtonText}>🌐 Community</Text>
@@ -2026,7 +2081,6 @@ const styles = StyleSheet.create({
   },
   legendButton: {
     position: 'absolute',
-    bottom: 140,
     right: 16,
     backgroundColor: 'white',
     paddingHorizontal: 14,
@@ -2047,7 +2101,6 @@ const styles = StyleSheet.create({
   },
   findTAButton: {
     position: 'absolute',
-    bottom: 244,
     right: 16,
     backgroundColor: '#1565C0',
     paddingHorizontal: 14,
@@ -2066,7 +2119,6 @@ const styles = StyleSheet.create({
   },
   leaderboardButton: {
     position: 'absolute',
-    bottom: 296,
     right: 16,
     backgroundColor: '#1a3a1a',
     paddingHorizontal: 14,
@@ -2085,7 +2137,6 @@ const styles = StyleSheet.create({
   },
   referralButton: {
     position: 'absolute',
-    bottom: 192,
     right: 16,
     backgroundColor: '#FFD700',
     paddingHorizontal: 14,
@@ -2104,7 +2155,6 @@ const styles = StyleSheet.create({
   },
   legendPanel: {
     position: 'absolute',
-    bottom: 185,
     right: 16,
     backgroundColor: 'white',
     borderRadius: 12,
@@ -2149,7 +2199,6 @@ const styles = StyleSheet.create({
   // ── Community button (bottom-left floating) ──────────────────────────────
   communityButton: {
     position: 'absolute',
-    bottom: 140,
     left: 16,
     backgroundColor: '#1565C0',
     paddingHorizontal: 14,

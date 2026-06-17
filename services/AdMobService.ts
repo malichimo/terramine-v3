@@ -126,7 +126,21 @@ export class AdMobService {
   }
 
   async showAd(onRewarded: () => void, onAdClosed: () => void): Promise<boolean> {
-    if (!this.isLoaded || !this.rewardedAd) {
+    // ✅ PRELOAD FIX: If the ad isn't ready yet, wait up to 5 seconds instead
+    // of immediately returning false. Fast players (especially at low game
+    // levels) can win before the 1–3s network request completes. Waiting
+    // briefly is much better UX than "Ad not available" on a fresh win.
+    if (!this.isLoaded) {
+      console.log('⏳ Ad not ready — waiting up to 5s...');
+      const ready = await this.waitUntilReady(5000);
+      if (!ready) {
+        console.log('❌ Ad not loaded after waiting');
+        this.loadAd().catch(() => {});
+        return false;
+      }
+    }
+
+    if (!this.rewardedAd) {
       console.log('❌ Ad not loaded yet');
       this.loadAd().catch(() => {});
       return false;
@@ -177,5 +191,49 @@ export class AdMobService {
 
   isAdLoading(): boolean {
     return this.isLoading;
+  }
+
+  /**
+   * Wait up to `timeoutMs` for the ad to finish loading, then resolve.
+   * Returns true if ad is ready, false if timed out.
+   *
+   * Use this instead of checking isAdReady() directly when you want to
+   * gracefully handle the case where the ad hasn't finished loading yet
+   * (e.g. fast players who win before the 1–3s network request completes).
+   */
+  async waitUntilReady(timeoutMs: number = 5000): Promise<boolean> {
+    if (this.isLoaded) return true;
+
+    // Kick off a load if nothing is in flight
+    if (!this.isLoading) {
+      this.loadAd().catch(() => {});
+    }
+
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const interval = setInterval(() => {
+        if (this.isLoaded) {
+          clearInterval(interval);
+          resolve(true);
+        } else if (Date.now() - start >= timeoutMs) {
+          clearInterval(interval);
+          resolve(false);
+        }
+      }, 100);
+    });
+  }
+
+  /**
+   * Explicitly preload an ad. Call this as early as possible — e.g. when
+   * PropertyDetailScreen mounts — so the ad is ready before the player
+   * finishes the game and requests it.
+   *
+   * Safe to call multiple times; no-ops if already loading or loaded.
+   */
+  preload(): void {
+    if (!this.isLoading && !this.isLoaded) {
+      console.log('⏳ AdMobService: preloading ad early...');
+      this.loadAd().catch(() => {});
+    }
   }
 }

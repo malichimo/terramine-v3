@@ -474,7 +474,10 @@ function buildLaserRoute(
   minerPosition: number;
   fireDirection: Direction;
 } | null {
-  const MAX_ROUTE_ATTEMPTS = 40;
+  // ✅ BUG-047 FIX: Scale route attempts by bounce count. High-bounce paths
+  // (5–6 bounces) have very few valid configurations in a constrained grid —
+  // 40 attempts is insufficient when 94% of grid cells are needed minimum.
+  const MAX_ROUTE_ATTEMPTS = bounces >= 5 ? 120 : bounces >= 4 ? 60 : 40;
 
   for (let attempt = 0; attempt < MAX_ROUTE_ATTEMPTS; attempt++) {
     const result = tryBuildRoute(gridSize, bounces, usedMinerSlots, usedMirrorCells, usedCoalCells);
@@ -544,11 +547,14 @@ function walkPath(
   let r = startRow;
   let c = startCol;
 
-  // Travel a random distance (2–4 cells) before the bounce/landing.
-  // We step FIRST then push — this means route cells are the cells the
-  // laser actually traverses, and (r,c) after the loop is the candidate
-  // bounce or coal cell. This guarantees the coal is reachable.
-  const travelDist = randInt(2, 4);
+  // Travel a random distance before the bounce/landing.
+  // ✅ BUG-047 FIX: At 5–6 bounces, using a minimum of 2 cells per segment
+  // consumes too much grid space (3 paths × 5 bounces × 2min = 30 cells min
+  // in a 64-cell grid). Allow minimum 1 cell at high bounce counts to give
+  // the path builder more valid configurations. Players can't tell the
+  // difference between 1-cell and 2-cell segments visually.
+  const minTravel = bouncesLeft >= 4 ? 1 : 2;
+  const travelDist = randInt(minTravel, 4);
 
   for (let t = 0; t < travelDist; t++) {
     if (r < 0 || r >= gridSize || c < 0 || c >= gridSize) return null;
@@ -643,7 +649,11 @@ function stepTuple(row: number, col: number, dir: Direction): [number, number] {
  * Falls back to a guaranteed hardcoded puzzle if all attempts fail.
  */
 export function generatePuzzle(gameLevel: number): PuzzleConfig {
-  const MAX_PUZZLE_ATTEMPTS = 80;
+  // ✅ BUG-047 FIX: Scale attempt budgets by bounce count.
+  // At 5–6 bounces, the grid is under extreme spatial pressure (70–94% of
+  // cells needed minimum). 80 attempts isn't enough — scale up for high levels.
+  const bouncesPerPath = getBouncesPerPath(gameLevel);
+  const MAX_PUZZLE_ATTEMPTS = bouncesPerPath >= 5 ? 200 : bouncesPerPath >= 4 ? 120 : 80;
 
   for (let attempt = 0; attempt < MAX_PUZZLE_ATTEMPTS; attempt++) {
     const result = tryGeneratePuzzle(gameLevel);
@@ -839,39 +849,56 @@ function tryGeneratePuzzle(gameLevel: number): PuzzleConfig | null {
  * Player must tap the one solution mirror to solve.
  */
 function generateFallbackPuzzle(gameLevel: number): PuzzleConfig {
-  // ✅ FIX: Build one guaranteed-solvable path per target so the fallback
-  // always matches targetCount. Each miner fires from the left edge, bounces
-  // off a solution mirror (starts wrong), and hits its coal.
+  // ✅ BUG-047 FIX: Build a proper 2-bounce fallback for high-level players
+  // instead of a trivial 1-bounce puzzle. Levels 21+ get 2-bounce paths in
+  // the fallback so the fallback feels like a real (if easy) puzzle, not a
+  // tutorial board. Levels 1–20 keep the original 1-bounce simple layout.
   const difficulty  = getLaserDifficulty(gameLevel);
   const gridSize    = difficulty.gridSize;
   const targetCount = Math.min(difficulty.targetCount, Math.floor(gridSize / 2));
   const grid        = buildEmptyGrid(gridSize);
   const miners: MinerConfig[] = [];
 
+  // For high-level games, build a 2-bounce L-shaped path per target
+  // so players get a recognizable puzzle rather than a tutorial layout.
+  const useDoubleBounce = gameLevel >= 21 && gridSize >= 7;
   const rowStep = Math.max(1, Math.floor(gridSize / (targetCount + 1)));
 
   for (let i = 0; i < targetCount; i++) {
     const minerRow = (i + 1) * rowStep;
     if (minerRow >= gridSize) break;
     const midCol  = Math.floor(gridSize / 2);
+
+    if (useDoubleBounce) {
+      // Path: miner fires RIGHT → mirror-\ at (minerRow, midCol-1) deflects DOWN
+      //   → mirror-/ at (minerRow+2, midCol-1) deflects RIGHT → coal at (minerRow+2, midCol+1)
+      const m1r = minerRow, m1c = midCol - 1;
+      const m2r = minerRow + 2, m2c = midCol - 1;
+      const cr  = minerRow + 2, cc = midCol + 1;
+      if (cr < gridSize && cc < gridSize &&
+          grid[m1r][m1c].type === 'empty' &&
+          grid[m2r][m2c].type === 'empty' &&
+          grid[cr][cc].type === 'empty') {
+        grid[m1r][m1c] = { row: m1r, col: m1c, type: 'mirror-/', rotations: 0 }; // starts wrong
+        grid[m2r][m2c] = { row: m2r, col: m2c, type: 'mirror-\\', rotations: 0 }; // starts wrong
+        grid[cr][cc]   = { row: cr,  col: cc,  type: 'coal', coalIndex: i, isHit: false };
+        miners.push({ edge: 'left', position: minerRow, fireDirection: 'right',
+          color: LASER_COLORS[i % LASER_COLORS.length], coalIndex: i });
+        continue;
+      }
+    }
+
+    // Original 1-bounce fallback
     const coalRow = Math.min(gridSize - 1, minerRow + 2);
     const coalCol = midCol;
-
     if (grid[coalRow][coalCol].type === 'empty') {
       grid[coalRow][coalCol] = { row: coalRow, col: coalCol, type: 'coal', coalIndex: i, isHit: false };
     }
-    // Mirror starts wrong (\) — correct is (/) for right→up then down to coal
     if (grid[minerRow][midCol].type === 'empty') {
       grid[minerRow][midCol] = { row: minerRow, col: midCol, type: 'mirror-\\', rotations: 0 };
     }
-
-    miners.push({
-      edge: 'left',
-      position: minerRow,
-      fireDirection: 'right',
-      color: LASER_COLORS[i % LASER_COLORS.length],
-      coalIndex: i,
-    });
+    miners.push({ edge: 'left', position: minerRow, fireDirection: 'right',
+      color: LASER_COLORS[i % LASER_COLORS.length], coalIndex: i });
   }
 
   return {
