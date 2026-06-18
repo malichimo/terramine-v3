@@ -1785,7 +1785,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
             {/* Discord */}
             <TouchableOpacity
               style={[styles.communityLink, styles.discordLink]}
-              onPress={() => Linking.openURL('https://discord.gg/MDJJCQU4C')}
+              onPress={() => Linking.openURL('https://discord.gg/QTSJuT2GgP')}
             >
               <FontAwesome name="discord" size={26} color="white" style={styles.communityLinkIcon} />
               <View style={styles.communityLinkText}>

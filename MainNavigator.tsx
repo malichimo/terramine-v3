@@ -1,6 +1,7 @@
 // MainNavigator.tsx - Phase 3: Map tab wrapped in Stack → PropertyDetail reachable from map
 
 import React, { useState, useRef, useEffect } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { NavigationContainer } from '@react-navigation/native';
@@ -318,6 +319,7 @@ function SettingsStackNavigator({ onSignOut }: SettingsStackProps) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function MainNavigator() {
   const { user, signOut } = useAuth();
+  const insets = useSafeAreaInsets();
   const [userTB, setUserTB] = useState(1000);
   const [usdEarnings, setUsdEarnings] = useState(0);
   const [ownedProperties, setOwnedProperties] = useState<GridSquare[]>([]);
@@ -697,9 +699,9 @@ export default function MainNavigator() {
             backgroundColor: '#1A0900',
             borderTopColor: '#6D4C1F',
             borderTopWidth: 2,
-            paddingBottom: 8,
+            paddingBottom: 8 + insets.bottom,
             paddingTop: 4,
-            height: 68,
+            height: 68 + insets.bottom,
           },
           tabBarLabelStyle: {
             fontSize: 11,
