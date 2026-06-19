@@ -635,12 +635,27 @@ export class DatabaseServicePhase2 {
     const mult = mineMultipliers[mineType];
     const perfectMult = perfectGame ? 2 : 1;
 
+    // ✅ BUG-069 FIX: TB rewards corrected per game design.
+    // Only MinerMaze (coal) has elevated TB rewards (15/30/60 by difficulty tier)
+    // because it is more time-consuming and difficult than the other games.
+    // MemoryMatch (rock), GoldRush (gold), and LaserBlast (diamond) remain at
+    // 1-2 TB — their rewards are primarily resources, not TB.
+    // Perfect game bonus removed from TB across all games.
+    let baseTB: number;
+    if (mineType === 'coal') {
+      // MinerMaze: level-derived difficulty tier matches DIFFS constant in MinerMazeScreen
+      baseTB = gameLevel <= 10 ? 15 : gameLevel <= 30 ? 30 : 60;
+    } else {
+      // All other games: flat 1 TB, no perfect bonus
+      baseTB = 1;
+    }
+
     return {
       common: Math.floor(50 * gameLevel * mult * perfectMult),
       uncommon: Math.floor(5 * gameLevel * mult * perfectMult),
       rare: Math.floor(1 * gameLevel * mult * perfectMult),
       epic: Math.floor((gameLevel / 10) * mult * perfectMult),
-      tb: perfectGame ? 2 : 1,
+      tb: baseTB,
       propertyXP: perfectGame ? 200 : 100,
     };
   }
@@ -866,6 +881,110 @@ export class DatabaseServicePhase2 {
       console.warn('getPropertiesInRadius failed (non-fatal):', e);
       return [];
     }
+  }
+
+  /**
+   * ✅ PERF: Fetch properties within a small visible radius (~0.5 miles) AND
+   * pre-fetch owner nicknames in a single batched read, so tapping a nearby
+   * property shows the owner name instantly without a second network round trip.
+   *
+   * Returns both the property list and a nickname map keyed by ownerId.
+   * Call this for map rendering. Use getPropertiesForVisitMine() for the
+   * large-radius Visit Mine feature only.
+   */
+  async getNearbyProperties(
+    lat: number,
+    lng: number,
+    radiusMiles: number = 0.5
+  ): Promise<{
+    properties: import('../utils/GridUtils').GridSquare[];
+    ownerNames: Map<string, { nickname: string; avatarUrl: string | null }>;
+  }> {
+    try {
+      const latDelta = radiusMiles / 69.0;
+      const lngDelta = radiusMiles / (69.0 * Math.cos((lat * Math.PI) / 180));
+
+      const minLat = lat - latDelta;
+      const maxLat = lat + latDelta;
+      const minLng = lng - lngDelta;
+      const maxLng = lng + lngDelta;
+
+      const q = query(
+        collection(db, 'properties'),
+        where('centerLat', '>=', minLat),
+        where('centerLat', '<=', maxLat)
+      );
+
+      const snap = await getDocs(q);
+
+      const properties = snap.docs
+        .filter(d => {
+          const clng = d.data().centerLng;
+          return clng >= minLng && clng <= maxLng;
+        })
+        .map(d => {
+          const data = d.data();
+          return {
+            id: data.id,
+            centerLat: data.centerLat,
+            centerLng: data.centerLng,
+            corners: data.corners,
+            isOwned: true,
+            ownerId: data.ownerId,
+            mineType: data.mineType as 'rock' | 'coal' | 'gold' | 'diamond',
+          } as import('../utils/GridUtils').GridSquare;
+        });
+
+      // Batch-fetch owner nicknames for all unique owners in one pass.
+      // Firestore doesn't support IN queries on doc IDs natively in all SDKs,
+      // so we use Promise.all with individual getDoc calls — but these fire
+      // in parallel (not sequentially) so total latency = slowest single read,
+      // not sum of all reads.
+      const ownerNames = new Map<string, { nickname: string; avatarUrl: string | null }>();
+      const uniqueOwnerIds = [
+        ...new Set(
+          properties
+            .map(p => p.ownerId)
+            .filter((id): id is string => !!id)
+        ),
+      ];
+
+      if (uniqueOwnerIds.length > 0) {
+        const userDocs = await Promise.all(
+          uniqueOwnerIds.map(uid => getDoc(doc(db, 'users', uid)))
+        );
+        userDocs.forEach((userSnap, i) => {
+          const ownerId = uniqueOwnerIds[i];
+          if (userSnap.exists()) {
+            const d = userSnap.data();
+            ownerNames.set(ownerId, {
+              nickname: d.nickname || d.email?.split('@')[0] || 'Unknown',
+              avatarUrl: d.avatarUrl || null,
+            });
+          } else {
+            ownerNames.set(ownerId, { nickname: 'Unknown', avatarUrl: null });
+          }
+        });
+      }
+
+      return { properties, ownerNames };
+    } catch (e) {
+      console.warn('getNearbyProperties failed (non-fatal):', e);
+      return { properties: [], ownerNames: new Map() };
+    }
+  }
+
+  /**
+   * ✅ PERF: Large-radius fetch for the Visit Mine feature only.
+   * Do NOT call this on map load — it fetches potentially hundreds of docs.
+   * Call lazily when the player taps the Visit Mine button.
+   */
+  async getPropertiesForVisitMine(
+    lat: number,
+    lng: number,
+    radiusMiles: number = 100
+  ): Promise<import('../utils/GridUtils').GridSquare[]> {
+    return this.getPropertiesInRadius(lat, lng, radiusMiles);
   }
 }
 

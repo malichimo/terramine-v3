@@ -58,6 +58,16 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
   
   const adService = useRef(new AdMobService()).current;
 
+  // ✅ BUG-049 FIX: No cleanup previously existed for this AdMobService
+  // instance — every visit to the Upgrades Office orphaned a native
+  // RewardedAd instance. Same fix as the four daily activity screens and
+  // MemoryMatchScreen.
+  useEffect(() => {
+    return () => {
+      adService.destroyAd();
+    };
+  }, []);
+
   useEffect(() => {
     loadUserResources();
   }, []);

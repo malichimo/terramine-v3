@@ -23,6 +23,10 @@ export class AdMobService {
   private unsubscribeClosed:  (() => void) | null = null;
   private unsubscribeError:   (() => void) | null = null;
   private unsubscribeEarned:  (() => void) | null = null;
+  // ✅ DIAGNOSTIC: Tracks how many ads this instance has successfully shown
+  // since creation. Helps confirm/deny the "native SDK degrades after N
+  // consecutive ads in one session" hypothesis from device logs.
+  private adsShownThisSession: number = 0;
 
   constructor() {
     if (__DEV__ || BETA_MODE) {
@@ -110,11 +114,39 @@ export class AdMobService {
   async loadAd(): Promise<void> {
     if (this.isLoading || this.isLoaded) return;
 
+    // ✅ FIX: Hard timeout watchdog. After many consecutive show/reload cycles
+    // in one session (observed: ~12-14 ads), the native ad SDK can occasionally
+    // hang on load() — the promise never resolves or rejects, no LOADED or
+    // ERROR event ever fires, and isLoading stays stuck true forever. Nothing
+    // in the rest of this class can detect or recover from that without an
+    // explicit timeout, since we're purely reactive to native events.
+    //
+    // If load() hasn't settled within LOAD_TIMEOUT_MS, force-reset state and
+    // do a full initializeAd() (fresh RewardedAd instance) rather than retrying
+    // loadAd() on a possibly-corrupted native ad object.
+    const LOAD_TIMEOUT_MS = 15_000;
+    let settled = false;
+
+    const watchdog = setTimeout(() => {
+      if (settled) return;
+      console.warn(`⚠️ Ad load timed out after ${LOAD_TIMEOUT_MS}ms after ${this.adsShownThisSession} ads shown this session — native SDK appears hung. Forcing fresh initializeAd().`);
+      settled = true;
+      this.isLoading = false;
+      this.isLoaded = false;
+      this.initializeAd();
+    }, LOAD_TIMEOUT_MS);
+
     try {
       this.isLoading = true;
       console.log('⏳ Loading rewarded ad...');
       await this.rewardedAd?.load();
+      if (settled) return; // watchdog already fired and reset state — don't override it
+      settled = true;
+      clearTimeout(watchdog);
     } catch (error) {
+      if (settled) return; // watchdog already fired — don't double-handle
+      settled = true;
+      clearTimeout(watchdog);
       console.error('❌ Error loading rewarded ad:', error);
       this.isLoading = false;
       this.isLoaded = false;
@@ -176,7 +208,8 @@ export class AdMobService {
       );
 
       await this.rewardedAd.show();
-      console.log('✅ Ad shown successfully');
+      this.adsShownThisSession++;
+      console.log(`✅ Ad shown successfully (#${this.adsShownThisSession} this session)`);
       return true;
     } catch (error) {
       console.error('❌ Error showing rewarded ad:', error);
@@ -191,6 +224,15 @@ export class AdMobService {
 
   isAdLoading(): boolean {
     return this.isLoading;
+  }
+
+  /**
+   * ✅ DIAGNOSTIC: Number of ads successfully shown by this instance since
+   * creation. Useful for correlating "stuck loading" reports with a specific
+   * ad count threshold.
+   */
+  getAdsShownThisSession(): number {
+    return this.adsShownThisSession;
   }
 
   /**

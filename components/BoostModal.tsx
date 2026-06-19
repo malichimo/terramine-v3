@@ -54,6 +54,17 @@ export default function BoostModal({
     }
   }, [visible]);
 
+  // ✅ BUG-049 FIX: BoostModal's AdMobService instance persists for the
+  // lifetime of this component (correctly — it's not recreated per modal
+  // open/close), but it was never destroyed even if the parent (MapScreen)
+  // unmounts, e.g. on sign out. Ensures the native RewardedAd is released
+  // rather than orphaned.
+  useEffect(() => {
+    return () => {
+      adService.destroyAd();
+    };
+  }, []);
+
   useEffect(() => {
     // Poll ad status and refill timer every second
     const interval = setInterval(() => {

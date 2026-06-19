@@ -1,7 +1,7 @@
 // screens/activities/CoalPileActivity.tsx
 // UPDATED: Uses actual coal pile and pickaxe images instead of emojis
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -70,6 +70,20 @@ export default function CoalPileActivity({
 
   const dbService = new DatabaseService();
   const adService = useRef(new AdMobService()).current;
+
+  // ✅ BUG-049 FIX: This screen previously had ZERO cleanup — every visit
+  // created a new native RewardedAd via AdMobService's constructor and never
+  // tore it down on unmount. Across a session with many daily activity visits,
+  // boost ads, and game plays, this orphans dozens of native ad objects
+  // (AVPlayer/ExoPlayer instances, event listeners) that are never released.
+  // This is very likely the same root cause as the "ad permanently stuck
+  // loading after ~12-14 ads" symptom — the native SDK accumulates resource
+  // pressure across orphaned instances within one app session.
+  useEffect(() => {
+    return () => {
+      adService.destroyAd();
+    };
+  }, []);
 
   const handleWatchAdForDouble = async () => {
     try {

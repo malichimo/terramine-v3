@@ -2,7 +2,7 @@
 // Phase 2 Week 3: Gold Mine Daily Activity - Sluice Box Panning
 // Animation: Tap shovel → Dump dirt → Water washes → Gold appears randomly
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -72,6 +72,15 @@ export default function SluiceBoxActivity({
 
   const dbService = new DatabaseService();
   const adService = useRef(new AdMobService()).current;
+
+  // ✅ BUG-049 FIX: No cleanup previously existed — every visit to this screen
+  // orphaned a native RewardedAd instance. See CoalPileActivity.tsx for full
+  // explanation; same fix applied identically across all four daily activities.
+  useEffect(() => {
+    return () => {
+      adService.destroyAd();
+    };
+  }, []);
 
   const handleWatchAdForDouble = async () => {
     try {

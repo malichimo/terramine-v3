@@ -9,7 +9,7 @@ const BELT_CONFIG = {
   rockOffsetY: 40,
 };
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -87,6 +87,15 @@ export default function RockConveyorActivity({
   // ✅ BUG-005: Wrap in useRef so the same instance is used across re-renders
   const dbService = useRef(new DatabaseService()).current;
   const adService = useRef(new AdMobService()).current;
+
+  // ✅ BUG-049 FIX: No cleanup previously existed — every visit to this screen
+  // orphaned a native RewardedAd instance. See CoalPileActivity.tsx for full
+  // explanation; same fix applied identically across all four daily activities.
+  useEffect(() => {
+    return () => {
+      adService.destroyAd();
+    };
+  }, []);
 
   const handleWatchAdForDouble = async () => {
     try {

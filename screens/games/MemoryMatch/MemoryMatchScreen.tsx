@@ -62,6 +62,18 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
   const isMounted = useRef(true);
   const adService = useRef(new AdMobService()).current;
 
+  // ✅ BUG-049 FIX: MemoryMatchScreen was the only one of the four mine games
+  // missing this cleanup — GoldRush, LaserBlast, and MinerMaze all correctly
+  // call destroyAd() on unmount, but this screen never did. Every play
+  // session orphaned a native RewardedAd instance (AVPlayer/ExoPlayer +
+  // listeners never released), contributing to the same resource-accumulation
+  // issue found in the four daily activity screens.
+  useEffect(() => {
+    return () => {
+      adService.destroyAd();
+    };
+  }, []);
+
   // Initialize game
   useEffect(() => {
     isMounted.current = true;
