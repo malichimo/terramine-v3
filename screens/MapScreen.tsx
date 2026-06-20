@@ -93,6 +93,12 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   // stale closure issues with the ownedProperties prop.
   const radiusPropertiesRef = useRef<GridSquare[]>([]);
   const lastRadiusFetchRef  = useRef<{ lat: number; lng: number } | null>(null);
+  // ✅ PERF: TTL for the nearby (visible) property cache — 90 seconds.
+  // After this time the next movement triggers a fresh fetch even if the
+  // player hasn't moved 10 miles. Ensures newly purchased nearby properties
+  // appear without requiring large movements.
+  const nearbyFetchedAtRef  = useRef<number>(0);
+  const NEARBY_TTL_MS = 90_000;
   const [selectedSquare, setSelectedSquare] = useState<GridSquare | null>(null);
   const [showCheckInModal, setShowCheckInModal] = useState(false);
   const [showBoostModal, setShowBoostModal] = useState(false);
@@ -527,8 +533,30 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   //   - [ownedProperties.length] — on purchase
   //   - [allProperties.length] — on initial load
   // On a property purchase all three fired simultaneously = 3× 500 polygon recreations.
-  // Now one effect, with the movement guard inside loadNearbyProperties handling
+  // Now one effect, with the movement guard inside loadNearbyForMap handling
   // GPS jitter. Ownership changes reset the guard to force an immediate rebuild.
+  //
+  // ✅ BUG-074 FIX: This effect previously called loadNearbyProperties() directly
+  // — a RENDER-ONLY function that reads from radiusPropertiesRef.current without
+  // fetching anything. Only loadNearbyForMap() actually calls
+  // dbServicePhase2.getNearbyProperties() to populate that ref.
+  //
+  // Since locationService.startWatchingLocation()'s callback calls
+  // loadNearbyForMap() asynchronously on every GPS tick, and this effect ALSO
+  // fires synchronously on the same userLocation change, the two were racing:
+  // this effect would call loadNearbyProperties() and render immediately using
+  // whatever radiusPropertiesRef.current happened to contain at that exact
+  // instant — frequently stale or empty, since the async fetch from the same
+  // tick hadn't resolved yet. Own properties (ownedProperties, a separate prop
+  // with no fetch race) always rendered correctly; other players' properties
+  // depended entirely on this race resolving in the right order, which it
+  // often didn't — explaining "my properties show, others' don't or are delayed."
+  //
+  // Fix: call loadNearbyForMap() here too, so every trigger of this effect
+  // does fetch-then-render instead of render-only. loadNearbyForMap() has its
+  // own movement-guard + TTL internally, and calls loadNearbyProperties() at
+  // the end of a successful fetch — so this remains a single fetch+render
+  // path with no duplicate fetching.
   useEffect(() => {
     if (!userLocation) return;
     // Reset movement guard on ownership changes so the new property
@@ -536,8 +564,9 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     const isOwnershipChange = ownedProperties.length > 0 || allProperties.length > 0;
     if (isOwnershipChange) {
       lastGridRebuildRef.current = null;
+      nearbyFetchedAtRef.current = 0; // also bypass the TTL on ownership changes
     }
-    loadNearbyProperties(userLocation);
+    loadNearbyForMap(userLocation).catch(() => {});
   }, [userLocation?.latitude, userLocation?.longitude, ownedProperties.length, allProperties.length]);
 
   // Auto-zoom to user location on first load
@@ -553,9 +582,66 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   }, [userLocation?.latitude, userLocation?.longitude]);
 
   // ── Radius property loader ─────────────────────────────────────────────────
-  // Fetches all properties within 100 miles and caches them in radiusPropertiesRef.
-  // Re-fetches only when user moves >10 miles from the last fetch point to avoid
-  // hammering Firestore on every GPS tick.
+  // ✅ PERF: Two-tier property fetch strategy.
+  //
+  // Tier 1 — loadNearbyForMap(): fetches within 1.5 miles with a 90s TTL.
+  //   - ⚠️ REGRESSION FIX (1.1.5 → 1.1.6): originally shipped at 0.5 miles,
+  //     which was too small — players reported other properties delayed or
+  //     never appearing on the map. Bumped to 1.5 miles, still a small
+  //     enough result set to stay fast, but wide enough to actually cover
+  //     the area a player moves through in a normal session.
+  //   - Batches owner nickname lookups in parallel so tapping a property
+  //     shows the owner name instantly — no second round trip on tap
+  //   - Fires on each meaningful movement (>8m, per GRID_REBUILD_THRESHOLD)
+  //
+  // Tier 2 — loadRadiusProperties(): keeps the 100-mile fetch but now only
+  //   fires when the player taps Visit Mine, not on map load.
+  //   Replaces the old eager 100-mile-on-every-10-mile-move pattern.
+  const loadNearbyForMap = async (location: Coordinates) => {
+    const now = Date.now();
+    const last = lastRadiusFetchRef.current;
+
+    // Skip if within TTL AND within movement threshold
+    if (last) {
+      const dLat = Math.abs(location.latitude  - last.lat);
+      const dLng = Math.abs(location.longitude - last.lng);
+      const withinDistance = dLat < GRID_REBUILD_THRESHOLD && dLng < GRID_REBUILD_THRESHOLD;
+      const withinTTL = (now - nearbyFetchedAtRef.current) < NEARBY_TTL_MS;
+      if (withinDistance && withinTTL) return;
+    }
+
+    try {
+      const { properties, ownerNames } = await dbServicePhase2.getNearbyProperties(
+        location.latitude, location.longitude, 1.5
+      );
+
+      radiusPropertiesRef.current = properties;
+      lastRadiusFetchRef.current  = { lat: location.latitude, lng: location.longitude };
+      nearbyFetchedAtRef.current  = now;
+
+      // Pre-populate ownerCache with all fetched nicknames so tapping a
+      // property shows the owner name instantly without a second fetch.
+      if (ownerNames.size > 0) {
+        setOwnerCache(prev => {
+          const next = new Map(prev);
+          ownerNames.forEach((val, uid) => next.set(uid, val));
+          // Cap at 100 entries
+          if (next.size > 100) {
+            const entries = Array.from(next.entries()).slice(-100);
+            return new Map(entries);
+          }
+          return next;
+        });
+      }
+
+      loadNearbyProperties(location);
+    } catch (e) {
+      console.warn('loadNearbyForMap failed (non-fatal):', e);
+    }
+  };
+
+  // Large-radius fetch — now LAZY. Only called when player taps Visit Mine.
+  // No longer fires on map load or GPS ticks.
   const loadRadiusProperties = async (location: Coordinates) => {
     const last = lastRadiusFetchRef.current;
     if (last) {
@@ -571,16 +657,12 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     }
 
     try {
-      const nearby = await dbServicePhase2.getPropertiesInRadius(
+      const nearby = await dbServicePhase2.getPropertiesForVisitMine(
         location.latitude, location.longitude, 100
       );
-      // ✅ FIX: Store RAW results only — do NOT merge with ownedProperties here.
-      // ownedProperties is a prop from MainNavigator and suffers from stale closure
-      // when read inside this async function defined at render time.
-      // Merging happens at point of use (loadNearbyProperties + visitableTAs)
-      // where the latest prop value is always available via the component scope.
       radiusPropertiesRef.current = nearby;
       lastRadiusFetchRef.current  = { lat: location.latitude, lng: location.longitude };
+      nearbyFetchedAtRef.current  = Date.now();
       loadNearbyProperties(location);
     } catch (e) {
       console.warn('loadRadiusProperties failed (non-fatal):', e);
@@ -591,14 +673,14 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
     const location = await locationService.getCurrentLocation();
     if (location) {
       setUserLocation(location);
-      // Load radius first so the grid renders with full ownership data immediately
-      await loadRadiusProperties(location);
+      // ✅ PERF: Use small-radius nearby fetch on startup — fast, includes
+      // owner nicknames. Large-radius fetch is now lazy (Visit Mine only).
+      await loadNearbyForMap(location);
       loadNearbyProperties(location);
 
       locationService.startWatchingLocation((newLocation) => {
         setUserLocation(newLocation);
-        loadRadiusProperties(newLocation).catch(() => {});
-        loadNearbyProperties(newLocation);
+        loadNearbyForMap(newLocation).catch(() => {});
       });
     }
   };
@@ -1108,12 +1190,24 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       // Mark first purchase milestone as done (so nudge doesn't re-show)
       dbService.checkAndFireMilestone(userId, 'milestone_firstPurchase').catch(() => {});
 
-      // Fire referral reward if this is the user's first purchase and they were referred
-      if (ownedProperties.length === 0) {
-        ReferralService.processFirstPurchaseReferral(userId).catch(e =>
-          console.warn('Referral reward (non-fatal):', e)
-        );
-      }
+      // ✅ BUG-073 FIX: Previously gated behind `ownedProperties.length === 0`
+      // (i.e. only fired on the player's literal first-ever purchase). This
+      // broke the BUG-036 "Enter Referral Code in Settings" flow entirely —
+      // a player who already owns properties and THEN enters a referral code
+      // can never trigger this block again, since ownedProperties.length is
+      // never 0 again. applyReferralCode() correctly writes referredBy to
+      // Firestore (confirmed working), but the TB reward could never fire
+      // because this purchase-count gate made processFirstPurchaseReferral()
+      // unreachable for anyone who entered a code after their first buy.
+      //
+      // Fix: call processFirstPurchaseReferral() on every purchase. The
+      // function already has its own internal idempotency guard — it checks
+      // `if (!data.referredBy || data.hasCompletedReferral) return;` inside
+      // ReferralService, so this is a no-op for users without a pending
+      // referral or who've already been rewarded. Safe to call unconditionally.
+      ReferralService.processFirstPurchaseReferral(userId).catch(e =>
+        console.warn('Referral reward (non-fatal):', e)
+      );
 
       // Create system mine on first property purchase
       if (ownedProperties.length === 0) {
@@ -1245,11 +1339,18 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
 
   // ── Find Nearest TA ──────────────────────────────────────────────────────
 
-  const handleFindNearestTA = () => {
+  const handleFindNearestTA = async () => {
     if (!userLocation) {
       Alert.alert('Location Unavailable', 'We need your location to find the nearest property.');
       return;
     }
+
+    setFindingNearestTA(true);
+
+    // ✅ PERF: Trigger the large-radius (100 mile) fetch lazily here — only
+    // when the player actually taps Visit Mine, not on every map load.
+    // This is the only feature that needs far-away property data.
+    await loadRadiusProperties(userLocation).catch(() => {});
 
     // Merge owned + radius cache at point of use so visitableTAs always has
     // the full picture of nearby other players' mines regardless of load order.
