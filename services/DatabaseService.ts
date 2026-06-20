@@ -44,6 +44,24 @@ export class DatabaseService {
     return docSnap.exists() ? docSnap.data() : null;
   }
 
+  /**
+   * ✅ BUG-072 FIX: Added { merge: true }.
+   *
+   * For Google/Apple sign-in users with a referral code, ReferralService.
+   * applyReferralCode() can write referredBy/referredByCode to this user's
+   * doc BEFORE createUser() runs (see LoginScreen.applyPendingReferralIfEligible,
+   * which fires immediately after sign-in, vs. createUser which only runs
+   * later inside MainNavigator's loadUserData()).
+   *
+   * Without merge:true, this setDoc() call completely REPLACES the document —
+   * silently wiping out any referredBy/referredByCode fields that were just
+   * written, even though applyReferralCode() succeeded. The referral
+   * relationship would be lost a few hundred milliseconds after being
+   * correctly recorded, with no error anywhere in the flow.
+   *
+   * merge:true makes this additive: existing fields (referredBy, etc.) are
+   * preserved, and these four fields are set/overwritten as before.
+   */
   async createUser(userId: string, email: string) {
     const userRef = doc(db, 'users', userId);
     await setDoc(userRef, {
@@ -52,7 +70,7 @@ export class DatabaseService {
       totalCheckIns: 0,
       totalTBEarned: 0,
       createdAt: new Date().toISOString(),
-    });
+    }, { merge: true });
   }
 
   async updateUserBalance(userId: string, amount: number) {

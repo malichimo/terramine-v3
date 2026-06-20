@@ -89,6 +89,31 @@ export class ReferralService {
   /**
    * Apply a referral code to a new user on sign-up.
    * Stores referredBy on the new user — reward fires later on first purchase.
+   *
+   * ✅ BUG-072 FIX: Previously used updateDoc(), which THROWS if the target
+   * document doesn't exist yet. For Google/Apple sign-in users, this function
+   * is called from LoginScreen.applyPendingReferralIfEligible() IMMEDIATELY
+   * after signInWithGoogle/Apple() resolves — but the user's Firestore doc
+   * isn't created until later, inside MainNavigator's loadUserData() →
+   * createUser(), which runs in a separate component via a separate useEffect.
+   *
+   * Race result: updateDoc() throws "No document to update", the error is
+   * swallowed by the caller's try/catch, and referredBy is silently never
+   * written. createUser() then creates the doc fresh afterward with no
+   * referredBy field — the referral relationship is permanently lost with
+   * no error surfaced anywhere. This required manual TB credits to fix.
+   *
+   * Fix: use setDoc(..., { merge: true }) instead. This works whether the
+   * doc already exists (merges referredBy into it) or doesn't exist yet
+   * (creates a new doc containing ONLY referredBy/referredByCode — safe,
+   * since createUser() runs later and also uses merge-safe writes elsewhere
+   * in the codebase per the setDoc-merge pattern documented in DatabaseService).
+   *
+   * Note: this does NOT fix the ordering issue itself (referral code can still
+   * be applied before tbBalance is set) — it just makes the write succeed
+   * regardless of ordering, which is what actually matters since
+   * processFirstPurchaseReferral() only checks for referredBy's presence,
+   * not when it was written.
    */
   static async applyReferralCode(newUserId: string, code: string): Promise<boolean> {
     const referrerId = await this.validateCode(code);
@@ -96,10 +121,10 @@ export class ReferralService {
     if (referrerId === newUserId) return false; // can't refer yourself
 
     const userRef = doc(db, 'users', newUserId);
-    await updateDoc(userRef, {
+    await setDoc(userRef, {
       referredBy: referrerId,
       referredByCode: code.trim().toUpperCase(),
-    });
+    }, { merge: true });
 
     return true;
   }
