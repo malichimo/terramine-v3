@@ -286,7 +286,7 @@
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
-      "buildNumber": "46"
+      "buildNumber": "47"
     },
     "android": {
       "adaptiveIcon": {
@@ -352,7 +352,7 @@
         {
           "androidAppId": "ca-app-pub-4502698429383902~4525995296",
           "iosAppId": "ca-app-pub-4502698429383902~3587962923",
-          "adapters": ["unity"]
+          "adapters": ["unity", "meta"]
         }
       ],
       "./app.plugin.js",
