@@ -55,6 +55,11 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState(false);
   const [adWatched, setAdWatched] = useState(false);
+  // ✅ FIX: Guard against double-taps on "Watch Ad" — also drives the loading
+  // indicator on the button so the player knows the ad is in flight.
+  const [adLoading, setAdLoading] = useState(false);
+  // ✅ FIX: Track mounted state so we don't setState after navigation.goBack()
+  const isMounted = useRef(true);
   
   const adService = useRef(new AdMobService()).current;
 
@@ -64,6 +69,7 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
   // MemoryMatchScreen.
   useEffect(() => {
     return () => {
+      isMounted.current = false;
       adService.destroyAd();
     };
   }, []);
@@ -119,22 +125,51 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
   const isMaxLevel = currentLevel >= 100;
 
   const handleWatchAd = async () => {
+    // ✅ FIX: Prevent double-taps — if already showing or ad was already watched, bail
+    if (adLoading || adWatched) return;
+
+    setAdLoading(true);
     try {
+      // ✅ FIX: Wait up to 10 seconds for the ad to be ready before attempting
+      // to show it. The upgrade screen is not time-pressured (unlike game screens
+      // where 5s is the limit), so we can afford a longer grace period.
+      // This significantly improves success rate on slow connections and when
+      // AdMob needs extra time to find a fill from mediation partners.
+      const ready = await adService.waitUntilReady(10_000);
+      if (!ready) {
+        if (!isMounted.current) return;
+        setAdLoading(false);
+        Alert.alert(
+          'Ad Not Available',
+          'No ad is available right now. Please try again in a moment.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
       const success = await adService.showAd(
         () => {
+          if (!isMounted.current) return;
           setAdWatched(true);
+          setAdLoading(false);
           Alert.alert('Success!', 'Upgrade unlocked! You can now upgrade your property.');
         },
         () => {
-          console.log('Upgrade unlock ad closed');
+          // Ad closed without reward — re-enable the button
+          if (!isMounted.current) return;
+          setAdLoading(false);
         }
       );
 
       if (!success) {
+        if (!isMounted.current) return;
+        setAdLoading(false);
         Alert.alert('Ad Not Ready', 'Please try again in a moment.');
       }
     } catch (error) {
       console.error('Error showing upgrade ad:', error);
+      if (!isMounted.current) return;
+      setAdLoading(false);
       Alert.alert('Error', 'Failed to show ad. Please try again.');
     }
   };
@@ -377,10 +412,13 @@ export default function UpgradeScreen({ route, navigation }: UpgradeScreenProps)
                 📺 Watch an ad to unlock this upgrade
               </Text>
               <TouchableOpacity 
-                style={styles.watchAdButton}
+                style={[styles.watchAdButton, adLoading && { opacity: 0.6 }]}
                 onPress={handleWatchAd}
+                disabled={adLoading}
               >
-                <Text style={styles.watchAdButtonText}>Watch Ad to Unlock</Text>
+                <Text style={styles.watchAdButtonText}>
+                  {adLoading ? '⏳ Loading Ad...' : 'Watch Ad to Unlock'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>

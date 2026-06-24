@@ -61,6 +61,12 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const isMounted = useRef(true);
   const adService = useRef(new AdMobService()).current;
+  // ✅ PRELOAD FIX: Dedicated AdMobService instance for the level-up ad.
+  // adService is also used for time/moves rescue ads during gameplay and may
+  // be mid-reinitialize when the win screen appears. This instance starts
+  // loading as soon as the win screen shows with a level-up, so it's ready
+  // before the player taps the button.
+  const adLevelService = useRef<AdMobService | null>(null);
 
   // ✅ BUG-049 FIX: MemoryMatchScreen was the only one of the four mine games
   // missing this cleanup — GoldRush, LaserBlast, and MinerMaze all correctly
@@ -71,8 +77,20 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
   useEffect(() => {
     return () => {
       adService.destroyAd();
+      adLevelService.current?.destroyAd();
     };
   }, []);
+
+  // ✅ PRELOAD FIX: Start loading the level-up ad as soon as the win screen
+  // appears with a level-up. The adService instance may have just shown a
+  // rescue ad and be mid-reinitialize — a fresh dedicated instance gives it
+  // a full load cycle head start before the player taps the button.
+  useEffect(() => {
+    if (showWinScreen && leveledUp) {
+      adLevelService.current?.destroyAd();
+      adLevelService.current = new AdMobService();
+    }
+  }, [showWinScreen, leveledUp]);
 
   // Initialize game
   useEffect(() => {
@@ -375,9 +393,10 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
   // level-up occurred — same ad-gated flow that used to live inside the
   // win Alert's nested level-up prompt.
   const handlePlayNextLevel = async () => {
+    if (!adLevelService.current) return;
     setAdLevelLoading(true);
     try {
-      const shown = await adService.showAd(
+      const shown = await adLevelService.current.showAd(
         async () => {
           const fresh = await dbServicePhase2.getPropertyDetails(property.id);
           if (!isMounted.current) return;

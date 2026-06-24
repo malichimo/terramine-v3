@@ -28,6 +28,12 @@ export class AdMobService {
   // consecutive ads in one session" hypothesis from device logs.
   private adsShownThisSession: number = 0;
 
+  // ✅ LEAK FIX: All setTimeout IDs are tracked here so destroyAd() can cancel
+  // any that are still pending when the screen unmounts. Without this, timers
+  // scheduled inside showAd() or the ERROR/CLOSED listeners fire after the
+  // component is gone and call initializeAd() / loadAd() on a destroyed instance.
+  private pendingTimers: ReturnType<typeof setTimeout>[] = [];
+
   constructor() {
     if (__DEV__ || BETA_MODE) {
       this.adUnitId = TestIds.REWARDED;
@@ -74,7 +80,11 @@ export class AdMobService {
           this.isLoaded = false;
           // ✅ FIX: Retry after 10 seconds on error rather than giving up entirely.
           // On iOS during AdMob review, production ads may fail to fill initially.
-          setTimeout(() => this.loadAd(), 10_000);
+          const t = setTimeout(() => {
+            this.pendingTimers = this.pendingTimers.filter(id => id !== t);
+            this.loadAd();
+          }, 10_000);
+          this.pendingTimers.push(t);
         }
       );
 
@@ -83,7 +93,11 @@ export class AdMobService {
         () => {
           console.log('📱 Rewarded ad closed');
           this.isLoaded = false;
-          setTimeout(() => this.initializeAd(), 500);
+          const t = setTimeout(() => {
+            this.pendingTimers = this.pendingTimers.filter(id => id !== t);
+            this.initializeAd();
+          }, 500);
+          this.pendingTimers.push(t);
         }
       );
 
@@ -98,6 +112,12 @@ export class AdMobService {
   // deallocated. Without this, pending FairPlay/notification observers fire on
   // a freed object → EXC_BAD_ACCESS on iOS, equivalent crash on Android.
   destroyAd() {
+    // ✅ LEAK FIX: Cancel all pending timers before nulling out the instance.
+    // Timers from ERROR retry, CLOSED reinitialize, and showAd() catch block
+    // can otherwise fire into a destroyed instance after unmount.
+    this.pendingTimers.forEach(id => clearTimeout(id));
+    this.pendingTimers = [];
+
     this.unsubscribeLoaded?.();
     this.unsubscribeClosed?.();
     this.unsubscribeError?.();
@@ -203,7 +223,11 @@ export class AdMobService {
           if (!rewardEarned) {
             onAdClosed();
           }
-          setTimeout(() => this.initializeAd(), 500);
+          const t = setTimeout(() => {
+            this.pendingTimers = this.pendingTimers.filter(id => id !== t);
+            this.initializeAd();
+          }, 500);
+          this.pendingTimers.push(t);
         }
       );
 
@@ -213,7 +237,11 @@ export class AdMobService {
       return true;
     } catch (error) {
       console.error('❌ Error showing rewarded ad:', error);
-      setTimeout(() => this.initializeAd(), 1000);
+      const t = setTimeout(() => {
+        this.pendingTimers = this.pendingTimers.filter(id => id !== t);
+        this.initializeAd();
+      }, 1000);
+      this.pendingTimers.push(t);
       return false;
     }
   }

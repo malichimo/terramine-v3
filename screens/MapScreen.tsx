@@ -557,15 +557,36 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   // own movement-guard + TTL internally, and calls loadNearbyProperties() at
   // the end of a successful fetch — so this remains a single fetch+render
   // path with no duplicate fetching.
+  //
+  // ✅ GUARD FIX: The previous ownership-change condition was:
+  //   ownedProperties.length > 0 || allProperties.length > 0
+  // This is true for ANY player who owns anything, so it fired on EVERY GPS
+  // tick — not just when ownership actually changed. That defeated the entire
+  // purpose of the movement guard and TTL: every 10-second GPS update was
+  // resetting both, forcing a fresh Firestore fetch each time regardless of
+  // whether the user had moved or whether the 90s TTL had elapsed.
+  // Fix: track previous counts in a ref and only reset the guards when the
+  // counts actually change (i.e. a purchase or initial load just occurred).
+  const prevOwnershipRef = useRef({ owned: -1, all: -1 });
   useEffect(() => {
     if (!userLocation) return;
-    // Reset movement guard on ownership changes so the new property
-    // appears immediately regardless of whether the user has moved.
-    const isOwnershipChange = ownedProperties.length > 0 || allProperties.length > 0;
-    if (isOwnershipChange) {
+
+    // Reset movement guard only when property counts genuinely change —
+    // i.e. on the tick where a purchase lands or the initial load completes.
+    // GPS ticks that arrive with unchanged counts leave the guards intact.
+    const ownershipChanged =
+      prevOwnershipRef.current.owned !== ownedProperties.length ||
+      prevOwnershipRef.current.all   !== allProperties.length;
+
+    if (ownershipChanged) {
+      prevOwnershipRef.current = {
+        owned: ownedProperties.length,
+        all:   allProperties.length,
+      };
       lastGridRebuildRef.current = null;
-      nearbyFetchedAtRef.current = 0; // also bypass the TTL on ownership changes
+      nearbyFetchedAtRef.current = 0; // bypass TTL so new property appears immediately
     }
+
     loadNearbyForMap(userLocation).catch(() => {});
   }, [userLocation?.latitude, userLocation?.longitude, ownedProperties.length, allProperties.length]);
 

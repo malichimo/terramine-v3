@@ -43,6 +43,14 @@ export default function PropertyDetailScreen({ route, navigation, onPropertyUpda
   const [isEditingGreeting, setIsEditingGreeting] = useState(false);
   const [savingGreeting, setSavingGreeting] = useState(false);
 
+  // ⚠️ NOTE: Ad preloading was intentionally removed from this screen.
+  // With Unity Ads + Meta Audience Network mediation active, spinning up an
+  // extra AdMobService instance here caused each SDK to preload video buffers
+  // concurrently, contributing to java.lang.OutOfMemoryError crashes on Android
+  // (29% crash rate observed June 22-24, 2026 coinciding with mediation ramp).
+  // UpgradeScreen manages its own AdMobService lifecycle on mount — that single
+  // instance is sufficient once mediation is stable and eCPM floors are tuned.
+
   useEffect(() => {
     // Initial load
     loadPropertyDetails();

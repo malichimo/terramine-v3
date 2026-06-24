@@ -123,6 +123,11 @@ export default function LaserBlastGame({ route, navigation }: any) {
   const resultSaved     = useRef(false);
   const puzzleRef       = useRef<PuzzleConfig | null>(null);
   const adService       = useRef<AdMobService | null>(null);
+  // ✅ PRELOAD FIX: Dedicated AdMobService instance for the level-up ad.
+  // adService may have just shown an "extra life" ad and be mid-reinitialize
+  // when the win screen appears. This instance starts loading in handleWin()
+  // so it's ready before the 2-second auto-trigger fires.
+  const adLevelService  = useRef<AdMobService | null>(null);
   const activeLevelRef  = useRef(gameLevel);
 
   // Track live copies of state in refs for use inside closures
@@ -146,6 +151,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
     return () => {
       isMounted.current = false;
       adService.current?.destroyAd();
+      adLevelService.current?.destroyAd();
     };
   }, []);
 
@@ -344,6 +350,12 @@ export default function LaserBlastGame({ route, navigation }: any) {
     soundService.play('win');
     setPhase('celebrating');
 
+    // ✅ PRELOAD FIX: Start loading the level-up ad immediately on win.
+    // The auto-trigger fires after 2 seconds — this gives the new AdMobService
+    // instance a head start so the ad is ready when handlePlayNextLevelAd runs.
+    adLevelService.current?.destroyAd();
+    adLevelService.current = new AdMobService();
+
     Animated.parallel([
       Animated.spring(celebrateScale, { toValue: 1, friction: 4, useNativeDriver: true }),
       Animated.timing(diamondSparkleOp, { toValue: 1, duration: 400, useNativeDriver: true }),
@@ -486,10 +498,10 @@ export default function LaserBlastGame({ route, navigation }: any) {
 
   // ── Play Next Level (after level-up ad) ───────────────────────────────────
   async function handlePlayNextLevelAd() {
-    if (!adService.current) return;
+    if (!adLevelService.current) return;
 
     // ✅ FIX: Check ad readiness before attempting to show
-    if (!adService.current.isAdReady()) {
+    if (!adLevelService.current.isAdReady()) {
       Alert.alert(
         'Ad Not Ready',
         'The ad is still loading. Please wait a moment and try again.',
@@ -500,7 +512,7 @@ export default function LaserBlastGame({ route, navigation }: any) {
 
     setAdLevelLoading(true);
     try {
-      const shown = await adService.current.showAd(
+      const shown = await adLevelService.current.showAd(
         () => {
           // ✅ FIX: Guard all setState calls with isMounted
           if (!isMounted.current) return;

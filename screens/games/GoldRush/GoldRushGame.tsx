@@ -118,6 +118,12 @@ export default function GoldRushGame({ route, navigation }: any) {
   const activeLevelRef  = useRef(gameLevel);  // tracks level across restarts
   const puzzleRef       = useRef<PuzzleConfig | null>(null);
   const adService       = useRef<AdMobService | null>(null);
+  // ✅ PRELOAD FIX: Dedicated AdMobService instance for the level-up ad.
+  // The main adService may have just shown an in-game ad (extra moves) and be
+  // mid-reinitialize when the win screen appears. A separate instance starts
+  // loading the moment the celebrating phase begins — typically 2–4 seconds
+  // before the player taps the level-up button — so it's ready immediately.
+  const adLevelService  = useRef<AdMobService | null>(null);
 
   // ✅ FIX: Track mounted state to prevent setState/navigation calls after unmount
   const isMounted = useRef(true);
@@ -137,6 +143,7 @@ export default function GoldRushGame({ route, navigation }: any) {
     return () => {
       isMounted.current = false;
       adService.current?.destroyAd();
+      adLevelService.current?.destroyAd();
     };
   }, []);
 
@@ -262,6 +269,12 @@ export default function GoldRushGame({ route, navigation }: any) {
     setPhase('celebrating');
     setLepImage(LEPRECHAUN_CELEBRATE);
 
+    // ✅ PRELOAD FIX: Start loading the level-up ad the moment the win screen
+    // appears. By the time the player reads rewards and taps the button (2–4s),
+    // the ad will already be ready — no more "Ad Not Ready" on level-up.
+    adLevelService.current?.destroyAd();
+    adLevelService.current = new AdMobService();
+
     Animated.sequence([
       Animated.spring(lepScale, { toValue: 1.5, useNativeDriver: true }),
       Animated.spring(lepScale, { toValue: 1.0, useNativeDriver: true }),
@@ -374,11 +387,11 @@ export default function GoldRushGame({ route, navigation }: any) {
 
   // ── Ad to play next level ─────────────────────────────────────────────────
   async function handlePlayNextLevel() {
-    if (!adService.current) return;
+    if (!adLevelService.current) return;
 
     // ✅ FIX: Check ad readiness before attempting to show — prevents crash
     // when user taps immediately after level-up before ad has loaded
-    if (!adService.current.isAdReady()) {
+    if (!adLevelService.current.isAdReady()) {
       Alert.alert(
         'Ad Not Ready',
         'The ad is still loading. Please wait a moment and try again.',
@@ -389,7 +402,7 @@ export default function GoldRushGame({ route, navigation }: any) {
 
     setAdLevelLoading(true);
     try {
-      const shown = await adService.current.showAd(
+      const shown = await adLevelService.current.showAd(
         async () => {
           // Rewarded: fetch fresh propertyDetails and replace screen
           const updated = await dbServicePhase2.getPropertyDetails(property.id);

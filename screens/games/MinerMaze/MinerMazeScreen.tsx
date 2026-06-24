@@ -318,14 +318,6 @@ const Vignette = () => (
 );
 
 // ✅ BUG-060 FIX: Difficulty is predetermined by mine level, not player choice.
-// Levels 1–10 → Easy, 11–30 → Medium, 31+ → Hard.
-function getDiffKeyForLevel(gameLevel: number): string {
-  if (gameLevel <= 10) return 'easy';
-  if (gameLevel <= 30) return 'medium';
-  return 'hard';
-}
-
-// ✅ BUG-060 FIX: Difficulty is predetermined by mine level, not player choice.
 // Levels 1–10 → Easy (8×10), 11–30 → Medium (15×19), 31+ → Hard (25×33)
 function getDiffKeyForLevel(gameLevel: number): string {
   if (gameLevel <= 10) return 'easy';
@@ -347,6 +339,12 @@ export default function MinerMazeScreen({ route, navigation }: any) {
 
   // Lazy-init AdMob: create exactly once, never on re-renders
   const adService = useRef<AdMobService | null>(null);
+  // ✅ PRELOAD FIX: Dedicated AdMobService instance for the level-up ad.
+  // adService is used for in-game power-up ads (boost, canary, health, time)
+  // and may be mid-reinitialize when the win screen appears. This instance
+  // starts loading when the 'won' phase begins so it's ready when the player
+  // taps the level-up button.
+  const adLevelService = useRef<AdMobService | null>(null);
   useEffect(() => {
     adService.current = new AdMobService();
     // ✅ BUG-028 FIX: Destroy the ad on unmount so the native AVPlayer (iOS) /
@@ -356,6 +354,7 @@ export default function MinerMazeScreen({ route, navigation }: any) {
     return () => {
       isMounted.current = false;
       adService.current?.destroyAd();
+      adLevelService.current?.destroyAd();
     };
   }, []);  // empty deps = runs once on mount
 
@@ -736,12 +735,23 @@ export default function MinerMazeScreen({ route, navigation }: any) {
   };
 
 
+  // ✅ PRELOAD FIX: Start loading the level-up ad the moment the player wins.
+  // Power-up ads (boost/canary/health/time) use adService and may leave it
+  // mid-reinitialize. This dedicated instance has a full load cycle head start
+  // before the player taps the level-up button.
+  useEffect(() => {
+    if (phase === 'won') {
+      adLevelService.current?.destroyAd();
+      adLevelService.current = new AdMobService();
+    }
+  }, [phase]);
+
   // ── Ad to play next level ──────────────────────────────────────
   const handlePlayNextLevel = async () => {
-    if (!adService.current) return;
+    if (!adLevelService.current) return;
     setAdLevelLoading(true);
     try {
-      await adService.current.showAd(
+      await adLevelService.current.showAd(
         async () => {
           if (!isMounted.current) return;
           const updated = await dbServicePhase2.getPropertyDetails(property.id);
