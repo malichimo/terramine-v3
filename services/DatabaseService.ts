@@ -125,6 +125,13 @@ export class DatabaseService {
         purchasedAt: now,
         lastActivityAt: now,
       });
+
+      // ✅ LEADERBOARD FIX: Increment propertyCount on user doc so the leaderboard
+      // can query users ordered by this field instead of scanning all 12K+ property
+      // documents on every open. One write here saves thousands of reads per day.
+      await updateDoc(doc(db, 'users', userId), {
+        propertyCount: increment(1),
+      });
     } catch (e) {
       // ✅ Refund TB if property save fails
       await this.updateUserBalance(userId, tbCost).catch(() => {});

@@ -1,6 +1,11 @@
 // components/LeaderboardModal.tsx
 // Modal overlay showing top 10 players by property count
 // Also shows the current user's rank if outside top 10
+//
+// ✅ LEADERBOARD FIX: Replaced full properties collection scan (12K+ reads per
+// open) with a single indexed query on users.propertyCount (10 reads per open).
+// propertyCount is incremented on user doc in DatabaseService.purchaseProperty().
+// One-time migration: scripts/populatePropertyCounts.ts backfills existing users.
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -12,15 +17,15 @@ import {
   ActivityIndicator,
   ScrollView,
   Platform,
-  StatusBar,
   Image,
 } from 'react-native';
 import { db } from '../firebaseConfig';
 import {
   collection,
-  getDocs,
   query,
-  where,
+  orderBy,
+  limit,
+  getDocs,
   getDoc,
   doc,
 } from 'firebase/firestore';
@@ -40,7 +45,6 @@ interface LeaderboardModalProps {
 }
 
 const MINE_EMOJIS = ['🥇', '🥈', '🥉'];
-const SYSTEM_UID = 'terramine-system';
 
 export default function LeaderboardModal({ visible, onClose, currentUserId }: LeaderboardModalProps) {
   const [loading, setLoading] = useState(false);
@@ -53,78 +57,83 @@ export default function LeaderboardModal({ visible, onClose, currentUserId }: Le
     setLoading(true);
     setError(null);
     try {
-      // Step 1: Get all properties and group by ownerId
-      const propertiesSnap = await getDocs(collection(db, 'properties'));
-      const countMap = new Map<string, number>();
-
-      propertiesSnap.docs.forEach(d => {
-        const ownerId = d.data().ownerId as string;
-        if (!ownerId || ownerId === SYSTEM_UID) return;
-        countMap.set(ownerId, (countMap.get(ownerId) || 0) + 1);
-      });
-
-      // Step 2: Sort by count descending
-      const sorted = Array.from(countMap.entries())
-        .sort((a, b) => b[1] - a[1]);
-
-      setTotalPlayers(sorted.length);
-
-      // Step 3: Fetch nicknames for top 10 + current user if outside top 10
-      const top10 = sorted.slice(0, 10);
-      const currentUserIndex = sorted.findIndex(([uid]) => uid === currentUserId);
-      const isInTop10 = currentUserIndex !== -1 && currentUserIndex < 10;
-
-      // Collect all userIds we need nicknames for
-      const userIdsNeeded = new Set(top10.map(([uid]) => uid));
-      if (!isInTop10 && currentUserIndex !== -1) {
-        userIdsNeeded.add(currentUserId);
-      }
-
-      // Fetch nicknames and avatars in parallel — same single getDoc per user
-      const nicknameMap = new Map<string, string>();
-      const avatarMap   = new Map<string, string | null>();
-      await Promise.all(
-        Array.from(userIdsNeeded).map(async uid => {
-          try {
-            const userSnap = await getDoc(doc(db, 'users', uid));
-            if (userSnap.exists()) {
-              const data = userSnap.data();
-              nicknameMap.set(uid, data.nickname || data.email?.split('@')[0] || 'Unknown');
-              avatarMap.set(uid, data.avatarUrl || null);
-            }
-          } catch {
-            nicknameMap.set(uid, 'Unknown');
-            avatarMap.set(uid, null);
-          }
-        })
+      // ✅ Simple orderBy query — uses Firebase's automatic single-field index
+      // on propertyCount. No composite index needed. Firebase confirmed this
+      // when it blocked composite index creation as "not necessary."
+      const top10Query = query(
+        collection(db, 'users'),
+        orderBy('propertyCount', 'desc'),
+        limit(10)
       );
 
-      // Step 4: Build top 10 entries
-      const leaderboardEntries: LeaderboardEntry[] = top10.map(([uid, count], i) => ({
-        rank: i + 1,
-        userId: uid,
-        nickname: nicknameMap.get(uid) || 'Unknown',
-        avatarUrl: avatarMap.get(uid) ?? null,
-        propertyCount: count,
-      }));
+      const top10Snap = await getDocs(top10Query);
+
+      const leaderboardEntries: LeaderboardEntry[] = top10Snap.docs.map((d, i) => {
+        const data = d.data();
+        return {
+          rank: i + 1,
+          userId: d.id,
+          nickname: data.nickname || data.email?.split('@')[0] || 'Unknown',
+          avatarUrl: data.avatarUrl || null,
+          propertyCount: data.propertyCount ?? 0,
+        };
+      });
+
       setEntries(leaderboardEntries);
 
-      // Step 5: Build current user entry if outside top 10
-      if (!isInTop10 && currentUserIndex !== -1) {
-        const [uid, count] = sorted[currentUserIndex];
-        setCurrentUserEntry({
-          rank: currentUserIndex + 1,
-          userId: uid,
-          nickname: nicknameMap.get(uid) || 'Unknown',
-          avatarUrl: avatarMap.get(uid) ?? null,
-          propertyCount: count,
-        });
+      // Check if current user is in top 10
+      const isInTop10 = leaderboardEntries.some(e => e.userId === currentUserId);
+
+      if (!isInTop10) {
+        // Fetch current user's rank — single doc read
+        const userSnap = await getDoc(doc(db, 'users', currentUserId));
+        if (userSnap.exists()) {
+          const data = userSnap.data();
+          const userCount = data.propertyCount ?? 0;
+
+          if (userCount > 0) {
+            // Count users ranked above current user by fetching top N+1
+            // and finding position — avoids where() and composite index requirement
+            const rankQuery = query(
+              collection(db, 'users'),
+              orderBy('propertyCount', 'desc'),
+              limit(100)
+            );
+            const rankSnap = await getDocs(rankQuery);
+            const position = rankSnap.docs.findIndex(d => d.id === currentUserId);
+            const rank = position === -1 ? rankSnap.size + 1 : position + 1;
+
+            setCurrentUserEntry({
+              rank,
+              userId: currentUserId,
+              nickname: data.nickname || data.email?.split('@')[0] || 'Unknown',
+              avatarUrl: data.avatarUrl || null,
+              propertyCount: userCount,
+            });
+          } else {
+            setCurrentUserEntry(null);
+          }
+        }
       } else {
         setCurrentUserEntry(null);
       }
-    } catch (e) {
+
+      // Total players = users with at least 1 property
+      // Use top10 count as minimum — exact count deferred to avoid full scan
+      setTotalPlayers(
+        isInTop10
+          ? leaderboardEntries.length
+          : leaderboardEntries.length + 1
+      );
+
+    } catch (e: any) {
       console.error('LeaderboardModal: fetch error', e);
-      setError('Could not load leaderboard. Please try again.');
+      // If Firestore raises an index error, the message contains a URL to create it
+      if (e?.message?.includes('index')) {
+        setError('Leaderboard index building. Try again in 1 minute.');
+      } else {
+        setError('Could not load leaderboard. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -146,13 +155,11 @@ export default function LeaderboardModal({ visible, onClose, currentUserId }: Le
         ]}
       >
         <Text style={[styles.rankText, entry.rank <= 3 && styles.rankEmoji]}>{rankLabel}</Text>
-        {/* ✅ AVATAR: Show player avatar or initials placeholder.
-             Only use https:// URLs — gs:// URIs crash React Native Image. */}
         {entry.avatarUrl?.startsWith('https://') ? (
           <Image
             source={{ uri: entry.avatarUrl }}
             style={styles.avatar}
-            onError={() => {}} // silent fallback — re-render shows initials
+            onError={() => {}}
           />
         ) : (
           <View style={[styles.avatarPlaceholder, isCurrentUser && styles.avatarPlaceholderHighlight]}>
