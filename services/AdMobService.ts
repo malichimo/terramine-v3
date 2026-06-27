@@ -4,7 +4,7 @@ import {
   TestIds,
   AdEventType
 } from 'react-native-google-mobile-ads';
-import { Platform } from 'react-native';
+import { Platform, InteractionManager } from 'react-native';
 
 // ─── BETA MODE FLAG ───────────────────────────────────────────────────────────
 // Set to true during beta testing to use Google's test ad unit on ALL platforms.
@@ -48,63 +48,73 @@ export class AdMobService {
     this.initializeAd();
   }
 
+  // ✅ iOS CRASH FIX: AVPlayerLayer must be created on the main thread.
+  // When initializeAd() is called from a timer callback or event listener that
+  // fires on the React Native JS thread or CoreMedia background thread,
+  // AVPlayerLayer's KVO setup races with concurrent thread activity, corrupting
+  // a CoreFoundation dictionary and triggering EXC_BREAKPOINT / SIGTRAP.
+  // InteractionManager.runAfterInteractions() defers execution until the main
+  // thread is idle and all interactions have settled, guaranteeing that
+  // RewardedAd.createForAdRequest() (which initializes AVPlayerLayer on iOS)
+  // runs safely on the main thread without concurrent mutation risk.
   private initializeAd() {
-    try {
-      this.destroyAd();
+    InteractionManager.runAfterInteractions(() => {
+      try {
+        this.destroyAd();
 
-      this.rewardedAd = RewardedAd.createForAdRequest(this.adUnitId, {
-        requestNonPersonalizedAdsOnly: false,
-      });
+        this.rewardedAd = RewardedAd.createForAdRequest(this.adUnitId, {
+          requestNonPersonalizedAdsOnly: false,
+        });
 
-      this.unsubscribeLoaded = this.rewardedAd.addAdEventListener(
-        RewardedAdEventType.LOADED,
-        () => {
-          console.log('✅ Rewarded ad loaded');
-          this.isLoaded = true;
-          this.isLoading = false;
-        }
-      );
+        this.unsubscribeLoaded = this.rewardedAd.addAdEventListener(
+          RewardedAdEventType.LOADED,
+          () => {
+            console.log('✅ Rewarded ad loaded');
+            this.isLoaded = true;
+            this.isLoading = false;
+          }
+        );
 
-      this.unsubscribeEarned = this.rewardedAd.addAdEventListener(
-        RewardedAdEventType.EARNED_REWARD,
-        (reward) => {
-          console.log('🎉 User earned reward:', reward);
-        }
-      );
+        this.unsubscribeEarned = this.rewardedAd.addAdEventListener(
+          RewardedAdEventType.EARNED_REWARD,
+          (reward) => {
+            console.log('🎉 User earned reward:', reward);
+          }
+        );
 
-      this.unsubscribeError = this.rewardedAd.addAdEventListener(
-        AdEventType.ERROR,
-        (error) => {
-          console.error('❌ Rewarded ad error:', error);
-          this.isLoading = false;
-          this.isLoaded = false;
-          // ✅ FIX: Retry after 10 seconds on error rather than giving up entirely.
-          // On iOS during AdMob review, production ads may fail to fill initially.
-          const t = setTimeout(() => {
-            this.pendingTimers = this.pendingTimers.filter(id => id !== t);
-            this.loadAd();
-          }, 10_000);
-          this.pendingTimers.push(t);
-        }
-      );
+        this.unsubscribeError = this.rewardedAd.addAdEventListener(
+          AdEventType.ERROR,
+          (error) => {
+            console.error('❌ Rewarded ad error:', error);
+            this.isLoading = false;
+            this.isLoaded = false;
+            // Retry after 10 seconds on error
+            const t = setTimeout(() => {
+              this.pendingTimers = this.pendingTimers.filter(id => id !== t);
+              this.loadAd();
+            }, 10_000);
+            this.pendingTimers.push(t);
+          }
+        );
 
-      this.unsubscribeClosed = this.rewardedAd.addAdEventListener(
-        AdEventType.CLOSED,
-        () => {
-          console.log('📱 Rewarded ad closed');
-          this.isLoaded = false;
-          const t = setTimeout(() => {
-            this.pendingTimers = this.pendingTimers.filter(id => id !== t);
-            this.initializeAd();
-          }, 500);
-          this.pendingTimers.push(t);
-        }
-      );
+        this.unsubscribeClosed = this.rewardedAd.addAdEventListener(
+          AdEventType.CLOSED,
+          () => {
+            console.log('📱 Rewarded ad closed');
+            this.isLoaded = false;
+            const t = setTimeout(() => {
+              this.pendingTimers = this.pendingTimers.filter(id => id !== t);
+              this.initializeAd();
+            }, 500);
+            this.pendingTimers.push(t);
+          }
+        );
 
-      this.loadAd();
-    } catch (error) {
-      console.error('❌ Error initializing AdMob:', error);
-    }
+        this.loadAd();
+      } catch (error) {
+        console.error('❌ Error initializing AdMob:', error);
+      }
+    });
   }
 
   // ✅ BUG-028 FIX: Public so game screens can call this on unmount to tear down

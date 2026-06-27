@@ -294,7 +294,7 @@
         "backgroundColor": "#1A3A5C"
       },
       "package": "com.terramine.app",
-      "versionCode": 53,
+      "versionCode": 54,
       "intentFilters": [
         {
           "action": "VIEW",
@@ -356,6 +356,8 @@
         }
       ],
       "./app.plugin.js",
+      "@react-native-firebase/app",
+      "@react-native-firebase/crashlytics",
       [
         "@react-native-google-signin/google-signin",
         {

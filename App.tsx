@@ -8,6 +8,14 @@ import WelcomeScreen from './screens/WelcomeScreen';
 import LoadingScreen from './components/LoadingScreen';
 import { DeepLinkService } from './services/DeepLinkService';
 
+// ✅ CRASHLYTICS: Import must be at the top of the entry point so Crashlytics
+// initializes before any other code runs. This ensures crashes during startup,
+// auth, and navigation are all captured — not just crashes after the app is
+// fully loaded. No configuration needed beyond the import; the native module
+// auto-initializes using google-services.json (Android) and
+// GoogleService-Info.plist (iOS) already in the project root.
+import '@react-native-firebase/crashlytics';
+
 // ✅ BUG-068 FIX: Persisted once this device has ever completed a successful
 // sign-in. Used so a returning user who gets signed out — whether
 // deliberately or via a transient auth blip — lands on LoginScreen, not the
