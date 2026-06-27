@@ -99,6 +99,11 @@ export default function SlotMachineActivity({
 
   const handleWatchAdForDouble = async () => {
     try {
+      const ready = await adService.waitUntilReady(5000);
+      if (!ready) {
+        Alert.alert('Ad Not Ready', 'The ad is still loading. Please wait a moment and try again.');
+        return;
+      }
       const success = await adService.showAd(
         () => {
           setWillDoubleRewards(true);
@@ -130,6 +135,11 @@ export default function SlotMachineActivity({
     
     // 2. Show ad
     try {
+      const ready = await adService.waitUntilReady(5000);
+      if (!ready) {
+        Alert.alert('Ad Not Ready', 'The ad is still loading. Please wait a moment and try again.');
+        return;
+      }
       const success = await adService.showAd(
         async () => {
           // 3. Record usage FIRST

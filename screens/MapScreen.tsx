@@ -356,9 +356,19 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       diamond: 0.0000000044,
     };
 
+    // ✅ EARNINGS FIX: Apply productionLevel boost (+1% per level above 1).
+    // productionLevel is now written to the properties doc on upgrade so it's
+    // available in ownedProperties without any extra Firestore reads.
+    // A level 1 mine has no boost (multiplier = 1.0).
+    // A level 50 mine has +49% boost (multiplier = 1.49).
+    // A level 100 mine has +99% boost (multiplier = 1.99).
+    // Falls back to level 1 (no boost) if productionLevel is not yet on the doc
+    // (existing properties before this fix shipped).
     const totalRentPerSecond = ownedProperties.reduce((sum, property) => {
-      const rate = rentRates[property.mineType as keyof typeof rentRates] || 0;
-      return sum + rate;
+      const baseRate = rentRates[property.mineType as keyof typeof rentRates] || 0;
+      const productionLevel = (property as any).productionLevel ?? 1;
+      const productionMultiplier = 1 + ((productionLevel - 1) * 0.01);
+      return sum + (baseRate * productionMultiplier);
     }, 0);
 
     const multiplier = boostState.isBoostActive ? 20 : 1; // 20x boost on passive USD earnings

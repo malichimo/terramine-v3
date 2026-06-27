@@ -341,17 +341,18 @@ export default function GoldRushGame({ route, navigation }: any) {
   async function handleAdForMoves() {
     if (!adService.current) return;
 
-    // ✅ FIX: Check ad readiness before attempting to show
-    if (!adService.current.isAdReady()) {
-      Alert.alert(
-        'Ad Not Ready',
-        'The ad is still loading. Please wait a moment and try again.',
-        [{ text: 'OK' }]
-      );
+    // ✅ FIX: Wait up to 5 seconds for ad instead of instant rejection.
+    // BoostModal uses waitUntilReady(5000) which is why boost ads almost
+    // always work — game screens were rejecting immediately on isAdReady()
+    // false, which happens whenever the ad is mid-reinitialize after a
+    // previous show or after the screen first mounted.
+    setAdLoading(true);
+    const ready = await adService.current.waitUntilReady(5000);
+    if (!ready) {
+      setAdLoading(false);
+      Alert.alert('Ad Not Ready', 'The ad is still loading. Please wait a moment and try again.', [{ text: 'OK' }]);
       return;
     }
-
-    setAdLoading(true);
     try {
       const shown = await adService.current.showAd(
         () => {
@@ -389,18 +390,13 @@ export default function GoldRushGame({ route, navigation }: any) {
   async function handlePlayNextLevel() {
     if (!adLevelService.current) return;
 
-    // ✅ FIX: Check ad readiness before attempting to show — prevents crash
-    // when user taps immediately after level-up before ad has loaded
-    if (!adLevelService.current.isAdReady()) {
-      Alert.alert(
-        'Ad Not Ready',
-        'The ad is still loading. Please wait a moment and try again.',
-        [{ text: 'OK' }]
-      );
+    setAdLevelLoading(true);
+    const ready = await adLevelService.current.waitUntilReady(5000);
+    if (!ready) {
+      setAdLevelLoading(false);
+      Alert.alert('Ad Not Ready', 'The ad is still loading. Please wait a moment and try again.', [{ text: 'OK' }]);
       return;
     }
-
-    setAdLevelLoading(true);
     try {
       const shown = await adLevelService.current.showAd(
         async () => {

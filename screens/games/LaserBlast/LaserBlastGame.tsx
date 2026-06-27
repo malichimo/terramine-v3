@@ -424,17 +424,13 @@ export default function LaserBlastGame({ route, navigation }: any) {
   async function handleAdForLife() {
     if (!adService.current) return;
 
-    // ✅ FIX: Check ad readiness before attempting to show
-    if (!adService.current.isAdReady()) {
-      Alert.alert(
-        'Ad Not Ready',
-        'The ad is still loading. Please wait a moment and try again.',
-        [{ text: 'OK' }]
-      );
+    setAdLoading(true);
+    const ready = await adService.current.waitUntilReady(5000);
+    if (!ready) {
+      setAdLoading(false);
+      Alert.alert('Ad Not Ready', 'The ad is still loading. Please wait a moment and try again.', [{ text: 'OK' }]);
       return;
     }
-
-    setAdLoading(true);
     try {
       const shown = await adService.current.showAd(
         () => {
@@ -500,17 +496,13 @@ export default function LaserBlastGame({ route, navigation }: any) {
   async function handlePlayNextLevelAd() {
     if (!adLevelService.current) return;
 
-    // ✅ FIX: Check ad readiness before attempting to show
-    if (!adLevelService.current.isAdReady()) {
-      Alert.alert(
-        'Ad Not Ready',
-        'The ad is still loading. Please wait a moment and try again.',
-        [{ text: 'OK' }]
-      );
+    setAdLevelLoading(true);
+    const ready = await adLevelService.current.waitUntilReady(5000);
+    if (!ready) {
+      setAdLevelLoading(false);
+      Alert.alert('Ad Not Ready', 'The ad is still loading. Please wait a moment and try again.', [{ text: 'OK' }]);
       return;
     }
-
-    setAdLevelLoading(true);
     try {
       const shown = await adLevelService.current.showAd(
         () => {

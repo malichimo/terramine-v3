@@ -296,7 +296,7 @@
         "backgroundColor": "#1A3A5C"
       },
       "package": "com.terramine.app",
-      "versionCode": 54,
+      "versionCode": 55,
       "intentFilters": [
         {
           "action": "VIEW",

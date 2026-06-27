@@ -750,6 +750,12 @@ export default function MinerMazeScreen({ route, navigation }: any) {
   const handlePlayNextLevel = async () => {
     if (!adLevelService.current) return;
     setAdLevelLoading(true);
+    const ready = await adLevelService.current.waitUntilReady(5000);
+    if (!ready) {
+      setAdLevelLoading(false);
+      Alert.alert('Ad Not Ready', 'The ad is still loading. Please wait a moment and try again.');
+      return;
+    }
     try {
       await adLevelService.current.showAd(
         async () => {
@@ -798,10 +804,10 @@ export default function MinerMazeScreen({ route, navigation }: any) {
     setPu(p => ({ ...p, charges: p.charges - 1, boosted: true, boostLeft: BOOST_DUR }));
     setLitSet(computeLit(miner, grid, cfg, true));
   };
-  const adBoost  = async () => { if (!adService.current) return; try { await adService.current.showAd(() => { if (!isMounted.current) return; soundService.play('chime'); setPu(p => ({...p, charges: p.charges+1})); }, () => {}); } catch {} };
-  const adCanary = async () => { if (pu.canary || !adService.current) return; try { await adService.current.showAd(() => { if (!isMounted.current) return; soundService.play('canary'); setPu(p => ({...p, canary:true})); }, () => {}); } catch {} };
-  const adHealth = async () => { if (!adService.current) return; try { await adService.current.showAd(() => { if (!isMounted.current) return; soundService.play('chime'); setHealth(h => Math.min(100, h+30)); }, () => {}); } catch {} };
-  const adTime   = async () => { if (!adService.current) return; try { await adService.current.showAd(() => { if (!isMounted.current) return; soundService.play('chime'); setTLeft(t => t + 30); }, () => {}); } catch {} };
+  const adBoost  = async () => { if (!adService.current) return; const ready = await adService.current.waitUntilReady(5000); if (!ready) { Alert.alert('Ad Not Ready', 'Please wait a moment and try again.'); return; } try { await adService.current.showAd(() => { if (!isMounted.current) return; soundService.play('chime'); setPu(p => ({...p, charges: p.charges+1})); }, () => {}); } catch {} };
+  const adCanary = async () => { if (pu.canary || !adService.current) return; const ready = await adService.current.waitUntilReady(5000); if (!ready) { Alert.alert('Ad Not Ready', 'Please wait a moment and try again.'); return; } try { await adService.current.showAd(() => { if (!isMounted.current) return; soundService.play('canary'); setPu(p => ({...p, canary:true})); }, () => {}); } catch {} };
+  const adHealth = async () => { if (!adService.current) return; const ready = await adService.current.waitUntilReady(5000); if (!ready) { Alert.alert('Ad Not Ready', 'Please wait a moment and try again.'); return; } try { await adService.current.showAd(() => { if (!isMounted.current) return; soundService.play('chime'); setHealth(h => Math.min(100, h+30)); }, () => {}); } catch {} };
+  const adTime   = async () => { if (!adService.current) return; const ready = await adService.current.waitUntilReady(5000); if (!ready) { Alert.alert('Ad Not Ready', 'Please wait a moment and try again.'); return; } try { await adService.current.showAd(() => { if (!isMounted.current) return; soundService.play('chime'); setTLeft(t => t + 30); }, () => {}); } catch {} };
 
   const isCanaryWarn = useCallback((r: number, c: number) => {
     if (!pu.canary) return false;

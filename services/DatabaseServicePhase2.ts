@@ -372,11 +372,21 @@ export class DatabaseServicePhase2 {
       // Deduct resources
       await this.deductResources(userId, mineType, cost);
 
-      // Upgrade property
+      // Upgrade propertyDetails doc
       const detailsRef = doc(db, 'propertyDetails', propertyId);
       await updateDoc(detailsRef, {
         productionLevel: currentLevel + 1,
         lastUpdated: new Date().toISOString(),
+      });
+
+      // ✅ EARNINGS FIX: Also write productionLevel to the properties doc so
+      // MapScreen.calculateEarnings() can apply the +1% per level boost without
+      // fetching propertyDetails. The properties doc is already in memory as
+      // ownedProperties — adding this field costs ~8 bytes per property and
+      // zero extra Firestore reads at earnings calculation time.
+      const propertyRef = doc(db, 'properties', propertyId);
+      await updateDoc(propertyRef, {
+        productionLevel: currentLevel + 1,
       });
       
       console.log('Property upgraded:', {

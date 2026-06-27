@@ -205,6 +205,11 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
 
   const handleWatchTimeAd = async () => {
     try {
+      const ready = await adService.waitUntilReady(5000);
+      if (!ready) {
+        Alert.alert('Ad Not Ready', 'The ad is still loading. Please wait a moment and try again.');
+        return;
+      }
       const success = await adService.showAd(
         () => {
           // Ad watched - add 30 seconds
@@ -237,6 +242,11 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
 
   const handleWatchMovesAd = async (bonusMoves: number) => {
     try {
+      const ready = await adService.waitUntilReady(5000);
+      if (!ready) {
+        Alert.alert('Ad Not Ready', 'The ad is still loading. Please wait a moment and try again.');
+        return;
+      }
       const success = await adService.showAd(
         () => {
           // Ad watched - add bonus moves
@@ -395,6 +405,12 @@ export default function MemoryMatchScreen({ route, navigation }: MemoryMatchScre
   const handlePlayNextLevel = async () => {
     if (!adLevelService.current) return;
     setAdLevelLoading(true);
+    const ready = await adLevelService.current.waitUntilReady(5000);
+    if (!ready) {
+      setAdLevelLoading(false);
+      Alert.alert('Ad Not Ready', 'The ad is still loading. Please wait a moment and try again.');
+      return;
+    }
     try {
       const shown = await adLevelService.current.showAd(
         async () => {
