@@ -14,6 +14,7 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
+      "googleServicesFile": "./GoogleService-Info.plist",
       "bundleIdentifier": "com.terramine.app",
       "supportsTablet": true,
       "associatedDomains": ["applinks:terramine.app"],
@@ -289,6 +290,7 @@
       "buildNumber": "47"
     },
     "android": {
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/terramine_logo_1024.png",
         "backgroundColor": "#1A3A5C"
