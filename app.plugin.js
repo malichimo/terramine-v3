@@ -3,9 +3,9 @@ const { mergeContents } = require('@expo/config-plugins/build/utils/generateCode
 const path = require('path');
 const fs = require('fs');
 
-// ✅ iOS FIX: AppCheckCore (pulled in by Google-Mobile-Ads-SDK 12.14+) depends on
-// GoogleUtilities and RecaptchaInterop which don't define modules. CocoaPods requires
-// modular_headers to be enabled for these pods when building as static libraries.
+// ✅ iOS FIX: FirebaseCrashlytics and FirebaseSessions require GoogleDataTransport
+// and nanopb to use modular headers when building as static libraries.
+// GoogleUtilities and RecaptchaInterop are also required for CocoaPods compatibility.
 // Without this, pod install fails with "cannot yet be integrated as static libraries".
 function withModularHeaders(config) {
   return withDangerousMod(config, [
@@ -15,10 +15,10 @@ function withModularHeaders(config) {
       const contents = fs.readFileSync(podfilePath, 'utf-8');
 
       const addition = `
-# ✅ Fix: AppCheckCore requires GoogleUtilities and RecaptchaInterop to use modular headers
-# when building as static libraries (required by Google-Mobile-Ads-SDK 12.14+)
 # ✅ Fix: FirebaseCrashlytics and FirebaseSessions require GoogleDataTransport and nanopb
 # to use modular headers when building as static libraries (required by react-native-firebase 25.1+)
+# ✅ Fix: GoogleUtilities and RecaptchaInterop also require modular headers for CocoaPods
+# static library compatibility
 pod 'GoogleUtilities', :modular_headers => true
 pod 'RecaptchaInterop', :modular_headers => true
 pod 'GoogleDataTransport', :modular_headers => true
@@ -45,48 +45,7 @@ pod 'nanopb', :modular_headers => true
   ]);
 }
 
-// ✅ iOS FIX: Google-Mobile-Ads-SDK 12.14.0 calls a non-existent NSLayoutConstraint
-// method (+[NSLayoutConstraint constraintWithAnchor:relatedBy:toAnchor:multiplier:constant:])
-// which doesn't exist in Apple's SDK — it's a hybrid of the classic and anchor APIs.
-// This causes EXC_CRASH / couldNotInstantiate crashes on iOS 26.5.1 during ad display.
-// Pinning to 12.13.0 avoids this bug until Google releases a fix.
-function withGoogleMobileAdsVersion(config) {
-  return withDangerousMod(config, [
-    'ios',
-    async (config) => {
-      const podfilePath = path.join(config.modRequest.platformProjectRoot, 'Podfile');
-      const contents = fs.readFileSync(podfilePath, 'utf-8');
-
-      if (contents.includes("pod 'Google-Mobile-Ads-SDK', '~> 12.13.0'")) {
-        // Already pinned, skip
-        return config;
-      }
-
-      const addition = `
-# ✅ Fix: Pin Google-Mobile-Ads-SDK to 12.13.0 — version 12.14.0 calls a
-# non-existent NSLayoutConstraint API causing EXC_CRASH on iOS 26.5.1.
-pod 'Google-Mobile-Ads-SDK', '~> 12.13.0'
-`;
-
-      const result = mergeContents({
-        tag: 'google-mobile-ads-version-pin',
-        src: contents,
-        newSrc: addition,
-        anchor: /use_expo_modules!/,
-        offset: 1,
-        comment: '#',
-      });
-
-      fs.writeFileSync(podfilePath, result.contents);
-      return config;
-    },
-  ]);
-}
-
 module.exports = function withCustomConfig(config) {
-  // iOS: Pin Google-Mobile-Ads-SDK to 12.13.0 to avoid NSLayoutConstraint crash
-  config = withGoogleMobileAdsVersion(config);
-
   // Android: Fix AdMob measurement init manifest entry
   config = withAndroidManifest(config, (config) => {
     const androidManifest = config.modResults.manifest;
@@ -116,7 +75,7 @@ module.exports = function withCustomConfig(config) {
     return config;
   });
 
-  // iOS: Fix AppCheckCore static library modular headers conflict
+  // iOS: Fix static library modular headers conflict for Firebase and Google pods
   config = withModularHeaders(config);
 
   return config;

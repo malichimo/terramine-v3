@@ -17,7 +17,9 @@
       "googleServicesFile": "./GoogleService-Info.plist",
       "bundleIdentifier": "com.terramine.app",
       "supportsTablet": true,
-      "associatedDomains": ["applinks:terramine.app"],
+      "associatedDomains": [
+        "applinks:terramine.app"
+      ],
       "config": {
         "googleMapsApiKey": "AIzaSyBsh79SG1PlF7WMA8b_ObYMrGatmhSWrtc",
         "googleMobileAdsAppId": "ca-app-pub-4502698429383902~3587962923"
@@ -287,7 +289,7 @@
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
-      "buildNumber": "48"
+      "buildNumber": "54"
     },
     "android": {
       "googleServicesFile": "./google-services.json",
@@ -308,7 +310,10 @@
               "pathPrefix": "/join"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ],
       "permissions": [
@@ -354,7 +359,10 @@
         {
           "androidAppId": "ca-app-pub-4502698429383902~4525995296",
           "iosAppId": "ca-app-pub-4502698429383902~3587962923",
-          "adapters": ["unity", "meta"]
+          "adapters": [
+            "unity",
+            "meta"
+          ]
         }
       ],
       "./app.plugin.js",
@@ -365,7 +373,8 @@
         {
           "iosUrlScheme": "com.googleusercontent.apps.183143680304-if4fq2o2n7h0sqodvlejre0a1hagk8ui"
         }
-      ]
+      ],
+      "expo-build-properties"
     ],
     "extra": {
       "eas": {
