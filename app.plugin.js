@@ -17,11 +17,15 @@ function withModularHeaders(config) {
       const addition = `
 # ✅ Fix: AppCheckCore requires GoogleUtilities and RecaptchaInterop to use modular headers
 # when building as static libraries (required by Google-Mobile-Ads-SDK 12.14+)
+# ✅ Fix: FirebaseCrashlytics and FirebaseSessions require GoogleDataTransport and nanopb
+# to use modular headers when building as static libraries (required by react-native-firebase 25.1+)
 pod 'GoogleUtilities', :modular_headers => true
 pod 'RecaptchaInterop', :modular_headers => true
+pod 'GoogleDataTransport', :modular_headers => true
+pod 'nanopb', :modular_headers => true
 `;
 
-      if (contents.includes('RecaptchaInterop')) {
+      if (contents.includes('RecaptchaInterop') && contents.includes('nanopb')) {
         // Already patched, skip
         return config;
       }
