@@ -287,7 +287,7 @@
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
-      "buildNumber": "47"
+      "buildNumber": "48"
     },
     "android": {
       "googleServicesFile": "./google-services.json",
