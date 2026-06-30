@@ -7,10 +7,6 @@ import {
 import { Platform, InteractionManager } from 'react-native';
 
 // ─── BETA MODE FLAG ───────────────────────────────────────────────────────────
-// Set to true during beta testing to use Google's test ad unit on ALL platforms.
-// Test ads always fill — iOS testers won't see blank screens while AdMob reviews
-// the account. Flip to false before submitting to production.
-// ⚠️  REMEMBER: Set BETA_MODE = false before production release.
 const BETA_MODE = false;
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -23,16 +19,50 @@ export class AdMobService {
   private unsubscribeClosed:  (() => void) | null = null;
   private unsubscribeError:   (() => void) | null = null;
   private unsubscribeEarned:  (() => void) | null = null;
-  // ✅ DIAGNOSTIC: Tracks how many ads this instance has successfully shown
-  // since creation. Helps confirm/deny the "native SDK degrades after N
-  // consecutive ads in one session" hypothesis from device logs.
   private adsShownThisSession: number = 0;
-
-  // ✅ LEAK FIX: All setTimeout IDs are tracked here so destroyAd() can cancel
-  // any that are still pending when the screen unmounts. Without this, timers
-  // scheduled inside showAd() or the ERROR/CLOSED listeners fire after the
-  // component is gone and call initializeAd() / loadAd() on a destroyed instance.
   private pendingTimers: ReturnType<typeof setTimeout>[] = [];
+
+  // ✅ SHARED INSTANCE: Whether this instance is currently showing an ad.
+  // Used by screens to gate their own show requests — only one ad can play at a time.
+  private isShowingAd: boolean = false;
+
+  // ✅ BUG-077 FIX: Whether the app is in the foreground. Set externally via
+  // setAppActive() from an AppState listener in App.tsx. Previously, every
+  // single ad CLOSED/ERROR event scheduled an unconditional initializeAd()
+  // 500ms-10s later — including if the user backgrounded the app right as
+  // (or just after) the ad closed. That created a brand-new native
+  // RewardedAd/AVPlayerLayer instance while iOS may still have been tearing
+  // down the just-closed one's audio session, which is a plausible cause of
+  // ad audio continuing to play after backgrounding the app on iOS.
+  // While the app is backgrounded, scheduled reinit calls are deferred
+  // instead of running — pendingReinit tracks that a reinit is owed once the
+  // app returns to the foreground.
+  private isAppActive: boolean = true;
+  private pendingReinit: boolean = false;
+
+  /**
+   * Called from App.tsx's AppState listener. When the app returns to the
+   * foreground and a reinit was deferred while backgrounded, run it now.
+   */
+  setAppActive(active: boolean): void {
+    this.isAppActive = active;
+    if (active && this.pendingReinit) {
+      this.pendingReinit = false;
+      this.initializeAd();
+    }
+  }
+
+  /**
+   * Internal helper: either reinitialize immediately (app is active) or
+   * defer until the app returns to the foreground (see setAppActive above).
+   */
+  private reinitializeOrDefer(): void {
+    if (this.isAppActive) {
+      this.initializeAd();
+    } else {
+      this.pendingReinit = true;
+    }
+  }
 
   constructor() {
     if (__DEV__ || BETA_MODE) {
@@ -49,18 +79,13 @@ export class AdMobService {
   }
 
   // ✅ iOS CRASH FIX: AVPlayerLayer must be created on the main thread.
-  // When initializeAd() is called from a timer callback or event listener that
-  // fires on the React Native JS thread or CoreMedia background thread,
-  // AVPlayerLayer's KVO setup races with concurrent thread activity, corrupting
-  // a CoreFoundation dictionary and triggering EXC_BREAKPOINT / SIGTRAP.
-  // InteractionManager.runAfterInteractions() defers execution until the main
-  // thread is idle and all interactions have settled, guaranteeing that
-  // RewardedAd.createForAdRequest() (which initializes AVPlayerLayer on iOS)
-  // runs safely on the main thread without concurrent mutation risk.
+  // InteractionManager.runAfterInteractions() defers until the main thread is
+  // idle, guaranteeing RewardedAd.createForAdRequest() runs without concurrent
+  // AVPlayerLayer KVO mutation risk.
   private initializeAd() {
     InteractionManager.runAfterInteractions(() => {
       try {
-        this.destroyAd();
+        this._teardownListeners();
 
         this.rewardedAd = RewardedAd.createForAdRequest(this.adUnitId, {
           requestNonPersonalizedAdsOnly: false,
@@ -69,7 +94,7 @@ export class AdMobService {
         this.unsubscribeLoaded = this.rewardedAd.addAdEventListener(
           RewardedAdEventType.LOADED,
           () => {
-            console.log('✅ Rewarded ad loaded');
+            console.log('✅ [SharedAd] Rewarded ad loaded');
             this.isLoaded = true;
             this.isLoading = false;
           }
@@ -78,17 +103,16 @@ export class AdMobService {
         this.unsubscribeEarned = this.rewardedAd.addAdEventListener(
           RewardedAdEventType.EARNED_REWARD,
           (reward) => {
-            console.log('🎉 User earned reward:', reward);
+            console.log('🎉 [SharedAd] User earned reward:', reward);
           }
         );
 
         this.unsubscribeError = this.rewardedAd.addAdEventListener(
           AdEventType.ERROR,
           (error) => {
-            console.error('❌ Rewarded ad error:', error);
+            console.error('❌ [SharedAd] Rewarded ad error:', error);
             this.isLoading = false;
             this.isLoaded = false;
-            // Retry after 10 seconds on error
             const t = setTimeout(() => {
               this.pendingTimers = this.pendingTimers.filter(id => id !== t);
               this.loadAd();
@@ -100,11 +124,12 @@ export class AdMobService {
         this.unsubscribeClosed = this.rewardedAd.addAdEventListener(
           AdEventType.CLOSED,
           () => {
-            console.log('📱 Rewarded ad closed');
+            console.log('📱 [SharedAd] Rewarded ad closed');
             this.isLoaded = false;
+            this.isShowingAd = false;
             const t = setTimeout(() => {
               this.pendingTimers = this.pendingTimers.filter(id => id !== t);
-              this.initializeAd();
+              this.reinitializeOrDefer();
             }, 500);
             this.pendingTimers.push(t);
           }
@@ -112,22 +137,15 @@ export class AdMobService {
 
         this.loadAd();
       } catch (error) {
-        console.error('❌ Error initializing AdMob:', error);
+        console.error('❌ [SharedAd] Error initializing AdMob:', error);
       }
     });
   }
 
-  // ✅ BUG-028 FIX: Public so game screens can call this on unmount to tear down
-  // the native AVPlayer (iOS) / ExoPlayer (Android) before the component is
-  // deallocated. Without this, pending FairPlay/notification observers fire on
-  // a freed object → EXC_BAD_ACCESS on iOS, equivalent crash on Android.
-  destroyAd() {
-    // ✅ LEAK FIX: Cancel all pending timers before nulling out the instance.
-    // Timers from ERROR retry, CLOSED reinitialize, and showAd() catch block
-    // can otherwise fire into a destroyed instance after unmount.
-    this.pendingTimers.forEach(id => clearTimeout(id));
-    this.pendingTimers = [];
-
+  // ✅ Internal teardown of listeners and native ad object only.
+  // Does NOT clear pendingTimers — used during reinitialize cycles where
+  // we want to replace the ad object but keep timer state consistent.
+  private _teardownListeners() {
     this.unsubscribeLoaded?.();
     this.unsubscribeClosed?.();
     this.unsubscribeError?.();
@@ -141,74 +159,75 @@ export class AdMobService {
     this.isLoading  = false;
   }
 
+  // ✅ SHARED INSTANCE: destroyAd() is intentionally NOT called by individual
+  // screens on unmount. The shared instance persists for the app lifetime.
+  // This method exists only for catastrophic cleanup (e.g. sign-out).
+  destroyAd() {
+    this.pendingTimers.forEach(id => clearTimeout(id));
+    this.pendingTimers = [];
+    this._teardownListeners();
+    this.isShowingAd = false;
+  }
+
   async loadAd(): Promise<void> {
     if (this.isLoading || this.isLoaded) return;
 
-    // ✅ FIX: Hard timeout watchdog. After many consecutive show/reload cycles
-    // in one session (observed: ~12-14 ads), the native ad SDK can occasionally
-    // hang on load() — the promise never resolves or rejects, no LOADED or
-    // ERROR event ever fires, and isLoading stays stuck true forever. Nothing
-    // in the rest of this class can detect or recover from that without an
-    // explicit timeout, since we're purely reactive to native events.
-    //
-    // If load() hasn't settled within LOAD_TIMEOUT_MS, force-reset state and
-    // do a full initializeAd() (fresh RewardedAd instance) rather than retrying
-    // loadAd() on a possibly-corrupted native ad object.
     const LOAD_TIMEOUT_MS = 15_000;
     let settled = false;
 
     const watchdog = setTimeout(() => {
       if (settled) return;
-      console.warn(`⚠️ Ad load timed out after ${LOAD_TIMEOUT_MS}ms after ${this.adsShownThisSession} ads shown this session — native SDK appears hung. Forcing fresh initializeAd().`);
+      console.warn(`⚠️ [SharedAd] Load timed out after ${LOAD_TIMEOUT_MS}ms (${this.adsShownThisSession} shown). Forcing fresh initializeAd().`);
       settled = true;
       this.isLoading = false;
       this.isLoaded = false;
-      this.initializeAd();
+      this.reinitializeOrDefer();
     }, LOAD_TIMEOUT_MS);
 
     try {
       this.isLoading = true;
-      console.log('⏳ Loading rewarded ad...');
+      console.log('⏳ [SharedAd] Loading rewarded ad...');
       await this.rewardedAd?.load();
-      if (settled) return; // watchdog already fired and reset state — don't override it
+      if (settled) return;
       settled = true;
       clearTimeout(watchdog);
     } catch (error) {
-      if (settled) return; // watchdog already fired — don't double-handle
+      if (settled) return;
       settled = true;
       clearTimeout(watchdog);
-      console.error('❌ Error loading rewarded ad:', error);
+      console.error('❌ [SharedAd] Error loading rewarded ad:', error);
       this.isLoading = false;
       this.isLoaded = false;
-      // ✅ FIX: Retry after 10 seconds instead of throwing and giving up.
-      // Previously this threw, leaving the ad permanently unloaded until the
-      // next initializeAd() call. Now it self-heals silently.
       setTimeout(() => this.loadAd(), 10_000);
     }
   }
 
   async showAd(onRewarded: () => void, onAdClosed: () => void): Promise<boolean> {
-    // ✅ PRELOAD FIX: If the ad isn't ready yet, wait up to 5 seconds instead
-    // of immediately returning false. Fast players (especially at low game
-    // levels) can win before the 1–3s network request completes. Waiting
-    // briefly is much better UX than "Ad not available" on a fresh win.
+    // ✅ SHARED INSTANCE GUARD: Only one ad can play at a time across all screens.
+    if (this.isShowingAd) {
+      console.warn('⚠️ [SharedAd] showAd called while ad already showing — ignoring');
+      return false;
+    }
+
     if (!this.isLoaded) {
-      console.log('⏳ Ad not ready — waiting up to 5s...');
+      console.log('⏳ [SharedAd] Ad not ready — waiting up to 5s...');
       const ready = await this.waitUntilReady(5000);
       if (!ready) {
-        console.log('❌ Ad not loaded after waiting');
+        console.log('❌ [SharedAd] Ad not loaded after waiting');
         this.loadAd().catch(() => {});
         return false;
       }
     }
 
     if (!this.rewardedAd) {
-      console.log('❌ Ad not loaded yet');
+      console.log('❌ [SharedAd] rewardedAd is null');
       this.loadAd().catch(() => {});
       return false;
     }
 
     try {
+      this.isShowingAd = true;
+
       this.unsubscribeEarned?.();
       this.unsubscribeClosed?.();
       this.unsubscribeEarned = null;
@@ -230,12 +249,13 @@ export class AdMobService {
         () => {
           unsubscribeClosed();
           this.isLoaded = false;
+          this.isShowingAd = false;
           if (!rewardEarned) {
             onAdClosed();
           }
           const t = setTimeout(() => {
             this.pendingTimers = this.pendingTimers.filter(id => id !== t);
-            this.initializeAd();
+            this.reinitializeOrDefer();
           }, 500);
           this.pendingTimers.push(t);
         }
@@ -243,13 +263,14 @@ export class AdMobService {
 
       await this.rewardedAd.show();
       this.adsShownThisSession++;
-      console.log(`✅ Ad shown successfully (#${this.adsShownThisSession} this session)`);
+      console.log(`✅ [SharedAd] Ad shown successfully (#${this.adsShownThisSession} this session)`);
       return true;
     } catch (error) {
-      console.error('❌ Error showing rewarded ad:', error);
+      console.error('❌ [SharedAd] Error showing rewarded ad:', error);
+      this.isShowingAd = false;
       const t = setTimeout(() => {
         this.pendingTimers = this.pendingTimers.filter(id => id !== t);
-        this.initializeAd();
+        this.reinitializeOrDefer();
       }, 1000);
       this.pendingTimers.push(t);
       return false;
@@ -264,31 +285,19 @@ export class AdMobService {
     return this.isLoading;
   }
 
-  /**
-   * ✅ DIAGNOSTIC: Number of ads successfully shown by this instance since
-   * creation. Useful for correlating "stuck loading" reports with a specific
-   * ad count threshold.
-   */
+  isCurrentlyShowingAd(): boolean {
+    return this.isShowingAd;
+  }
+
   getAdsShownThisSession(): number {
     return this.adsShownThisSession;
   }
 
-  /**
-   * Wait up to `timeoutMs` for the ad to finish loading, then resolve.
-   * Returns true if ad is ready, false if timed out.
-   *
-   * Use this instead of checking isAdReady() directly when you want to
-   * gracefully handle the case where the ad hasn't finished loading yet
-   * (e.g. fast players who win before the 1–3s network request completes).
-   */
   async waitUntilReady(timeoutMs: number = 5000): Promise<boolean> {
     if (this.isLoaded) return true;
-
-    // Kick off a load if nothing is in flight
     if (!this.isLoading) {
       this.loadAd().catch(() => {});
     }
-
     return new Promise((resolve) => {
       const start = Date.now();
       const interval = setInterval(() => {
@@ -303,17 +312,18 @@ export class AdMobService {
     });
   }
 
-  /**
-   * Explicitly preload an ad. Call this as early as possible — e.g. when
-   * PropertyDetailScreen mounts — so the ad is ready before the player
-   * finishes the game and requests it.
-   *
-   * Safe to call multiple times; no-ops if already loading or loaded.
-   */
   preload(): void {
     if (!this.isLoading && !this.isLoaded) {
-      console.log('⏳ AdMobService: preloading ad early...');
+      console.log('⏳ [SharedAd] Preloading ad early...');
       this.loadAd().catch(() => {});
     }
   }
 }
+
+// ✅ SHARED SINGLETON: One AdMobService instance for the entire app lifetime.
+// Created at module load time — before any screen mounts — so the ad starts
+// warming up immediately on app launch. All screens import and use this
+// instance instead of creating their own. This eliminates the OOM crashes
+// caused by multiple concurrent ExoPlayer/AVPlayerLayer instances exceeding
+// the 256MB Android Java heap ceiling.
+export const sharedAdService = new AdMobService();

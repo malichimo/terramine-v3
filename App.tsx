@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState, AppStateStatus, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import MainNavigator from './MainNavigator';
@@ -7,6 +8,8 @@ import LoginScreen from './screens/LoginScreen';
 import WelcomeScreen from './screens/WelcomeScreen';
 import LoadingScreen from './components/LoadingScreen';
 import { DeepLinkService } from './services/DeepLinkService';
+import { sharedAdService } from './services/AdMobService';
+import { Audio } from 'expo-av';
 
 // ✅ CRASHLYTICS: Import must be at the top of the entry point so Crashlytics
 // initializes before any other code runs. This ensures crashes during startup,
@@ -76,6 +79,59 @@ export default function App() {
   useEffect(() => {
     DeepLinkService.initialize();
     return () => DeepLinkService.cleanup();
+  }, []);
+
+  // ✅ BUG-077 FIX: iOS background ad audio.
+  //
+  // Two things happen here when the app leaves the foreground:
+  //
+  // 1. sharedAdService.setAppActive(false) — tells AdMobService to defer any
+  //    pending "reinitialize the ad after close" calls until the app is
+  //    foreground again, instead of spinning up a brand-new native
+  //    RewardedAd/AVPlayerLayer instance while iOS may still be tearing down
+  //    the audio session of the ad that just closed. See AdMobService.ts
+  //    reinitializeOrDefer() for the other half of this fix.
+  //
+  // 2. Audio.setAudioModeAsync({...}) — re-applies the EXACT SAME audio mode
+  //    SoundService.init() already sets once at app startup
+  //    (playsInSilentModeIOS: false, staysActiveInBackground: false).
+  //    SoundService confirms this is the project's one source of truth for
+  //    audio mode — reusing its exact config here (not a different one)
+  //    avoids two slightly different modes fighting each other.
+  //
+  //    Why re-apply something already set at startup: SoundService sets this
+  //    mode ONCE, but the Google Mobile Ads SDK's native ad player appears to
+  //    activate its own AVAudioSession during ad playback that bypasses or
+  //    overrides Expo's managed session — and never reliably reverts it after
+  //    the ad closes. Re-applying the mode on every backgrounding event forces
+  //    iOS back to the project's intended (non-background-capable) session
+  //    state regardless of what the ad SDK left behind.
+  useEffect(() => {
+    const resetAudioSession = async () => {
+      try {
+        await Audio.setAudioModeAsync({
+          playsInSilentModeIOS: false,
+          staysActiveInBackground: false,
+        });
+        console.log('[App] Audio session re-applied on background (BUG-077 mitigation)');
+      } catch (e) {
+        // Non-fatal — if the call fails, we still have the setAppActive()
+        // reinit-deferral in AdMobService as a partial mitigation.
+        console.warn('[App] Audio session reset failed (non-fatal):', e);
+      }
+    };
+
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      const isActive = nextState === 'active';
+      sharedAdService.setAppActive(isActive);
+
+      if (Platform.OS === 'ios' && !isActive) {
+        resetAudioSession();
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => subscription.remove();
   }, []);
 
   return (

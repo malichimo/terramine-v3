@@ -386,7 +386,33 @@ export default function MainNavigator() {
     if (!user) return;
     try {
       let userData = await dbService.getUserData(user.uid);
-      if (!userData) {
+
+      // ✅ BUG-078 FIX: Previously this only checked `if (!userData)`, which
+      // is no longer a reliable signal that the user's doc needs creating.
+      //
+      // Root cause: ReferralService.applyReferralCode() runs immediately
+      // after Google/Apple sign-in resolves (called from LoginScreen, before
+      // MainNavigator's useEffect below even fires) and writes a PARTIAL doc
+      // via setDoc(merge:true) containing only `referredBy`/`referredByCode`
+      // — that's the BUG-072 fix, and it's correct in isolation. But it means
+      // by the time loadUserData() runs here, `userData` is no longer falsy:
+      // the partial doc exists, so `if (!userData)` is skipped, createUser()
+      // never runs, and the user is left with NO tbBalance at all — they can
+      // never afford their first TerraAcre because tbBalance is `undefined`,
+      // not 0 (purchaseProperty's `tbBalance ?? 0 < 100` check still trips,
+      // but worse, none of the other default fields like totalCheckIns,
+      // totalTBEarned, email exist either).
+      //
+      // Fix: check specifically for a missing/invalid tbBalance, not just
+      // doc existence. A doc that exists but has no real tbBalance still
+      // needs createUser() to run and fill in the rest of the defaults.
+      const needsAccountInit =
+        !userData ||
+        userData.tbBalance === undefined ||
+        userData.tbBalance === null ||
+        typeof userData.tbBalance !== 'number';
+
+      if (needsAccountInit) {
         // ✅ FIX: Retry user doc creation up to 3 times with 1-second backoff.
         // A single Firestore network blip during the first-write window silently
         // swallows createUser(), leaving the user with no tbBalance or email in
@@ -396,6 +422,14 @@ export default function MainNavigator() {
         // Retrying here ensures the doc is created before anything else proceeds.
         // Google/Apple Sign-In users may also have user.email === null (Apple only
         // provides it on the very first sign-in), so we always fall back to ''.
+        //
+        // ⚠️ IMPORTANT: dbService.createUser() MUST use setDoc(merge:true) (or
+        // equivalent field-by-field defaulting that never overwrites existing
+        // fields) so it doesn't clobber the referredBy/referredByCode that may
+        // already be sitting on a partial doc from applyReferralCode(). If
+        // createUser() does a plain non-merge setDoc(), the referral link
+        // will be silently destroyed here even though loadUserData() itself
+        // is now fixed. Verify this in DatabaseService.ts.
         let created = false;
         for (let attempt = 0; attempt < 3; attempt++) {
           try {
@@ -425,7 +459,7 @@ export default function MainNavigator() {
       // visible grid square is owned — passing only the current user's own
       // properties is correct. Nearby owned properties from OTHER players are
       // fetched on-demand in loadNearbyProperties() via getVisibleGridSquares().
-      setUserTB(userData?.tbBalance || 1000);
+      setUserTB(userData?.tbBalance ?? 1000);
       setUsdEarnings(userData?.usdEarnings || 0);
       setOwnedProperties(properties);
       setAllProperties(properties);
@@ -445,6 +479,26 @@ export default function MainNavigator() {
       ReferralService.getOrCreateReferralCode(user.uid).catch(e =>
         console.warn('Referral code init failed (non-fatal):', e)
       );
+
+      // ✅ BUG-078 CHANGE: Award the signup-time referral bonus here, now that
+      // tbBalance is guaranteed to exist on userData (either it was already
+      // there, or the createUser() block above just created it). This is the
+      // earliest safe point to award the bonus — awarding it any earlier risks
+      // racing the same tbBalance-creation problem this whole fix addresses.
+      // Safe to call on every login: it's a no-op once hasCompletedReferral
+      // is true, and a no-op for users with no referredBy at all.
+      if (userData?.referredBy && !userData?.hasCompletedReferral) {
+        ReferralService.awardSignupReferralBonus(user.uid)
+          .then(async () => {
+            // Re-read so the UI reflects the bonus immediately instead of
+            // waiting for the next full reload.
+            const refreshed = await dbService.getUserData(user.uid);
+            if (refreshed?.tbBalance != null) {
+              setUserTB(refreshed.tbBalance);
+            }
+          })
+          .catch(e => console.warn('Signup referral bonus failed (non-fatal):', e));
+      }
 
       // Grant first-session auto-boost to new users
       dbService.grantFirstSessionBoost(user.uid, {
@@ -488,6 +542,15 @@ export default function MainNavigator() {
       // after purchase — which maps to setUserTB(prev => prev + delta) on line 698.
       // Deducting again here caused a double-deduction of 200 TB instead of 100.
       // TB state is owned by MapScreen's optimistic call; this handler owns property state only.
+      //
+      // ✅ BUG-078 NOTE: this handler no longer needs to trigger any referral
+      // reward — that now happens at signup via loadUserData(), not at first
+      // purchase. If ReferralService.processFirstPurchaseReferral() is called
+      // anywhere downstream of dbService.purchaseProperty() (e.g. inside
+      // DatabaseService.ts itself), it's safe to leave as a fallback since it
+      // now delegates to awardSignupReferralBonus() and no-ops once
+      // hasCompletedReferral is true — but it's worth confirming there isn't
+      // a second, redundant TB award happening there. Check DatabaseService.ts.
 
       // ✅ One-time notification opt-in prompt shown after first purchase.
       // Uses AsyncStorage so it fires once per install — covers both new users

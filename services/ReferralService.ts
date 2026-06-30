@@ -17,11 +17,19 @@ export interface ReferralInfo {
 export interface ReferralEntry {
   referredUserId: string;
   referredNickname: string;
-  completedAt: string; // ISO string when they bought their first TA
+  completedAt: string; // ISO string when the signup bonus was awarded
   tbAwarded: number;
 }
 
-const REFERRAL_REWARD_TB = 1000;
+// ✅ BUG-078 CHANGE (replaces the old first-purchase-gated reward):
+// The reward now fires at SIGNUP, once the new user's base tbBalance exists —
+// not gated on first purchase. New users who came in via a referral code
+// should start with 2000 TB total (1000 standard base + 1000 bonus) instead
+// of the standard 1000, so they comfortably have enough to buy their first
+// TerraAcre without the "Insufficient TB" trap. The referrer still gets
+// 1000 TB, same as before.
+const SIGNUP_REFERRAL_BONUS_TB = 1000; // added on top of the new user's existing 1000 base → 2000 total
+const REFERRER_REWARD_TB = 1000;
 
 // ── Code generation ────────────────────────────────────────────────────────
 
@@ -62,8 +70,11 @@ export class ReferralService {
       attempts++;
     }
 
-    // Save code to user doc and referralCodes collection
-    await updateDoc(userRef, { referralCode: code, referralCount: 0, tbEarnedFromReferrals: 0 });
+    // Save code to user doc and referralCodes collection.
+    // ✅ Uses setDoc(merge:true) on the user doc rather than updateDoc — consistent
+    // with the BUG-072 fix elsewhere in this file. updateDoc() throws if the doc
+    // doesn't exist yet, which is exactly the race this bug family is about.
+    await setDoc(userRef, { referralCode: code, referralCount: 0, tbEarnedFromReferrals: 0 }, { merge: true });
     await setDoc(doc(db, 'referralCodes', code), {
       referrerId: userId,
       code,
@@ -88,7 +99,9 @@ export class ReferralService {
 
   /**
    * Apply a referral code to a new user on sign-up.
-   * Stores referredBy on the new user — reward fires later on first purchase.
+   * Stores referredBy/referredByCode on the new user — the TB reward itself
+   * fires later via awardSignupReferralBonus(), once the caller has confirmed
+   * the user's base tbBalance has been created (see MainNavigator.loadUserData).
    *
    * ✅ BUG-072 FIX: Previously used updateDoc(), which THROWS if the target
    * document doesn't exist yet. For Google/Apple sign-in users, this function
@@ -105,15 +118,13 @@ export class ReferralService {
    *
    * Fix: use setDoc(..., { merge: true }) instead. This works whether the
    * doc already exists (merges referredBy into it) or doesn't exist yet
-   * (creates a new doc containing ONLY referredBy/referredByCode — safe,
-   * since createUser() runs later and also uses merge-safe writes elsewhere
-   * in the codebase per the setDoc-merge pattern documented in DatabaseService).
+   * (creates a new doc containing ONLY referredBy/referredByCode).
    *
-   * Note: this does NOT fix the ordering issue itself (referral code can still
-   * be applied before tbBalance is set) — it just makes the write succeed
-   * regardless of ordering, which is what actually matters since
-   * processFirstPurchaseReferral() only checks for referredBy's presence,
-   * not when it was written.
+   * ⚠️ BUG-078 NOTE: this is exactly the write that creates the PARTIAL doc
+   * responsible for BUG-078 (new users left with no tbBalance at all). The
+   * fix for that bug lives in MainNavigator.loadUserData() — it must check
+   * `userData.tbBalance === undefined`, not just doc existence, before
+   * deciding whether to call createUser(). See MainNavigator.tsx comments.
    */
   static async applyReferralCode(newUserId: string, code: string): Promise<boolean> {
     const referrerId = await this.validateCode(code);
@@ -130,28 +141,25 @@ export class ReferralService {
   }
 
   /**
-   * Called when a user purchases their first TerraAcre.
-   * Awards 1,000 TB to both the new user and their referrer.
-   * Only fires once per user.
+   * ✅ BUG-078 CHANGE — NEW signup-time reward path (replaces the old
+   * first-purchase-gated processFirstPurchaseReferral()).
    *
-   * ✅ BUG FIX: Previously the referrer's existence was checked AFTER marking
-   * hasCompletedReferral and awarding the new user's TB. Any failure between
-   * those two writes (network error, referrer doc missing, Firestore rules
-   * rejection) would silently consume the referral — the new user was marked
-   * complete so it could never retry, but the referrer never got their TB.
+   * Call this from MainNavigator.loadUserData() AFTER the new user's doc is
+   * confirmed to have a real tbBalance (i.e. after the createUser()/retry
+   * logic has run, not before). This ordering matters: awarding the bonus
+   * before tbBalance exists would just increment(1000) on top of `undefined`,
+   * which Firestore's increment() does NOT safely coerce to 1000 — it can
+   * leave the field in an inconsistent state depending on the SDK version,
+   * so always sequence this after tbBalance is known-good.
    *
-   * Fix: verify referrer exists BEFORE any writes. Then wrap the referrer
-   * update in its own try/catch so a rules rejection or network error is
-   * logged for manual recovery rather than silently dropped.
+   * Awards:
+   *   - New (referred) user: +1000 TB on top of their existing 1000 base → 2000 total
+   *   - Referrer: +1000 TB, referralCount +1, tbEarnedFromReferrals +1000
    *
-   * ✅ RULES FIX (deploy separately): The referrer update writes tbBalance +
-   * referralCount + tbEarnedFromReferrals to a doc the caller doesn't own.
-   * The old isVisitorTBReward() only allowed ['tbBalance'], so referralCount
-   * and tbEarnedFromReferrals caused the entire write to be rejected by
-   * Firestore. Add isReferralReward() to the users update rule — see
-   * firestore.rules comment block.
+   * Idempotent via the same `hasCompletedReferral` flag used previously —
+   * safe to call on every login; it no-ops after the first successful award.
    */
-  static async processFirstPurchaseReferral(userId: string): Promise<void> {
+  static async awardSignupReferralBonus(userId: string): Promise<void> {
     const userRef = doc(db, 'users', userId);
     const userSnap = await getDoc(userRef);
     if (!userSnap.exists()) return;
@@ -161,11 +169,19 @@ export class ReferralService {
     // Only process if referred and hasn't been rewarded yet
     if (!data.referredBy || data.hasCompletedReferral) return;
 
+    // ✅ Guard: only award once tbBalance is a real number. If this fires
+    // before MainNavigator's createUser()/retry logic has finished, bail out
+    // silently — the next login (or the same session, once loadUserData
+    // resolves) will pick it up since hasCompletedReferral is still false.
+    if (typeof data.tbBalance !== 'number') {
+      console.warn('Referral: tbBalance not yet initialized, deferring signup bonus for', userId);
+      return;
+    }
+
     const referrerId = data.referredBy;
 
-    // ✅ FIX: Verify referrer exists BEFORE marking complete or awarding anything.
-    // Previously this check happened after the new user was already marked complete,
-    // so a missing referrer doc would silently consume the referral with no retry.
+    // Verify referrer exists BEFORE marking complete or awarding anything —
+    // a missing referrer doc should not silently consume the referral.
     const referrerRef = doc(db, 'users', referrerId);
     const referrerSnap = await getDoc(referrerRef);
     if (!referrerSnap.exists()) {
@@ -182,19 +198,17 @@ export class ReferralService {
     // double-award both sides).
     await updateDoc(userRef, {
       hasCompletedReferral: true,
-      tbBalance: increment(REFERRAL_REWARD_TB),
+      tbBalance: increment(SIGNUP_REFERRAL_BONUS_TB),
     });
 
-    // ✅ FIX: Wrap referrer update in try/catch.
-    // Previously this was a bare await — any failure (Firestore rules rejection,
-    // network error) would throw, leave the referrer unrewarded, and since
-    // hasCompletedReferral was already true, no retry was ever possible.
-    // Now we log the failure for manual recovery instead of silently dropping it.
+    // Wrap referrer update in try/catch — a Firestore rules rejection or
+    // network error here must not undo the new user's already-awarded bonus,
+    // and must be logged for manual recovery rather than silently dropped.
     try {
       await updateDoc(referrerRef, {
-        tbBalance: increment(REFERRAL_REWARD_TB),
+        tbBalance: increment(REFERRER_REWARD_TB),
         referralCount: increment(1),
-        tbEarnedFromReferrals: increment(REFERRAL_REWARD_TB),
+        tbEarnedFromReferrals: increment(REFERRER_REWARD_TB),
       });
     } catch (e) {
       console.error(
@@ -204,10 +218,8 @@ export class ReferralService {
         userId,
         e,
       );
-      // Non-fatal: new user already got their TB and is marked complete.
-      // Referrer can be compensated manually via admin dashboard.
-      // Once the Firestore isReferralReward() rule is deployed, this path
-      // should no longer be hit.
+      // Non-fatal: new user already got their bonus and is marked complete.
+      // Referrer can be compensated manually via admin dashboard / repair script.
       return;
     }
 
@@ -220,14 +232,38 @@ export class ReferralService {
         referredNickname: newUserNickname,
         referrerNickname,
         code: data.referredByCode || '',
-        tbAwarded: REFERRAL_REWARD_TB,
+        tbAwarded: REFERRER_REWARD_TB,
+        newUserBonusAwarded: SIGNUP_REFERRAL_BONUS_TB,
         completedAt: new Date().toISOString(),
       });
     } catch (e) {
       console.warn('Referral: log write failed (non-fatal):', e);
     }
 
-    console.log(`✅ Referral reward: ${REFERRAL_REWARD_TB} TB awarded to both ${referrerId} and ${userId}`);
+    console.log(`✅ Signup referral bonus: +${SIGNUP_REFERRAL_BONUS_TB} TB to new user ${userId}, +${REFERRER_REWARD_TB} TB to referrer ${referrerId}`);
+  }
+
+  /**
+   * @deprecated Superseded by awardSignupReferralBonus(), which fires at
+   * signup instead of first purchase (see BUG-078). Left in place only in
+   * case any older client build still calls it — it now no-ops for anyone
+   * already marked hasCompletedReferral by the new signup-time path, so it's
+   * safe to leave wired up temporarily during rollout. Remove once all
+   * active clients are confirmed past 1.1.7(56)/(55).
+   */
+  static async processFirstPurchaseReferral(userId: string): Promise<void> {
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    if (!userSnap.exists()) return;
+
+    const data = userSnap.data();
+    if (!data.referredBy || data.hasCompletedReferral) return;
+
+    // If we get here, the signup-time bonus never fired for this user
+    // (e.g. they're on an old build, or hit the tbBalance-not-ready guard
+    // and never got a second chance). Fall back to the original behavior
+    // so the referral isn't lost.
+    await this.awardSignupReferralBonus(userId);
   }
 
   /**

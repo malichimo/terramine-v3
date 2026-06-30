@@ -289,7 +289,7 @@
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
-      "buildNumber": "54"
+      "buildNumber": "55"
     },
     "android": {
       "googleServicesFile": "./google-services.json",
@@ -298,7 +298,7 @@
         "backgroundColor": "#1A3A5C"
       },
       "package": "com.terramine.app",
-      "versionCode": 55,
+      "versionCode": 57,
       "intentFilters": [
         {
           "action": "VIEW",

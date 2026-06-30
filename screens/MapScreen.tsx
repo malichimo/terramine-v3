@@ -13,8 +13,8 @@ import TBTradeInModal from '../components/TBTradeInModal';
 import { soundService } from '../services/SoundService';
 import LeaderboardModal from '../components/LeaderboardModal';
 import { ReferralService } from '../services/ReferralService';
-import { AdMobService } from '../services/AdMobService';
-import { FontAwesome } from '@expo/vector-icons';
+import { sharedAdService } from '../services/AdMobService';
+import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Extend BoostState with computed properties used locally in MapScreen
@@ -1072,7 +1072,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
   const lastCheckInTime = useRef<number>(0);
   const lastPurchaseTime = useRef<number>(0);
-  const adService = useRef(new AdMobService()).current;
+  const adService = sharedAdService;
 
   // ✅ BUG-029 FIX: Listen for iOS memory pressure warnings and proactively
   // free the largest in-memory caches before the Hermes GC is forced to OOM.
@@ -1244,7 +1244,16 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
       if (ownedProperties.length === 0) {
         createSystemMineNear(updatedSquare).then(systemMine => {
           if (systemMine) {
-            setAllProperties(prev => prev.some(p => p.id === systemMine.id) ? prev : [...prev, systemMine]);
+            // ✅ FIX: allProperties is a read-only prop in this screen (no setter
+            // exists here — it's owned by MainNavigator). gridSquares is the
+            // actual local state that drives map rendering, so the new system
+            // mine needs to go there instead.
+            setGridSquares(prev => {
+              if (prev.has(systemMine.id)) return prev;
+              const next = new Map(prev);
+              next.set(systemMine.id, systemMine);
+              return next;
+            });
           }
         }).catch(e => console.warn('System mine (non-fatal):', e));
       }
@@ -1466,30 +1475,32 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
   // boostModal, showLegend). Only re-renders when gridSquares data or the
   // selected square changes (which requires a color/stroke update).
   const gridPolygons = useMemo(() => (
-    Array.from(gridSquares.entries()).map(([squareId, square]) => {
-      const isSelected = selectedSquare?.id === squareId;
-      return (
-        <Polygon
-          key={`polygon-${squareId}`}
-          coordinates={square.corners}
-          fillColor={
-            isSelected ? 'rgba(255, 255, 255, 0.6)'
-            : square.isOwned
-              ? square.ownerId === userId ? getMineColor(square.mineType) : 'rgba(255, 152, 0, 0.6)'
-              : 'rgba(76, 175, 80, 0.3)'
-          }
-          strokeColor={
-            isSelected ? '#FFFFFF'
-            : square.isOwned
-              ? square.ownerId === userId ? '#2196F3' : '#E65100'
-              : '#4CAF50'
-          }
-          strokeWidth={isSelected ? 4 : 2}
-          tappable
-          onPress={() => handleSquarePress(square)}
-        />
-      );
-    })
+    Array.from(gridSquares.entries())
+      .sort(([a], [b]) => a.localeCompare(b)) // ✅ BUG-076 FIX: stable order prevents AIRGoogleMap subview-index desync
+      .map(([squareId, square]) => {
+        const isSelected = selectedSquare?.id === squareId;
+        return (
+          <Polygon
+            key={`polygon-${squareId}`}
+            coordinates={square.corners}
+            fillColor={
+              isSelected ? 'rgba(255, 255, 255, 0.6)'
+              : square.isOwned
+                ? square.ownerId === userId ? getMineColor(square.mineType) : 'rgba(255, 152, 0, 0.6)'
+                : 'rgba(76, 175, 80, 0.3)'
+            }
+            strokeColor={
+              isSelected ? '#FFFFFF'
+              : square.isOwned
+                ? square.ownerId === userId ? '#2196F3' : '#E65100'
+                : '#4CAF50'
+            }
+            strokeWidth={isSelected ? 4 : 2}
+            tappable
+            onPress={() => handleSquarePress(square)}
+          />
+        );
+      })
   ), [gridSquares, selectedSquare?.id, userId]);
 
   return (
@@ -1890,6 +1901,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
         maxTotalBoostMinutes={480}
         nextResetTime={boostState.nextFreeBoostResetAt}
         lastAdBoostRefillAt={boostState.lastAdBoostRefillAt}
+        adService={sharedAdService}
       />
 
       {/* ── Community Button (bottom-left floating) ─────────────────────── */}
@@ -1919,7 +1931,7 @@ const MapScreen = React.forwardRef<any, MapScreenProps>(({
               style={[styles.communityLink, styles.discordLink]}
               onPress={() => Linking.openURL('https://discord.gg/QTSJuT2GgP')}
             >
-              <FontAwesome name="discord" size={26} color="white" style={styles.communityLinkIcon} />
+              <MaterialCommunityIcons name={"discord" as any} size={26} color="white" style={styles.communityLinkIcon} />
               <View style={styles.communityLinkText}>
                 <Text style={styles.communityLinkTitle}>Discord</Text>
                 <Text style={styles.communityLinkDesc}>Chat, report bugs, suggest features</Text>
